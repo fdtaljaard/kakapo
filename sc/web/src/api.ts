@@ -348,7 +348,18 @@ export interface Change {
   object: string // "Query Store"
   changeType: string // "SETTING"
   description: string
-  result: string
+  result: string // "recorded by hand" for a change recorded by hand (phase 5c)
+}
+
+// Phase 5c: a change made outside kakapo, recorded by hand (docs/phase5c-contract.md).
+export const changeTypes = ["PROCEDURE", "VIEW", "INDEX", "STATISTICS", "SETTING", "OTHER"] as const
+export const recordedByHand = "recorded by hand"
+
+export interface RecordChangeInput {
+  changedAt: string // server time "2026-11-03T14:20"; "" is now
+  object: string
+  changeType: (typeof changeTypes)[number]
+  description: string
 }
 
 // Phase 4e, part 2: one long operation in progress on the instance (GET .../progress), which the fix
@@ -446,6 +457,10 @@ export const api = {
     request<DeadlockReport>(`${databasePath(serverId, database)}/cards/performance/deadlocks`, { method: "POST" }),
   changes: (serverId: number, database: string, limit = 10) =>
     request<Change[]>(`${databasePath(serverId, database)}/changes?limit=${limit}`),
+  // Phase 5c: records a change made by hand; writes the change log only. 400 for a field that is not
+  // right, 404 for an unknown server, 502 when a server time cannot be placed (the server's clock).
+  recordChange: (serverId: number, database: string, input: RecordChangeInput) =>
+    request<Change>(`${databasePath(serverId, database)}/changes`, { method: "POST", body: JSON.stringify(input) }),
   // Phase 4e: the long operations in progress for this database, tempdb, no database or kakapo's own
   // sessions; [] when nothing runs. 404 for an unknown server, 502 when the server cannot be read.
   progress: (serverId: number, database: string) => request<Progress[]>(`${databasePath(serverId, database)}/progress`),

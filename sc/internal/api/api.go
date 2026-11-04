@@ -301,6 +301,7 @@ func Handler(svc *service.Service, ui fs.FS) http.Handler {
 	sampleRoutes(mux, svc)
 	progressRoutes(mux, svc) // docs/phase4e-contract.md
 	tablesRoutes(mux, svc)   // docs/phase5a-contract.md
+	tuningRoutes(mux, svc)   // docs/phase5c-contract.md
 	runRoutes(mux, svc)      // docs/phase4f-contract.md
 
 	// Any other /api/ path is an unknown route, not a page of the UI.

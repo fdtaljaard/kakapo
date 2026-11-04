@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react"
-import { useParams } from "react-router-dom"
-import { Check, Copy, Loader2, RotateCw, XCircle } from "lucide-react"
+import { Link, useParams } from "react-router-dom"
+import { ChartColumn, Check, Copy, Loader2, RotateCw, XCircle } from "lucide-react"
 
 import type { CardDetail, Card as CardData, CheckdbRoom, DeadlockReport, Finding, Fix, Overview, Owner } from "@/api"
 import { archiveTableFixId } from "@/api-tables"
@@ -31,7 +31,7 @@ import { FindingContext } from "@/lib/finding-context"
 import { formatUptime, formatWhen } from "@/lib/format"
 import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
-import { blockingPath, databasePagePath, instancePath, queryPath } from "@/lib/paths"
+import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
 
 // "/instances/:id/databases/:db/cards/:card": the frame of one card (title, question, status, verdict)
 // and what sits behind it, for one database (docs/phase3a-contract.md). The card detail is read on load
@@ -130,7 +130,13 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
           ]}
         />
         {card ? (
-          <CardFrame card={card} checking={loading} onRefresh={refresh} copyAll={copyAll} />
+          <CardFrame
+            card={card}
+            checking={loading}
+            onRefresh={refresh}
+            copyAll={copyAll}
+            tuningTo={cardId === "performance" ? tuningPath(serverId, database) : undefined}
+          />
         ) : (
           loading && <FrameSkeleton />
         )}
@@ -299,11 +305,14 @@ function CardFrame({
   checking,
   onRefresh,
   copyAll = [],
+  tuningTo,
 }: {
   card: CardData
   checking: boolean
   onRefresh: () => void
   copyAll?: CopyAll[]
+  // Phase 5c: the Performance card's "Tuning report" (docs/phase5c-contract.md).
+  tuningTo?: string
 }) {
   const { status, fallback, copy, dismiss } = useCopy()
   const [copiedLabel, setCopiedLabel] = useState("")
@@ -331,6 +340,14 @@ function CardFrame({
               </Button>
             )
           })}
+          {tuningTo && (
+            <Button variant="outline" asChild>
+              <Link to={tuningTo}>
+                <ChartColumn />
+                Tuning report
+              </Link>
+            </Button>
+          )}
           <Button variant="outline" onClick={onRefresh} disabled={checking}>
             {checking ? <Loader2 className="animate-spin" /> : <RotateCw />}
             Refresh

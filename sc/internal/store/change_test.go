@@ -148,3 +148,35 @@ func TestUpdateServer(t *testing.T) {
 		t.Errorf("unknown server: want ErrNotFound, got %v", err)
 	}
 }
+
+// The tuning report's changes: this database's and the server-level ones in the window, newest first.
+func TestListChangesSince(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, err := st.InsertServer(ctx, domain.ServerInput{Name: "a", Host: "a", Auth: domain.AuthWindows}, domain.ConnectionInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
+	for i, db := range []string{"WarehouseLive", "", "Other", "WarehouseLive"} {
+		c := domain.Change{ServerID: a.ID, Database: db, ChangedAt: base.Add(time.Duration(i) * 24 * time.Hour), Object: "o", ChangeType: "SETTING",
+			Description: "d", Result: domain.ChangeRecordedByHand}
+		if _, err := st.InsertChange(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.ListChangesSince(ctx, a.ID, "WarehouseLive", base.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != 4 || got[1].ID != 2 || got[1].Database != "" || got[0].Result != domain.ChangeRecordedByHand || got[0].Statement != "" {
+		t.Errorf("since: %+v", got)
+	}
+	if got, _ := st.ListChangesSince(ctx, a.ID, "WarehouseLive", base); len(got) != 3 {
+		t.Errorf("from the first: %d", len(got))
+	}
+}

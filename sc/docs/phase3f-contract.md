@@ -1,7 +1,7 @@
 # Phase 3f contract: the DarlingData adopt-now batch
 
 The 21 items of `docs/darlingdata-review.md` "Adopt now", made precise. Sources are files under
-`External References/DarlingData-main/DarlingData-main` with the line numbers the review gives; the rule is
+`../research/DarlingData-main/DarlingData-main` with the line numbers the review gives; the rule is
 taken, the code is ours (review, "The rule on embedding"). Every closely copied fragment carries a comment
 `// Source: DarlingData <file> <lines> (MIT)` and the file is listed in `THIRD_PARTY_NOTICES.md` (created in
 this phase, root of the repository, with the MIT notice).

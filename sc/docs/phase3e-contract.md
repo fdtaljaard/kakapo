@@ -3,7 +3,7 @@
 Builds on phases 3a (finding model, card detail), 3b (on-request checks and samples) and 3c (fixes). Sources,
 cited per check below: `01-QuickScan.sql` section 7 (lines 1069-1250: benign wait list, WRK01 to WRK04) and
 WRK05 to WRK07 (1471-1550); `PerformanceTriage.sql` SRV04 (1091-1134), SRV07 (1586-1602), ACT01/ACT02
-(1184-1223), ACT03 (1232-1270); `External References/sp_PressureDetector.sql` for the right-now pressure reads
+(1184-1223), ACT03 (1232-1270); `../research/sp_PressureDetector.sql` for the right-now pressure reads
 (worker threads and schedulers around lines 4131-4161, memory grants around 3433-3436); `sp_QuickieStore.sql`
 for the Query Store reading (sort orders and the wait categories near line 255); `DESIGN.md` 5.4 for the deadlock
 report; `Checks.csv` for Owner and Then check. Field names exactly as written.

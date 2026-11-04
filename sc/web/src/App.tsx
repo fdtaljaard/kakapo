@@ -9,6 +9,7 @@ import { HomeScreen } from "@/screens/home"
 import { InstanceScreen } from "@/screens/instance"
 import { BlockingScreen } from "@/screens/blocking"
 import { QueryScreen } from "@/screens/query"
+import { TuningScreen } from "@/screens/tuning"
 import { SetupScreen } from "@/screens/setup"
 import { instancePath, type FromHome } from "@/lib/paths"
 
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/instances/:id/databases/:db/cards/:card" element={<CardScreen />} />
         <Route path="/instances/:id/databases/:db/queries/:hash" element={<QueryScreen />} />
         <Route path="/instances/:id/databases/:db/blocking" element={<BlockingScreen />} />
+        <Route path="/instances/:id/databases/:db/tuning" element={<TuningScreen />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

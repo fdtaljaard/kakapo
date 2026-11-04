@@ -1,7 +1,7 @@
 # What to adopt from the DarlingData scripts
 
 Reviewed 2026-11-03 against the five built cards and the planned Design card, live sample and tuning report.
-Source: `External References/DarlingData-main` (MIT, Copyright 2026 Darling Data, LLC). Two detailed reviews with
+Source: `../research/DarlingData-main/DarlingData-main` (MIT, Copyright 2026 Darling Data, LLC). Two detailed reviews with
 line numbers sit in the session scratchpad; this file is the decision.
 
 ## The rule on embedding (revised 2026-11-03)

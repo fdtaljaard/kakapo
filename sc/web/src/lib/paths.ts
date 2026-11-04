@@ -18,6 +18,10 @@ export const queryPath = (serverId: number, database: string, hash: string) =>
 
 export const blockingPath = (serverId: number, database: string) => `${databasePagePath(serverId, database)}/blocking`
 
+// Phase 5c: the tuning report, centred on a change when one is given.
+export const tuningPath = (serverId: number, database: string, changeId?: number) =>
+  `${databasePagePath(serverId, database)}/tuning${changeId ? `?change=${changeId}` : ""}`
+
 // Location state a Home tile sets, so the picker may go straight into the remembered database.
 // A direct URL to the picker carries no state and always shows the picker.
 export interface FromHome {

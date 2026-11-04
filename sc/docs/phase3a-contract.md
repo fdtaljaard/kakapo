@@ -1,7 +1,7 @@
 # Phase 3a contract: the Backups and data safety card
 
 The first real card. It also introduces the **finding model** and the **card detail** endpoint that every later
-card reuses. Source of the checks: `External References/granite-sql/SqlHealthCheck/01-QuickScan.sql` sections 5
+card reuses. Source of the checks: `../research/granite-sql/SqlHealthCheck/01-QuickScan.sql` sections 5
 (BAK01 to BAK05) and 2 (DBC08), `Checks.csv` rows BAK01 to BAK05 and DBC08, and `DESIGN.md` section 4 (the
 finding model). Read `docs/landing-page.md` for the card anatomy and `docs/phase2-contract.md` for the Card shape.
 Field names exactly as written. Dates RFC 3339 UTC.

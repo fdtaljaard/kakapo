@@ -73,7 +73,7 @@ colour, the top-ranked finding gives the verdict sentence, named checks give the
 computed in the UI; the backend serves each card as one JSON object (`title, question, status, verdict, facts[],
 counts, asOf, sinceRestart`). The same object is what a future MCP tool or assistant reads.
 
-The scripts in `External References/granite-sql` are the source of the checks, taken over one card at a time,
+The scripts in `../research/granite-sql` are the source of the checks, taken over one card at a time,
 not run whole. That is the careful build-out: each card becomes a phase, built with its reference script and
 README open, and only what the card needs.
 

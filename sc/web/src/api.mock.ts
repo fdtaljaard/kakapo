@@ -4,6 +4,7 @@ import { mockQueries } from "./api-queries.mock"
 import { mockProgress, startMockRun } from "./api-progress.mock"
 import { mockSample } from "./api-sample.mock"
 import { mockTables, withArchives } from "./api-tables.mock"
+import { mockTuning, withRecordedChanges } from "./api-tuning.mock"
 
 // Dev-only fixture backend. Loaded by api.ts only when import.meta.env.DEV and VITE_MOCK_API=1,
 // so it never reaches a production build. One server, three databases: Query Store ok, ok, off;
@@ -2272,7 +2273,8 @@ function buildOverview(srv: Server, db: DatabaseStatus): Overview {
     instance: info,
     database: db,
     cards: buildCards(info, db),
-    recentChanges: changesFor(srv, db.name, 10),
+    // Phase 5c: the tuning fixture's change and the changes recorded by hand (api-tuning.mock.ts).
+    recentChanges: withRecordedChanges(changesFor(srv, db.name, 10), srv.id, db.name),
     checkedAt: now(),
   }
 }
@@ -2347,7 +2349,7 @@ function updateServer(id: string, input: ServerInput): Server {
 
 /** A feature mock answers its own routes and returns undefined for the rest. */
 export type FeatureMock = (method: string, path: string, init?: RequestInit) => Promise<unknown | undefined>
-const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress, mockTables, mockMaintenance]
+const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress, mockTables, mockMaintenance, mockTuning]
 
 export async function mockRequest<T>(path: string, init?: RequestInit): Promise<T> {
   await delay(500)
@@ -2384,7 +2386,10 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     if (read) {
       const srv = findServer(read[1])
       const db = findDatabase(read[2])
-      if (read[3] === "changes") return changesFor(srv, db.name, Number(read[4] ?? 10)) as T
+      if (read[3] === "changes") {
+        const limit = Number(read[4] ?? 10)
+        return withRecordedChanges(changesFor(srv, db.name, limit), srv.id, db.name, limit) as T
+      }
       await delay(1500) // the real overview connects and reads the database: a few seconds
       srv.lastVersion = "16.0.4255.2"
       srv.lastEdition = "Standard Edition (64-bit)"
