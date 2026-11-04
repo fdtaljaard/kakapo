@@ -89,6 +89,8 @@ export function FixDialog({
 }) {
   const [step, setStep] = useState<Step>({ kind: "loading" })
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null)
+  // Phase 5a (SCOPE rule 5): the "More options" fold, kept here so a rebuilt preview does not close it.
+  const [moreOpen, setMoreOpen] = useState(false)
   // The page's callback, read when the run ends (callers pass a new function on every render).
   const appliedRef = useRef(onApplied)
   useEffect(() => {
@@ -227,6 +229,8 @@ export function FixDialog({
             inputs={step.preview.inputs}
             disabled={applying || refreshing}
             onCommit={(name, value) => changeInput(step.preview, name, value)}
+            moreOpen={moreOpen}
+            onMoreOpen={setMoreOpen}
           />
         )}
 
@@ -334,16 +338,22 @@ export function FixDialog({
 }
 
 // The values the user may set (the backup folder, take the first backup now). A text field commits when
-// it is left or on Enter, a checkbox at once; each commit rebuilds the preview. A field's warning (the
-// folder does not exist) shows under it in red.
+// it is left or on Enter, a checkbox and a select at once; each commit rebuilds the preview. A field's
+// warning (the folder does not exist) shows under it in red. Phase 5a (SCOPE rule 5): a read-only input (a
+// table the finding or the picker chose) is a line, not a field; advanced inputs sit under "More options",
+// collapsed unless one of them carries a warning (moreOpen is the parent's, so a rebuilt preview keeps it).
 function FixInputs({
   inputs,
   disabled,
   onCommit,
+  moreOpen,
+  onMoreOpen,
 }: {
   inputs: FixInput[]
   disabled: boolean
   onCommit: (name: string, value: string) => void
+  moreOpen: boolean
+  onMoreOpen: (open: boolean) => void
 }) {
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(inputs.map((i) => [i.name, i.value])),
@@ -351,83 +361,107 @@ function FixInputs({
   const commit = (input: FixInput, value: string) => {
     if (value !== input.value) onCommit(input.name, value)
   }
-  return (
-    <div className="grid gap-3">
-      {inputs.map((input) => {
-        const id = `fix-input-${input.name}`
-        if (input.kind === "bool") {
-          return (
-            <div key={input.name} className="flex items-start gap-2">
-              <Checkbox
-                id={id}
-                className="mt-0.5"
-                checked={draft[input.name] === "true"}
-                disabled={disabled}
-                onCheckedChange={(checked) => {
-                  const value = checked === true ? "true" : "false"
-                  setDraft({ ...draft, [input.name]: value })
-                  commit(input, value)
-                }}
-              />
-              <div className="grid gap-0.5">
-                <Label htmlFor={id}>{input.label}</Label>
-                {input.help && <p className="text-xs text-muted-foreground">{input.help}</p>}
-              </div>
-            </div>
-          )
-        }
-        // Phase 4b: a select (the log backup interval) commits at once, like a checkbox.
-        if (input.kind === "select") {
-          return (
-            <div key={input.name} className="grid gap-1.5">
-              <Label htmlFor={id}>{input.label}</Label>
-              <Select
-                value={draft[input.name] ?? ""}
-                disabled={disabled}
-                onValueChange={(value) => {
-                  setDraft({ ...draft, [input.name]: value })
-                  commit(input, value)
-                }}
-              >
-                <SelectTrigger id={id} className="w-40" aria-invalid={!!input.warning}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(input.options ?? []).map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {input.warning && <p className="text-sm text-destructive break-words">{input.warning}</p>}
-              {input.help && <p className="text-xs text-muted-foreground">{input.help}</p>}
-            </div>
-          )
-        }
-        return (
-          <div key={input.name} className="grid gap-1.5">
+  const readOnly = inputs.filter((i) => i.readOnly)
+  const main = inputs.filter((i) => !i.readOnly && !i.advanced)
+  const advanced = inputs.filter((i) => !i.readOnly && i.advanced)
+  const warned = advanced.some((i) => !!i.warning)
+
+  const field = (input: FixInput) => {
+    const id = `fix-input-${input.name}`
+    if (input.kind === "bool") {
+      return (
+        <div key={input.name} className="flex items-start gap-2">
+          <Checkbox
+            id={id}
+            className="mt-0.5"
+            checked={draft[input.name] === "true"}
+            disabled={disabled}
+            onCheckedChange={(checked) => {
+              const value = checked === true ? "true" : "false"
+              setDraft({ ...draft, [input.name]: value })
+              commit(input, value)
+            }}
+          />
+          <div className="grid gap-0.5">
             <Label htmlFor={id}>{input.label}</Label>
-            <Input
-              id={id}
-              className="font-mono"
-              value={draft[input.name] ?? ""}
-              disabled={disabled}
-              aria-invalid={!!input.warning && !input.warning.startsWith("This folder is on the same drive")}
-              onChange={(e) => setDraft({ ...draft, [input.name]: e.target.value })}
-              onBlur={(e) => commit(input, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault()
-                  commit(input, e.currentTarget.value)
-                }
-              }}
-            />
-            {input.warning && <p className="text-sm text-destructive break-words">{input.warning}</p>}
             {input.help && <p className="text-xs text-muted-foreground">{input.help}</p>}
           </div>
-        )
-      })}
+        </div>
+      )
+    }
+    // Phase 4b: a select (the log backup interval) commits at once, like a checkbox.
+    if (input.kind === "select") {
+      return (
+        <div key={input.name} className="grid gap-1.5">
+          <Label htmlFor={id}>{input.label}</Label>
+          <Select
+            value={draft[input.name] ?? ""}
+            disabled={disabled}
+            onValueChange={(value) => {
+              setDraft({ ...draft, [input.name]: value })
+              commit(input, value)
+            }}
+          >
+            <SelectTrigger id={id} className="w-fit min-w-40 max-w-full" aria-invalid={!!input.warning}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(input.options ?? []).map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {input.warning && <p className="text-sm text-destructive break-words">{input.warning}</p>}
+          {input.help && <p className="text-xs text-muted-foreground">{input.help}</p>}
+        </div>
+      )
+    }
+    return (
+      <div key={input.name} className="grid gap-1.5">
+        <Label htmlFor={id}>{input.label}</Label>
+        <Input
+          id={id}
+          className="font-mono"
+          value={draft[input.name] ?? ""}
+          disabled={disabled}
+          aria-invalid={!!input.warning && !input.warning.startsWith("This folder is on the same drive")}
+          onChange={(e) => setDraft({ ...draft, [input.name]: e.target.value })}
+          onBlur={(e) => commit(input, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commit(input, e.currentTarget.value)
+            }
+          }}
+        />
+        {input.warning && <p className="text-sm text-destructive break-words">{input.warning}</p>}
+        {input.help && <p className="text-xs text-muted-foreground">{input.help}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-3">
+      {readOnly.map((input) => (
+        <p key={input.name} className="break-words">
+          <span className="text-muted-foreground">{input.label}:</span>{" "}
+          <span className="font-mono">{input.value}</span>
+        </p>
+      ))}
+      {main.map(field)}
+      {advanced.length > 0 && (
+        <Collapsible open={moreOpen || warned} onOpenChange={(open) => onMoreOpen(open)}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="group -ml-2.5 text-muted-foreground" disabled={warned}>
+              <ChevronRight className="transition-transform group-data-[state=open]:rotate-90" />
+              More options
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="grid gap-3 pt-2">{advanced.map(field)}</CollapsibleContent>
+        </Collapsible>
+      )}
     </div>
   )
 }
@@ -468,11 +502,19 @@ function PreviewBody({ preview }: { preview: FixPreview }) {
     ) : null
 
   if (preview.changes.length === 0) {
-    // With inputs, an empty preview means an input is not usable yet (the folder does not exist).
+    // With inputs, an empty preview means an input is not usable yet (the folder does not exist), or (phase
+    // 5a) something about the object itself stops the fix (a foreign key pointing at the table): the first
+    // warning says which.
     if (preview.inputs && preview.inputs.length > 0) {
+      // The archive fix's red "delete keeps no copy" warning on its action does not block.
+      const inputWarned = preview.inputs.some((i) => !!i.warning && i.name !== "action")
       return (
         <div className="grid gap-4 min-w-0">
-          <p className="text-muted-foreground">Nothing can be applied until the value above is fixed.</p>
+          <p className="text-muted-foreground">
+            {inputWarned
+              ? "Nothing can be applied until the value above is fixed."
+              : "Nothing can be applied: the first point below says why."}
+          </p>
           {warnings}
         </div>
       )
@@ -527,7 +569,8 @@ function PreviewBody({ preview }: { preview: FixPreview }) {
 // target: the statement ran but the setting did not take (or something set it back). For the backup
 // jobs it means a job was not read back enabled.
 function ResultBody({ result, took }: { result: FixResult; took?: ReactNode }) {
-  const jobs = result.preview.changes.some((c) => c.setting.endsWith("backup job"))
+  // The backup jobs, and (phase 5a) the archive and remove-archive fixes' "Job" row.
+  const jobs = result.preview.changes.some((c) => c.setting.endsWith("backup job") || c.setting === "Job")
   const target = result.preview.changes.map((c) => c.target).join(", ")
   return (
     <div className="grid gap-2 min-w-0">

@@ -135,6 +135,11 @@ type FixInput struct {
 	Warning string `json:"warning,omitempty"`
 	// Options are the values a "select" input offers (docs/phase4b-contract.md).
 	Options []string `json:"options,omitempty"`
+	// Advanced puts the input under the dialog's collapsed "More options" (SCOPE rule 5): a choice
+	// with a default that works unseen. ReadOnly shows the value without a field (a table the
+	// finding or the picker chose).
+	Advanced bool `json:"advanced,omitempty"`
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // QueryStoreFixResult is the phase 1 Query Store fix that ran, with the settings read before and after.

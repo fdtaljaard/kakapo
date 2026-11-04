@@ -103,6 +103,10 @@ export interface FixInput {
   kind: "text" | "bool" | "select"
   warning?: string // what is wrong with this value, shown under the field
   options?: string[] // phase 4b: the values a "select" offers (docs/phase4b-contract.md)
+  // SCOPE rule 5: an advanced input sits under the dialog's collapsed "More options"; a read-only one shows
+  // its value without a field (docs/phase5a-contract.md).
+  advanced?: boolean
+  readOnly?: boolean
 }
 
 // Phase 3c: the result of a generic fix (docs/phase3c-contract.md). The phase 1 Query Store routes

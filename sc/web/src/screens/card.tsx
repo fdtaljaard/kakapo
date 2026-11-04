@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom"
 import { Check, Copy, Loader2, RotateCw, XCircle } from "lucide-react"
 
 import type { CardDetail, Card as CardData, CheckdbRoom, DeadlockReport, Finding, Fix, Overview, Owner } from "@/api"
+import { archiveTableFixId } from "@/api-tables"
 import { CheckdbRoomPanel } from "@/components/checkdb-room-panel"
 import { CheckdbRunPanel } from "@/components/checkdb-run-panel"
 import { ChecksList } from "@/components/checks-list"
@@ -16,6 +17,7 @@ import { CardStatusLine } from "@/components/instance-card"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
 import { CopyFallback } from "@/components/statement-block"
+import { TablesRow } from "@/components/tables-row"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -183,6 +185,18 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                   <TempdbRow
                     fix={detail.fixes?.find((f) => f.id === "tempdb-files")}
                     onFix={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
+                  />
+                  {/* Phase 5a: the tables kakapo archives, and "Archive a table…" (docs/phase5a-contract.md). */}
+                  <TablesRow
+                    serverId={serverId}
+                    database={database}
+                    fixes={detail.fixes}
+                    onArchive={(table) =>
+                      setFixing({ fixId: archiveTableFixId, title: "Archive or delete old rows", options: { table } })
+                    }
+                    onRemove={(fix) =>
+                      setFixing({ fixId: fix.id, title: fix.title, options: { table: fix.options?.table ?? "" } })
+                    }
                   />
                   <FindingContext.Provider value={roomContext}>
                     <CheckdbRoomPanel serverId={serverId} database={database} room={detail.checkdbRoom} onResult={setRan} />

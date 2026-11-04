@@ -92,8 +92,11 @@ func (s *Service) storageDetail(ctx context.Context, db *sql.DB, serverID int64,
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.CardDetail{}, err
 	}
+	// The archive entries (docs/phase5a-contract.md): archive-table for each IDX10 finding, and
+	// remove-archive for each table kakapo archives (the card's Tables row).
+	fixes := append(domain.AvailableStorageFixes(facts, findings), domain.ArchiveFixesFor(facts, findings)...)
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, CheckdbRoom: last, CheckdbRun: run,
-		Fixes: domain.AvailableStorageFixes(facts, findings)}, nil
+		Fixes: fixes}, nil
 }
 
 // detailWithoutChecks is the detail of a card whose checks are not built yet: grey, with empty
@@ -116,13 +119,26 @@ func readBackupFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus) d
 }
 
 // readStorageFacts reads what the Storage card needs. When nothing can be read, the facts say why,
-// so the card turns grey instead of failing the page.
+// so the card turns grey instead of failing the page. kakapo's archive jobs are read beside them
+// (docs/phase5a-contract.md): IDX10 leaves the tables they archive alone, and the Tables row lists
+// them with the rows on each side.
 func readStorageFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus) domain.StorageFacts {
 	readCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	f, err := collect.StorageFacts(readCtx, db, d.Name)
 	if err != nil {
 		return domain.StorageFacts{Database: d.Name, State: d.State, Error: "could not read the storage facts: " + err.Error()}
+	}
+	if f.State == "ONLINE" {
+		jobs, jobsErr, err := collect.ArchiveJobs(readCtx, db, d.Name, true)
+		switch {
+		case err != nil:
+			f.ArchivesError = err.Error()
+		case jobsErr != "":
+			f.ArchivesError = jobsErr
+		default:
+			f.Archives = jobs
+		}
 	}
 	return f
 }

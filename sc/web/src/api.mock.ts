@@ -2,6 +2,7 @@ import { mockBlocking } from "./api-blocking.mock"
 import { mockQueries } from "./api-queries.mock"
 import { mockProgress, startMockRun } from "./api-progress.mock"
 import { mockSample } from "./api-sample.mock"
+import { mockTables, withArchives } from "./api-tables.mock"
 
 // Dev-only fixture backend. Loaded by api.ts only when import.meta.env.DEV and VITE_MOCK_API=1,
 // so it never reaches a production build. One server, three databases: Query Store ok, ok, off;
@@ -2345,7 +2346,7 @@ function updateServer(id: string, input: ServerInput): Server {
 
 /** A feature mock answers its own routes and returns undefined for the rest. */
 export type FeatureMock = (method: string, path: string, init?: RequestInit) => Promise<unknown | undefined>
-const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress]
+const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress, mockTables]
 
 export async function mockRequest<T>(path: string, init?: RequestInit): Promise<T> {
   await delay(500)
@@ -2420,7 +2421,8 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
       throw new ApiError(`cannot reach ${srv.host}: the server was not found or was not accessible`, 502)
     }
     if (detail[3] === "backups") return structuredClone(backupsDetail(db)) as T
-    if (detail[3] === "storage") return structuredClone(storageDetail(db)) as T
+    // Phase 5a: the archive fix on IDX10's findings and the Tables row's entries (api-tables.mock.ts).
+    if (detail[3] === "storage") return structuredClone(withArchives(storageDetail(db), db.name)) as T
     if (detail[3] === "setup") return structuredClone(setupDetail(instanceInfo(srv, db), db)) as T
     if (detail[3] === "upkeep") return structuredClone(upkeepDetail(instanceInfo(srv, db), db)) as T
     if (detail[3] === "performance") return structuredClone(performanceDetail(instanceInfo(srv, db), db)) as T

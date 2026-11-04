@@ -206,6 +206,12 @@ type StorageFacts struct {
 	GrowingTables []GrowingTable // the 10 biggest that look like log or history tables
 	Identities    []IdentityColumn
 
+	// Archives are kakapo's archive jobs on this database (docs/phase5a-contract.md, read by
+	// collect.ArchiveJobs beside the storage facts): IDX10 does not fire for a table they archive,
+	// and the card's Tables row lists them. ArchivesError says why they could not be read.
+	Archives      []ArchiveJob
+	ArchivesError string
+
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
@@ -1297,7 +1303,10 @@ func (b *storageBuild) idx07(filesNote string) {
 // idx10: user tables that look like log or history tables (by name) of a million rows or 500 MB,
 // one finding per table: Low, Medium at 10 million rows or 5 GB. A table whose oldest row is known
 // and younger than 12 months is being cleaned up: no finding. When the age is unknown (no date
-// column, not indexed so not read, or not readable) the finding says nothing about removal.
+// column, not indexed so not read, or not readable) the finding says nothing about removal. A
+// finding on a table with a date column carries the archive fix (docs/phase5a-contract.md). A table
+// kakapo archives does not fire: it is a note for information whose evidence says how it is
+// archived.
 func (b *storageBuild) idx10() {
 	f := b.f
 	if f.GrowingTablesError != "" {
@@ -1306,6 +1315,13 @@ func (b *storageBuild) idx10() {
 	}
 	for _, t := range f.GrowingTables {
 		if !LooksLikeLogTable(t.Name) || (t.Rows < 1000000 && t.MB < 500) {
+			continue
+		}
+		if j, ok := findArchiveJob(f.Archives, f.Database, t.Schema, t.Name); ok {
+			b.add("IDX10", 5, "Planned", EffortModerate, QuoteName(t.Schema)+"."+QuoteName(t.Name),
+				fmt.Sprintf("%s.%s has %s rows (%s MB); kakapo archives its old rows nightly.", t.Schema, t.Name, n0(float64(t.Rows)), n0(t.MB)),
+				idx10Why, "Nothing to do: the job "+j.Name+" keeps it in check; the Tables row on this card shows its last run.",
+				fmt.Sprintf("Rows: %s. Size: %s MB. %s.", n0(float64(t.Rows)), n0(t.MB), upperFirst(j.ArchivedWords())))
 			continue
 		}
 		months := 0
@@ -1336,6 +1352,9 @@ func (b *storageBuild) idx10() {
 			evidence += fmt.Sprintf(" Its date column %s could not be read, so how far back its rows go is unknown.", t.DateCol)
 		}
 		b.add("IDX10", rank, "Planned", EffortModerate, QuoteName(t.Schema)+"."+QuoteName(t.Name), finding, idx10Why, idx10Do, evidence)
+		if t.DateCol != "" {
+			b.withFix(FixArchiveTable)
+		}
 	}
 }
 
@@ -1517,7 +1536,13 @@ func (b *storageBuild) fourthFact() Fact {
 		}
 		return Fact{Label: "Identity range", Value: fmt.Sprintf("%d%% used (%s)", int(top.PctUsed), top.Table), Tone: t}
 	}
-	if grows := b.all("IDX10"); len(grows) > 0 {
+	grows := []Finding{}
+	for _, x := range b.all("IDX10") {
+		if x.Severity.Actionable() {
+			grows = append(grows, x) // not a table kakapo archives
+		}
+	}
+	if len(grows) > 0 {
 		var biggest *GrowingTable
 		for i, t := range f.GrowingTables {
 			for _, x := range grows {

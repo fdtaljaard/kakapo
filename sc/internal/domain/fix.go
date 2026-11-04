@@ -102,6 +102,9 @@ var FixDefs = []FixDef{
 	{"suspect-pages-clear", "Clear the old suspect-page records", ScopeServer, "BAK04", "suspect_pages"},
 	// Phase 4e (docs/phase4e-contract.md): the TempDB file set in one fix.
 	{"tempdb-files", "Set up the TempDB files", ScopeServer, "TMP02", "TempDB files"},
+	// Phase 5a (docs/phase5a-contract.md): archive or delete the old rows of a table that only grows.
+	{"archive-table", "Archive or delete old rows", ScopeDatabase, "IDX10", "Archive"},
+	{"remove-archive", "Stop archiving a table", ScopeDatabase, "IDX10", "Archive"},
 	{FixBackupSchedule, "Create a backup schedule", ScopeDatabase, "BAK01", "Backup schedule"},
 	{FixRemoveBackupSchedule, "Remove kakapo's backup jobs", ScopeDatabase, "BAK01", "Backup schedule"},
 }
