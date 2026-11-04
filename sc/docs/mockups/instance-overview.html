@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQLMonitor mockup: instance page</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --card: #141414; --border: #262626; --fg: #ededed; --muted: #8a8a8a; --muted2: #5e5e5e;
+    --green: #34d399; --amber: #fbbf24; --red: #f87171; --grey: #6b7280; --accent: #e5e5e5;
+    font-family: "Geist", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #fafafa; --card: #fff; --border: #e5e5e5; --fg: #171717; --muted: #6b6b6b; --muted2: #a3a3a3; --accent: #171717; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.45; }
+  .page { max-width: 1120px; margin: 0 auto; padding: 24px 20px 48px; }
+  .crumbs { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .crumbs b { color: var(--fg); font-weight: 500; }
+  header.inst { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  header.inst h1 { font-size: 20px; font-weight: 600; margin: 0 0 2px; }
+  header.inst .sub { color: var(--muted); font-size: 13px; }
+  header.inst .sub code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .actions { display: flex; gap: 8px; }
+  .btn { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 230px; }
+  .card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .card h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .card .q { color: var(--muted); font-size: 13px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; color: var(--muted); }
+  .status i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .green i { background: var(--green); } .amber i { background: var(--amber); } .red i { background: var(--red); } .grey i { background: var(--grey); }
+  .green { color: var(--green); } .amber { color: var(--amber); } .red { color: var(--red); } .grey { color: var(--muted); }
+  .verdict { font-size: 14px; }
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 13px; }
+  .facts div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed var(--border); padding-bottom: 3px; }
+  .facts span:first-child { color: var(--muted); }
+  .facts .bad { color: var(--amber); } .facts .worse { color: var(--red); }
+  .foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); padding-top: 6px; }
+  .foot a { color: var(--fg); text-decoration: none; }
+  .empty { color: var(--muted); font-size: 13px; }
+  section.changes { margin-top: 22px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
+  section.changes h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; font-size: 12px; }
+  .note { margin-top: 28px; color: var(--muted2); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumbs">Instances &rsaquo; <b>Client A production</b></div>
+
+  <header class="inst">
+    <div>
+      <h1>Client A production</h1>
+      <div class="sub"><code>CLIENTSQL01\WMS</code> &middot; SQL Server 2019 Standard, build 15.0.4382 &middot; 12 databases &middot; figures since restart, 5 days ago &middot; checked 09:21</div>
+    </div>
+    <div class="actions"><button class="btn">Refresh</button><button class="btn primary">Run checks</button></div>
+  </header>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="top"><div><h2>Backups and data safety</h2><div class="q">Could you lose data?</div></div><span class="status red"><i></i>Needs attention today</span></div>
+      <div class="verdict">You could lose up to <b>26 hours</b> of data on GraniteLive: full backup nightly, no log backups.</div>
+      <div class="facts">
+        <div><span>Worst-case data loss</span><span class="worse">26 h</span></div>
+        <div><span>Last CHECKDB</span><span class="bad">9 days</span></div>
+        <div><span>Last full backup</span><span>02:00 today</span></div>
+        <div><span>Damaged pages</span><span>none</span></div>
+      </div>
+      <div class="foot"><span>2 to do, 1 for the client's IT</span><a href="#">Open &rsaquo;</a></div>
+    </div>
+
+    <div class="card">
+      <div class="top"><div><h2>Setup and configuration</h2><div class="q">Is it set up the way it should be?</div></div><span class="status amber"><i></i>3 things to do</span></div>
+      <div class="verdict">Query Store is off on <b>7 of 12</b> databases, so query history is lost at every restart.</div>
+      <div class="facts">
+        <div><span>Query Store</span><span class="bad">on 5 of 12</span></div>
+        <div><span>Max server memory</span><span>26 of 32 GB</span></div>
+        <div><span>Cost threshold</span><span class="bad">5 (default)</span></div>
+        <div><span>Compatibility</span><span>150 on all</span></div>
+      </div>
+      <div class="foot"><span>3 to do, 2 can be applied here</span><a href="#">Open &rsaquo;</a></div>
+    </div>
+
+    <div class="card">
+      <div class="top"><div><h2>Storage and space</h2><div class="q">Will it run out of room?</div></div><span class="status amber"><i></i>2 things to do</span></div>
+      <div class="verdict">ScheduledJobsHistory holds <b>14 million rows</b> and has no cleanup; the data drive has 18% free.</div>
+      <div class="facts">
+        <div><span>Tightest drive</span><span class="bad">D: 18% free</span></div>
+        <div><span>Log tables without cleanup</span><span class="bad">3</span></div>
+        <div><span>Biggest database</span><span>GraniteLive 212 GB</span></div>
+        <div><span>Disk latency</span><span>4 ms read, 2 ms write</span></div>
+      </div>
+      <div class="foot"><span>2 to do, 1 for the client's IT</span><a href="#">Open &rsaquo;</a></div>
+    </div>
+
+    <div class="card">
+      <div class="top"><div><h2>Upkeep</h2><div class="q">Is someone looking after it?</div></div><span class="status green"><i></i>No problem found</span></div>
+      <div class="verdict">SQL Agent is running, the maintenance job ran last night, and no job failed in 7 days.</div>
+      <div class="facts">
+        <div><span>SQL Agent</span><span>running, automatic</span></div>
+        <div><span>Failed jobs, 7 days</span><span>0</span></div>
+        <div><span>Index and statistics job</span><span>nightly 01:00</span></div>
+        <div><span>Told about errors</span><span>operator set</span></div>
+      </div>
+      <div class="foot"><span>Nothing to do</span><a href="#">Open &rsaquo;</a></div>
+    </div>
+
+    <div class="card">
+      <div class="top"><div><h2>Performance</h2><div class="q">Is it slow, and why?</div></div><span class="status amber"><i></i>2 things to do</span></div>
+      <div class="verdict">The server mostly waits on <b>parallelism</b> (41% of waits): the cost threshold is still 5.</div>
+      <div class="facts">
+        <div><span>Biggest wait</span><span class="bad">CXPACKET 41%</span></div>
+        <div><span>Blocking right now</span><span>none</span></div>
+        <div><span>Deadlocks per day</span><span class="bad">6</span></div>
+        <div><span>Top query by CPU</span><span>Prescript_Picking_&hellip;</span></div>
+      </div>
+      <div class="foot"><span>2 to do &middot; <a href="#">Sample 30 s now</a></span><a href="#">Open &rsaquo;</a></div>
+    </div>
+
+    <div class="card">
+      <div class="top"><div><h2>Database design</h2><div class="q">Is the database built well?</div></div><span class="status grey"><i></i>Not checked yet</span></div>
+      <div class="empty">Indexes, heaps, lock waits per table and Granite PreScripts for one database. Takes a minute per database.</div>
+      <div class="foot"><span>&nbsp;</span><a href="#">Check GraniteLive &rsaquo;</a></div>
+    </div>
+
+  </div>
+
+  <section class="changes">
+    <h3>Recent changes</h3>
+    <table>
+      <tr><th>When</th><th>Database</th><th>What</th><th>Did it help?</th></tr>
+      <tr><td>Today 08:52</td><td>GraniteLive</td><td>Query Store turned on with the recommended settings</td><td class="grey">Too early to say &middot; check after a business day</td></tr>
+      <tr><td>28 Oct 11:00</td><td>GraniteLive</td><td>Prescript_Picking_Uom rewritten (same rows, fewer reads)</td><td class="green">CPU per execution &minus;54%</td></tr>
+    </table>
+  </section>
+
+  <div class="note">Mockup only. Data is invented for a plausible Granite site; the layout and words are the point.</div>
+</div>
+</body>
+</html>

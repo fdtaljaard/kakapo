@@ -1,0 +1,23 @@
+# references and client material
+External References/
+*.duckdb
+*.duckdb.wal
+reports/
+
+# run-time files beside the exe
+/sqlmonitor.log
+/*.zip
+
+# build output
+/sqlmonitor.exe
+/sqlmonitor.exe~
+/dist/
+web/dist/
+web/node_modules/
+
+# editor
+.vscode/
+.idea/
+
+# edge app-mode profile (lives in %TEMP%, listed in case it is ever moved here)
+SQLMonitor-window/

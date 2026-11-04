@@ -1,0 +1,7 @@
+# Keep the files as they are written: LF everywhere (Go, TypeScript, Markdown), CRLF only for the Windows script.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.m4a binary
+*.woff2 binary

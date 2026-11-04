@@ -1,0 +1,317 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"sqlmonitor/internal/domain"
+	"sqlmonitor/internal/service"
+	"sqlmonitor/internal/store"
+)
+
+func cardsHandler(t *testing.T, in domain.ServerInput) (http.Handler, int64) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv, err := st.InsertServer(ctx, in, domain.ConnectionInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Handler(service.New(st, noCreds{}), fstest.MapFS{"index.html": {Data: []byte("app")}}), srv.ID
+}
+
+func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func postPath(h http.Handler, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+	return rec
+}
+
+// The CHECKDB room route against a real store; nothing here dials a SQL Server.
+func TestCheckdbRoomRoute(t *testing.T) {
+	h, id := cardsHandler(t, domain.ServerInput{Name: "local", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"})
+	path := func(server int64, db string) string {
+		return fmt.Sprintf("/api/servers/%d/databases/%s/cards/storage/checkdb-room", server, db)
+	}
+	for _, c := range []struct {
+		path string
+		code int
+	}{
+		{path(99, "GraniteLive"), 404}, // unknown server
+		{path(id, "%20"), 400},         // empty database name
+		{"/api/servers/abc/databases/x/cards/storage/checkdb-room", 400},
+		{path(id, "GraniteLive"), 502}, // a SQL login with no stored password cannot connect
+		{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/cards/backups/checkdb-room", id), 404}, // only storage has it
+	} {
+		rec := postPath(h, c.path)
+		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("POST %s: %d %s, want %d", c.path, rec.Code, rec.Body.String(), c.code)
+		}
+	}
+	// GET is not the route: it reads as an unknown card.
+	if rec := getPath(h, path(id, "GraniteLive")); rec.Code != 404 && rec.Code != 405 {
+		t.Errorf("GET checkdb-room: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The deadlock report route against a real store; nothing here dials a SQL Server.
+func TestDeadlocksRoute(t *testing.T) {
+	h, id := cardsHandler(t, domain.ServerInput{Name: "local", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"})
+	path := func(server int64, db string) string {
+		return fmt.Sprintf("/api/servers/%d/databases/%s/cards/performance/deadlocks", server, db)
+	}
+	for _, c := range []struct {
+		path string
+		code int
+	}{
+		{path(99, "GraniteLive"), 404}, // unknown server
+		{path(id, "%20"), 400},         // empty database name
+		{"/api/servers/abc/databases/x/cards/performance/deadlocks", 400},
+		{path(id, "GraniteLive"), 502},                                                          // a SQL login with no stored password cannot connect
+		{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/cards/storage/deadlocks", id), 404}, // only performance has it
+	} {
+		rec := postPath(h, c.path)
+		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("POST %s: %d %s, want %d", c.path, rec.Code, rec.Body.String(), c.code)
+		}
+	}
+	// GET is not the route: it reads as an unknown card.
+	if rec := getPath(h, path(id, "GraniteLive")); rec.Code != 404 && rec.Code != 405 {
+		t.Errorf("GET deadlocks: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The card detail route against a real store; nothing here dials a SQL Server.
+func TestCardDetailRoute(t *testing.T) {
+	h, id := cardsHandler(t, domain.ServerInput{Name: "local", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"})
+	path := func(server int64, db, card string) string {
+		return fmt.Sprintf("/api/servers/%d/databases/%s/cards/%s", server, db, card)
+	}
+
+	for _, c := range []struct {
+		path string
+		code int
+	}{
+		{path(id, "GraniteLive", "nothing"), 404},   // unknown card id, before any dialling
+		{path(id, "GraniteLive", "Backups"), 404},   // ids are lower case
+		{path(99, "GraniteLive", "backups"), 404},   // unknown server
+		{path(id, "GraniteLive", ""), 404},          // no card: not a route
+		{path(id, "GraniteLive", "backups/x"), 404}, // not a route
+		{path(id, "%20", "backups"), 400},           // empty database name
+		{"/api/servers/abc/databases/x/cards/backups", 400},
+		{path(id, "GraniteLive", "backups"), 502}, // a SQL login with no stored password cannot connect
+		{path(id, "GraniteLive", "setup"), 502},
+		{path(id, "GraniteLive", "storage"), 502},
+		{path(id, "GraniteLive", "upkeep"), 502},
+		{path(id, "GraniteLive", "performance"), 502},
+	} {
+		rec := getPath(h, c.path)
+		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("GET %s: %d %s, want %d", c.path, rec.Code, rec.Body.String(), c.code)
+		}
+	}
+	if rec := getPath(h, path(id, "GraniteLive", "nothing")); !strings.Contains(rec.Body.String(), `there is no card named \"nothing\"`) {
+		t.Errorf("unknown card message: %s", rec.Body.String())
+	}
+}
+
+// TestCardDetailLive reads the card details from a real instance, read-only, when
+// SQLMONITOR_TEST_HOST (Windows authentication) and SQLMONITOR_TEST_DB name one.
+func TestCardDetailLive(t *testing.T) {
+	host, dbName := os.Getenv("SQLMONITOR_TEST_HOST"), os.Getenv("SQLMONITOR_TEST_DB")
+	if host == "" || dbName == "" {
+		t.Skip("set SQLMONITOR_TEST_HOST and SQLMONITOR_TEST_DB to read a live instance")
+	}
+	h, id := cardsHandler(t, domain.ServerInput{Name: "live", Host: host, Auth: domain.AuthWindows})
+	path := func(db, card string) string {
+		return fmt.Sprintf("/api/servers/%d/databases/%s/cards/%s", id, url.PathEscape(db), card)
+	}
+	read := func(db, card string) (domain.CardDetail, string) {
+		rec := getPath(h, path(db, card))
+		var d domain.CardDetail
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &d) != nil {
+			t.Fatalf("GET %s: %d %s", path(db, card), rec.Code, rec.Body.String())
+		}
+		return d, rec.Body.String()
+	}
+
+	d, body := read(dbName, "setup")
+	if d.Card.ID != domain.CardSetup || d.Card.Status == "" || len(d.Checks) != 27 || len(d.Card.Facts) != 4 ||
+		!strings.Contains(body, `"fixes":`) || d.Card.Fixable != len(d.Fixes) {
+		t.Errorf("setup detail: %s", body)
+	}
+	d, body = read(dbName, "upkeep")
+	if d.Card.ID != domain.CardUpkeep || d.Card.Status == "" || len(d.Checks) != 7 || len(d.Card.Facts) != 4 ||
+		!strings.Contains(body, `"fixes":`) || d.Card.Fixable != len(d.Fixes) || strings.Contains(body, "checkdbRoom") {
+		t.Errorf("upkeep detail: %s", body)
+	}
+	for _, x := range d.Findings {
+		if x.FixID != "" && x.FixID != domain.FixUpdateStatistics {
+			t.Errorf("upkeep finding with another fix: %+v", x)
+		}
+	}
+	t.Logf("upkeep: %s %q %q %+v", d.Card.Status, d.Card.StatusText, d.Card.Verdict, d.Card.Facts)
+	d, body = read(dbName, "performance")
+	if d.Card.ID != domain.CardPerformance || d.Card.Status == "" || len(d.Checks) != 12 || len(d.Card.Facts) != 4 ||
+		!strings.Contains(body, `"deadlocks":null`) || strings.Contains(body, "checkdbRoom") || strings.Contains(body, `"fixes"`) {
+		t.Errorf("performance detail: %s", body)
+	}
+	for _, x := range d.Findings {
+		if x.Clock == "" {
+			t.Errorf("performance finding without a clock: %+v", x)
+		}
+	}
+	t.Logf("performance: %s %q %q %+v", d.Card.Status, d.Card.StatusText, d.Card.Verdict, d.Card.Facts)
+
+	// DLK01 on request, then the detail carries it.
+	rec := postPath(h, path(dbName, "performance/deadlocks"))
+	var report domain.DeadlockReport
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &report) != nil || report.Days != 7 || report.Pairs == nil || report.Source == "" {
+		t.Fatalf("POST deadlocks: %d %s", rec.Code, rec.Body.String())
+	}
+	t.Logf("deadlocks: %s", rec.Body.String())
+	d, body = read(dbName, "performance")
+	if d.Deadlocks == nil || !d.Deadlocks.CapturedAt.Equal(report.CapturedAt) || d.Deadlocks.Total != report.Total {
+		t.Errorf("stored deadlocks: %s", body)
+	}
+	if rec := postPath(h, path("NoSuchDatabase_x9", "performance/deadlocks")); rec.Code != 404 {
+		t.Errorf("unknown database: %d %s", rec.Code, rec.Body.String())
+	}
+	d, body = read(dbName, "storage")
+	if d.Card.ID != domain.CardStorage || len(d.Checks) != 19 || len(d.Card.Facts) != 4 || !strings.Contains(body, `"checkdbRoom":`) {
+		t.Errorf("storage detail: %s", body)
+	}
+	t.Logf("storage: %s %q %q %+v", d.Card.Status, d.Card.StatusText, d.Card.Verdict, d.Card.Facts)
+
+	// STO10 on request, then the detail carries it and the check follows its verdict.
+	rec = postPath(h, path(dbName, "storage/checkdb-room"))
+	var room domain.CheckdbRoom
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &room) != nil || room.EstimateKB <= 0 || room.Finding.CheckID != "STO10" {
+		t.Fatalf("POST checkdb-room: %d %s", rec.Code, rec.Body.String())
+	}
+	t.Logf("checkdb room: %s", rec.Body.String())
+	d, body = read(dbName, "storage")
+	if d.CheckdbRoom == nil || d.CheckdbRoom.EstimateKB != room.EstimateKB || !d.CheckdbRoom.CapturedAt.Equal(room.CapturedAt) {
+		t.Errorf("stored room: %s", body)
+	}
+	for _, c := range d.Checks {
+		if c.CheckID == "STO10" && c.Status == domain.CheckSkipped {
+			t.Errorf("STO10 after a run: %+v", c)
+		}
+	}
+	if rec := postPath(h, path("NoSuchDatabase_x9", "storage/checkdb-room")); rec.Code != 404 {
+		t.Errorf("unknown database: %d %s", rec.Code, rec.Body.String())
+	}
+	d, body = read(dbName, "backups")
+	if d.Card.ID != domain.CardBackups || len(d.Checks) != 6 || d.Findings == nil {
+		t.Errorf("backups detail: %s", body)
+	}
+	t.Logf("backups: %s %q %q", d.Card.Status, d.Card.StatusText, d.Card.Verdict)
+	if rec := getPath(h, path("NoSuchDatabase_x9", "backups")); rec.Code != 404 {
+		t.Errorf("unknown database: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The generic fix routes against a real store; nothing here dials a SQL Server.
+func TestFixRoutes(t *testing.T) {
+	h, id := cardsHandler(t, domain.ServerInput{Name: "local", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"})
+	path := func(server int64, db, fix, action string) string {
+		return fmt.Sprintf("/api/servers/%d/databases/%s/fixes/%s/%s", server, db, fix, action)
+	}
+	for _, action := range []string{"preview", "apply"} {
+		for _, c := range []struct {
+			path string
+			code int
+		}{
+			{path(id, "GraniteLive", "drop-everything", action), 404}, // unknown fix id, before any dialling
+			{path(id, "GraniteLive", "Auto-Close", action), 404},      // ids are lower case
+			{path(99, "GraniteLive", "auto-close", action), 404},      // unknown server
+			{path(99, "GraniteLive", "query-store", action), 404},
+			{path(id, "%20", "auto-close", action), 400}, // empty database name
+			{fmt.Sprintf("/api/servers/abc/databases/x/fixes/auto-close/%s", action), 400},
+			{path(id, "GraniteLive", "auto-close", action), 502}, // a SQL login with no stored password cannot connect
+			{path(id, "GraniteLive", "max-server-memory", action), 502},
+			{path(id, "GraniteLive", "query-store", action), 502},
+			{path(99, "GraniteLive", "update-statistics", action), 404},
+			{path(id, "GraniteLive", "update-statistics", action), 502},
+		} {
+			rec := postPath(h, c.path)
+			if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
+				t.Errorf("POST %s: %d %s, want %d", c.path, rec.Code, rec.Body.String(), c.code)
+			}
+		}
+	}
+	if rec := postPath(h, path(id, "GraniteLive", "nothing", "preview")); !strings.Contains(rec.Body.String(), `there is no fix named \"nothing\"`) {
+		t.Errorf("unknown fix message: %s", rec.Body.String())
+	}
+	// Not routes: GET, no action, an unknown action.
+	for _, p := range []string{path(id, "GraniteLive", "auto-close", "preview"), path(id, "GraniteLive", "auto-close", "run")} {
+		if rec := getPath(h, p); rec.Code != 404 && rec.Code != 405 {
+			t.Errorf("GET %s: %d %s", p, rec.Code, rec.Body.String())
+		}
+	}
+	for _, p := range []string{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/fixes/auto-close", id), path(id, "GraniteLive", "auto-close", "run")} {
+		if rec := postPath(h, p); rec.Code != 404 {
+			t.Errorf("POST %s: %d %s", p, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestFixPreviewsLive previews every fix the Setup and Upkeep cards offer on a real instance, and
+// one that they do not, when SQLMONITOR_TEST_HOST (Windows authentication) and SQLMONITOR_TEST_DB
+// name one. It never applies anything.
+func TestFixPreviewsLive(t *testing.T) {
+	host, dbName := os.Getenv("SQLMONITOR_TEST_HOST"), os.Getenv("SQLMONITOR_TEST_DB")
+	if host == "" || dbName == "" {
+		t.Skip("set SQLMONITOR_TEST_HOST and SQLMONITOR_TEST_DB to read a live instance")
+	}
+	h, id := cardsHandler(t, domain.ServerInput{Name: "live", Host: host, Auth: domain.AuthWindows})
+	fixes := []domain.Fix{}
+	for _, card := range []string{"setup", "upkeep"} {
+		rec := getPath(h, fmt.Sprintf("/api/servers/%d/databases/%s/cards/%s", id, url.PathEscape(dbName), card))
+		var d domain.CardDetail
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &d) != nil {
+			t.Fatalf("%s detail: %d %s", card, rec.Code, rec.Body.String())
+		}
+		fixes = append(fixes, d.Fixes...)
+	}
+	offered := map[string]bool{}
+	for _, f := range fixes {
+		offered[f.ID] = true
+		p := fmt.Sprintf("/api/servers/%d/databases/%s/fixes/%s/preview", id, url.PathEscape(dbName), f.ID)
+		rec := postPath(h, p)
+		var pv domain.FixPreview
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &pv) != nil || pv.Statement == "" || len(pv.Warnings) == 0 {
+			t.Errorf("POST %s: %d %s", p, rec.Code, rec.Body.String())
+		}
+		t.Logf("%s: %s", f.ID, pv.Statement)
+	}
+	for _, def := range domain.FixDefs {
+		if offered[def.ID] {
+			continue
+		}
+		p := fmt.Sprintf("/api/servers/%d/databases/%s/fixes/%s/preview", id, url.PathEscape(dbName), def.ID)
+		if rec := postPath(h, p); rec.Code != 404 {
+			t.Errorf("POST %s (not offered): %d %s", p, rec.Code, rec.Body.String())
+		}
+		break
+	}
+}

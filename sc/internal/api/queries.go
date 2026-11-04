@@ -1,0 +1,31 @@
+package api
+
+import (
+	"net/http"
+
+	"sqlmonitor/internal/service"
+)
+
+// queriesRoutes registers the query page of docs/phase4c-contract.md, part 1. Its fixes
+// (force-plan, unforce-plan, evict-plan, update-statistics-table) go through the generic fix routes
+// with their options.
+func queriesRoutes(mux *http.ServeMux, svc *service.Service) {
+	// One query of a database by its query hash (0x and 16 hex digits, as a QRY01 finding's
+	// evidence shows it): plans, what they say, history, waits, the procedure's statements, the
+	// tables, the plain sentences and the hand-over. Reads only. 400 for a hash that is not one, 404
+	// for an unknown server or database, 409 when the database is not online, 502 when the server
+	// cannot be read.
+	mux.HandleFunc("GET /api/servers/{id}/databases/{db}/queries/{hash}", func(w http.ResponseWriter, r *http.Request) {
+		id, name, err := serverAndDatabase(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		d, err := svc.QueryDetail(r.Context(), id, name, r.PathValue("hash"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
+	})
+}

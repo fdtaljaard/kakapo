@@ -1,0 +1,78 @@
+package store
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"sqlmonitor/internal/domain"
+)
+
+func TestInsertCardRead(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	card := domain.Card{ID: domain.CardBackups, Status: domain.StatusAmber, StatusText: "1 thing to do",
+		Verdict: "Database uses FULL recovery but its log has never been backed up.", ToDo: 1}
+	findings := []domain.Finding{
+		{CheckID: "BAK02", Severity: domain.SeverityHigh, Owner: domain.OwnerClientIT, When: domain.WhenOnline,
+			Effort: domain.EffortQuickWin, Object: "GraniteLive", Finding: card.Verdict, Why: "w", DoThis: "d",
+			ThenCheck: "t", Evidence: "Log file size: 512 MB."},
+		{CheckID: "BAK05", Severity: domain.SeverityInfo, Owner: domain.OwnerClientIT, When: domain.WhenNone,
+			Effort: domain.EffortNone, Object: "GraniteLive", Finding: "You could lose up to 24 hours of data."},
+	}
+	checks := []domain.CheckStatus{{CheckID: "BAK02", Status: domain.CheckFinding},
+		{CheckID: "BAK03", Status: domain.CheckSkipped, Note: "not on this version"}}
+
+	for want := int64(1); want <= 2; want++ {
+		id, err := st.InsertCardRead(ctx, 7, "GraniteLive", card, findings, checks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id != want {
+			t.Errorf("card read id %d, want %d", id, want)
+		}
+	}
+
+	var status, verdict, cardID string
+	var toDo int
+	var at time.Time
+	if err := st.db.QueryRowContext(ctx, `SELECT card, status, verdict, to_do, captured_at FROM card_read WHERE id = 2`).
+		Scan(&cardID, &status, &verdict, &toDo, &at); err != nil {
+		t.Fatal(err)
+	}
+	if cardID != "backups" || status != "amber" || verdict != card.Verdict || toDo != 1 ||
+		time.Since(asUTC(at)) > time.Minute || time.Since(asUTC(at)) < 0 {
+		t.Errorf("card_read: %s %s %q %d %v (want UTC now)", cardID, status, verdict, toDo, at)
+	}
+	var n int
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM finding WHERE card_read_id = 2`).Scan(&n); err != nil || n != 2 {
+		t.Errorf("findings of read 2: %d %v", n, err)
+	}
+	var when, evidence string
+	if err := st.db.QueryRowContext(ctx, `SELECT when_, evidence FROM finding WHERE card_read_id = 1 AND check_id = 'BAK02'`).
+		Scan(&when, &evidence); err != nil || when != "Online" || evidence != "Log file size: 512 MB." {
+		t.Errorf("finding row: %q %q %v", when, evidence, err)
+	}
+	var note *string
+	if err := st.db.QueryRowContext(ctx, `SELECT note FROM check_status WHERE card_read_id = 1 AND check_id = 'BAK02'`).Scan(&note); err != nil || note != nil {
+		t.Errorf("passed check note should be NULL: %v %v", note, err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM check_status`).Scan(&n); err != nil || n != 4 {
+		t.Errorf("check statuses: %d %v", n, err)
+	}
+
+	// A grey read with no findings is kept too.
+	grey := domain.Card{ID: domain.CardBackups, Status: domain.StatusGrey, StatusText: "Could not be read"}
+	if _, err := st.InsertCardRead(ctx, 7, "Archive", grey, []domain.Finding{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT count(*) FROM card_read`).Scan(&n); err != nil || n != 3 {
+		t.Errorf("card reads: %d %v", n, err)
+	}
+}
