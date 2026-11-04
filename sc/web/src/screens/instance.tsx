@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from "react-route
 import { ArrowRight, ChevronRight, Loader2, Pencil, RotateCw, XCircle } from "lucide-react"
 
 import { api, type DatabaseStatus, type Server } from "@/api"
+import { InstalledHelpers } from "@/components/installed-helpers"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -58,6 +59,9 @@ function InstancePage({ serverId }: { serverId: number }) {
         ) : (
           <DatabasePicker server={server} />
         ))}
+
+      {/* Phase 5e: what kakapo created on this server, with Create or Remove (docs/phase5e-contract.md). */}
+      {server && <InstalledHelpers server={server} />}
     </PageShell>
   )
 }

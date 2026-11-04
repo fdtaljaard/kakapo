@@ -33,12 +33,23 @@ import (
 // @currentdb, @waittime, @waitresource, @lockMode, @isolationlevel, @trancount, @status,
 // @transactionname, @lasttranstarted, @lastbatchstarted, @clientoption1, inputbuf/text()) and the
 // monitorLoop attribute. Dates are read as text and parsed in Go, so one odd value never costs the read.
+//
+// Phase 5e (docs/phase5e-contract.md): when kakapo's event session exists (@kpath, its files'
+// pattern, and @kstart, when it started, UTC text), its files come first, in their own TRY: every
+// blocked_process_report of the window, each report with the event's duration. From the time they begin
+// (@cut: the session's start or its first report, whichever is earlier) system_health's snapshots are
+// left out, and system_health is not read at all when kakapo's files cover the whole window. The first
+// row gains whether kakapo's files were read, why not, and @cut; each pair its source (kakapo, or NULL
+// for system_health).
 var blockingHistoryQuery = Tag(safeSession + `SET NOCOUNT ON;
 DECLARE @path nvarchar(520), @source nvarchar(20), @err nvarchar(2048), @fileErr nvarchar(2048), @shredErr nvarchar(2048), @configErr nvarchar(2048), @running bit = 0;
 DECLARE @threshold int, @rcsi bit, @dbid int = DB_ID(@db), @offset int = DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME());
 DECLARE @since datetime2 = DATEADD(DAY, -@days, SYSUTCDATETIME());
+DECLARE @kakapoErr nvarchar(2048), @kread bit = 0, @kstart datetime2, @kfirst datetime2, @cut datetime2;
+IF ISNULL(@kstartText, N'') <> N'' SET @kstart = CONVERT(datetime2, @kstartText, 126);
 DECLARE @events TABLE (event_xml xml NULL);
-DECLARE @reports TABLE (event_utc datetime2 NULL, monitor_loop bigint NULL, bpr xml NULL);
+DECLARE @kevents TABLE (event_xml xml NULL);
+DECLARE @reports TABLE (event_utc datetime2 NULL, monitor_loop bigint NULL, bpr xml NULL, src nvarchar(20) NULL, duration_ms bigint NULL);
 DECLARE @pairs TABLE (
     event_utc datetime2 NULL, monitor_loop bigint NULL,
     bd_spid int NULL, bd_ecid int NULL, bd_login nvarchar(256) NULL, bd_host nvarchar(256) NULL, bd_app nvarchar(256) NULL,
@@ -48,7 +59,7 @@ DECLARE @pairs TABLE (
     bg_spid int NULL, bg_ecid int NULL, bg_login nvarchar(256) NULL, bg_host nvarchar(256) NULL, bg_app nvarchar(256) NULL,
     bg_dbname nvarchar(256) NULL, bg_dbid int NULL, bg_status nvarchar(30) NULL, bg_isolation nvarchar(50) NULL, bg_trancount int NULL,
     bg_tran_name nvarchar(1024) NULL, bg_last_tran nvarchar(40) NULL, bg_last_batch nvarchar(40) NULL, bg_xactid nvarchar(40) NULL,
-    bg_option1 bigint NULL, bg_inputbuf nvarchar(4000) NULL);
+    bg_option1 bigint NULL, bg_inputbuf nvarchar(4000) NULL, src nvarchar(20) NULL);
 DECLARE @major int = CONVERT(int, PARSENAME(CONVERT(varchar(32), SERVERPROPERTY('ProductVersion')), 4));
 
 BEGIN TRY
@@ -59,6 +70,37 @@ BEGIN CATCH
     SET @configErr = ERROR_MESSAGE();
 END CATCH;
 
+IF ISNULL(@kpath, N'') <> N''
+BEGIN TRY
+    IF @major >= 14
+        INSERT @kevents (event_xml)
+        EXEC sys.sp_executesql N'/* kakapo */ SELECT CONVERT(xml, event_data)
+            FROM sys.fn_xe_file_target_read_file(@p, NULL, NULL, NULL)
+            WHERE object_name = N''blocked_process_report''
+              AND CONVERT(datetime2, timestamp_utc) >= @s;', N'@p nvarchar(520), @s datetime2', @p = @kpath, @s = @since;
+    ELSE
+        INSERT @kevents (event_xml)
+        SELECT CONVERT(xml, event_data)
+        FROM sys.fn_xe_file_target_read_file(@kpath, NULL, NULL, NULL)
+        WHERE object_name = N'blocked_process_report';
+    INSERT @reports (event_utc, monitor_loop, bpr, src, duration_ms)
+    SELECT t.ts, r.x.value('@monitorLoop', 'bigint'), r.x.query('.'), N'kakapo',
+           e.event_xml.value('(/event/data[@name="duration"]/value/text())[1]', 'bigint') / 1000
+    FROM @kevents AS e
+    CROSS APPLY (SELECT e.event_xml.value('(/event/@timestamp)[1]', 'datetime2')) AS t(ts)
+    CROSS APPLY e.event_xml.nodes('/event/data[@name="blocked_process"]/value/blocked-process-report') AS r(x)
+    WHERE t.ts >= @since;
+    SET @kread = 1;
+    SELECT @kfirst = MIN(event_utc) FROM @reports;
+    SET @cut = CASE WHEN @kstart IS NULL THEN @kfirst WHEN @kfirst IS NULL OR @kstart < @kfirst THEN @kstart ELSE @kfirst END;
+END TRY
+BEGIN CATCH
+    SET @kakapoErr = ERROR_MESSAGE();
+    SET @kread = 0;
+    DELETE @reports;
+END CATCH;
+
+IF @cut IS NULL OR @cut > @since
 BEGIN TRY
     SELECT @running = 1 FROM sys.dm_xe_sessions WHERE name = N'system_health';
     IF @running = 0
@@ -120,14 +162,17 @@ BEGIN TRY
     FROM @events AS e
     CROSS APPLY (SELECT e.event_xml.value('(/event/@timestamp)[1]', 'datetime2')) AS t(ts)
     CROSS APPLY e.event_xml.nodes('/event/data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') AS r(x)
-    WHERE t.ts >= @since;
+    WHERE t.ts >= @since AND (@cut IS NULL OR t.ts < @cut);
 
     INSERT @pairs
     SELECT r.event_utc, r.monitor_loop,
            bd.value('(process/@spid)[1]', 'int'), bd.value('(process/@ecid)[1]', 'int'),
            bd.value('(process/@loginname)[1]', 'nvarchar(256)'), bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
            bd.value('(process/@clientapp)[1]', 'nvarchar(256)'), bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
-           bd.value('(process/@currentdb)[1]', 'int'), bd.value('(process/@waittime)[1]', 'bigint'),
+           bd.value('(process/@currentdb)[1]', 'int'),
+           -- kakapo's report carries the block's duration (microseconds): the longer of it and the wait.
+           CASE WHEN r.duration_ms > ISNULL(bd.value('(process/@waittime)[1]', 'bigint'), 0) THEN r.duration_ms
+                ELSE bd.value('(process/@waittime)[1]', 'bigint') END,
            bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'), bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
            bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'), bd.value('(process/@trancount)[1]', 'int'),
            bd.value('(process/@status)[1]', 'nvarchar(30)'), bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
@@ -141,7 +186,8 @@ BEGIN TRY
            bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'), bg.value('(process/@trancount)[1]', 'int'),
            bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'), bg.value('(process/@lasttranstarted)[1]', 'nvarchar(40)'),
            bg.value('(process/@lastbatchstarted)[1]', 'nvarchar(40)'), bg.value('(process/@xactid)[1]', 'nvarchar(40)'),
-           bg.value('(process/@clientoption1)[1]', 'bigint'), LEFT(bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'), 4000)
+           bg.value('(process/@clientoption1)[1]', 'bigint'), LEFT(bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'), 4000),
+           r.src
     FROM @reports AS r
     OUTER APPLY r.bpr.nodes('/blocked-process-report/blocked-process') AS bdn(bd)
     OUTER APPLY r.bpr.nodes('/blocked-process-report/blocking-process') AS bgn(bg)
@@ -155,12 +201,12 @@ BEGIN CATCH
     DELETE @pairs;
 END CATCH;
 
-SELECT @source, @err, @fileErr, @shredErr, @configErr, @threshold, @dbid, @rcsi, @offset, @major;
+SELECT @source, @err, @fileErr, @shredErr, @configErr, @threshold, @dbid, @rcsi, @offset, @major, @kread, @kakapoErr, @cut;
 SELECT event_utc, monitor_loop,
        bd_spid, bd_ecid, bd_login, bd_host, bd_app, bd_dbname, bd_dbid, bd_wait_ms, bd_wait_resource, bd_lock_mode,
        bd_isolation, bd_trancount, bd_status, bd_tran_name, bd_last_tran, bd_last_batch, bd_xactid, bd_option1, bd_inputbuf,
        bg_spid, bg_ecid, bg_login, bg_host, bg_app, bg_dbname, bg_dbid, bg_status, bg_isolation, bg_trancount,
-       bg_tran_name, bg_last_tran, bg_last_batch, bg_xactid, bg_option1, bg_inputbuf
+       bg_tran_name, bg_last_tran, bg_last_batch, bg_xactid, bg_option1, bg_inputbuf, src
 FROM @pairs ORDER BY event_utc;`)
 
 // blockingNamesQuery names, in the database, what the reports point at (@res, an XML list built by
@@ -227,13 +273,37 @@ SELECT i, query_hash FROM @hashes;`)
 // blockingHashTextsMax is how many distinct blocker statements the Query Store match takes.
 const blockingHashTextsMax = 200
 
-// ReadBlockingHistory reads the blocking of the last days from the system_health session for one
-// database, SELECTs only, and names what the reports point at in that database. It fills everything of
-// the inputs but when it was read and how long it took. An error says why the session could not be read;
-// a part that failed (the threshold, the names, the hashes) is a note instead.
-func ReadBlockingHistory(ctx context.Context, db *sql.DB, database string, days int) (domain.BlockingHistoryInputs, error) {
+// kakapoParams are the query's parameters for kakapo's session files: the pattern ("" when the session
+// does not exist) and when it started, as ISO text in UTC ("" when unknown).
+func kakapoParams(k domain.XEFiles) (pattern, start string) {
+	if k.Pattern == "" {
+		return "", ""
+	}
+	if k.StartedAt != nil {
+		start = k.StartedAt.UTC().Format("2006-01-02T15:04:05.000")
+	}
+	return k.Pattern, start
+}
+
+// historySource is where a history was read from: kakapo's files first when they were read (alone
+// when they cover the whole window), else system_health's file or ring buffer.
+func historySource(kakapoRead bool, cut *time.Time, since time.Time, systemHealth string) string {
+	if !kakapoRead {
+		return systemHealth
+	}
+	return domain.KakapoSource(systemHealth, cut != nil && !cut.After(since))
+}
+
+// ReadBlockingHistory reads the blocking of the last days for one database, SELECTs only: kakapo's
+// session files first when the session exists (kakapo), then the system_health session for the time
+// before them; and names what the reports point at in that database. It fills everything of the inputs
+// but when it was read and how long it took. An error says why nothing could be read; a part that
+// failed (kakapo's files, system_health beside them, the threshold, the names, the hashes) is a note.
+func ReadBlockingHistory(ctx context.Context, db *sql.DB, database string, days int, kakapo domain.XEFiles) (domain.BlockingHistoryInputs, error) {
 	in := domain.BlockingHistoryInputs{Database: database, Days: days, Reports: []domain.BlockedProcessReport{}, Notes: []string{}}
-	rows, err := db.QueryContext(ctx, blockingHistoryQuery, sql.Named("db", database), sql.Named("days", days))
+	kpath, kstart := kakapoParams(kakapo)
+	rows, err := db.QueryContext(ctx, blockingHistoryQuery, sql.Named("db", database), sql.Named("days", days),
+		sql.Named("kpath", kpath), sql.Named("kstartText", kstart))
 	if err != nil {
 		return in, friendlyError(err)
 	}
@@ -245,25 +315,47 @@ func ReadBlockingHistory(ctx context.Context, db *sql.DB, database string, days 
 		return in, errors.New("SQL Server returned nothing from the system_health session")
 	}
 	var (
-		source, readErr, fileErr, shredErr, configErr sql.NullString
-		threshold, dbID, offset, major                sql.NullInt64
-		rcsi                                          sql.NullBool
+		source, readErr, fileErr, shredErr, configErr, kakapoErr sql.NullString
+		threshold, dbID, offset, major                           sql.NullInt64
+		rcsi, kread                                              sql.NullBool
+		cut                                                      sql.NullTime
 	)
-	if err := rows.Scan(&source, &readErr, &fileErr, &shredErr, &configErr, &threshold, &dbID, &rcsi, &offset, &major); err != nil {
+	if err := rows.Scan(&source, &readErr, &fileErr, &shredErr, &configErr, &threshold, &dbID, &rcsi, &offset, &major,
+		&kread, &kakapoErr, &cut); err != nil {
 		return in, err
 	}
+	shErr := ""
 	if readErr.String != "" {
-		msg := readErr.String
+		shErr = readErr.String
 		if fileErr.String != "" {
-			msg = "the session files could not be read (" + fileErr.String + ") and then " + msg
+			shErr = "the session files could not be read (" + fileErr.String + ") and then " + shErr
 		}
-		return in, errors.New(msg)
+		if !kread.Bool {
+			if kakapoErr.String != "" {
+				shErr = "kakapo's session files could not be read (" + kakapoErr.String + "), and " + shErr
+			}
+			return in, errors.New(shErr)
+		}
 	}
-	in.Source, in.ThresholdSeconds, in.DatabaseID, in.OffsetMinutes, in.RCSI =
-		source.String, int(threshold.Int64), int(dbID.Int64), int(offset.Int64), rcsi.Bool
-	if fileErr.String != "" {
+	var cutAt *time.Time
+	if kread.Bool && cut.Valid {
+		t := cut.Time
+		u := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+		cutAt = &u
+		in.KakapoSince = cutAt
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	in.Source = historySource(kread.Bool, cutAt, since, source.String)
+	in.ThresholdSeconds, in.DatabaseID, in.OffsetMinutes, in.RCSI = int(threshold.Int64), int(dbID.Int64), int(offset.Int64), rcsi.Bool
+	switch {
+	case kakapoErr.String != "":
+		in.Notes = append(in.Notes, "kakapo's session files could not be read ("+kakapoErr.String+"), so this is system_health alone.")
+	case shErr != "":
+		in.Notes = append(in.Notes, "system_health could not be read ("+shErr+"), so the days before kakapo's session are missing.")
+	}
+	if fileErr.String != "" && shErr == "" {
 		in.Notes = append(in.Notes, "The session files could not be read ("+fileErr.String+"), so this is the ring buffer, which keeps only the last few hours.")
-	} else if in.Source == domain.DeadlockSourceRingBuffer {
+	} else if source.String == domain.DeadlockSourceRingBuffer {
 		in.Notes = append(in.Notes, "The system_health session has no file target, so this is its ring buffer, which keeps only the last few hours.")
 	}
 	if shredErr.String != "" {
@@ -312,13 +404,13 @@ func scanBlockedReport(rows *sql.Rows) (domain.BlockedProcessReport, error) {
 		bdLogin, bdHost, bdApp, bdDB, bdRes, bdMode, bdIso, bdStatus   sql.NullString
 		bdTranName, bdLastTran, bdLastBatch, bdXact, bdBuf             sql.NullString
 		bgLogin, bgHost, bgApp, bgDB, bgStatus, bgIso, bgTranName      sql.NullString
-		bgLastTran, bgLastBatch, bgXact, bgBuf                         sql.NullString
+		bgLastTran, bgLastBatch, bgXact, bgBuf, src                    sql.NullString
 	)
 	if err := rows.Scan(&at, &loop,
 		&bdSPID, &bdECID, &bdLogin, &bdHost, &bdApp, &bdDB, &bdDBID, &bdWait, &bdRes, &bdMode,
 		&bdIso, &bdTran, &bdStatus, &bdTranName, &bdLastTran, &bdLastBatch, &bdXact, &bdOpt, &bdBuf,
 		&bgSPID, &bgECID, &bgLogin, &bgHost, &bgApp, &bgDB, &bgDBID, &bgStatus, &bgIso, &bgTran,
-		&bgTranName, &bgLastTran, &bgLastBatch, &bgXact, &bgOpt, &bgBuf); err != nil {
+		&bgTranName, &bgLastTran, &bgLastBatch, &bgXact, &bgOpt, &bgBuf, &src); err != nil {
 		return domain.BlockedProcessReport{}, err
 	}
 	// A head the snapshot names without a blocker (an empty blocking-process) reads as Blocking.SPID 0.
@@ -327,6 +419,7 @@ func scanBlockedReport(rows *sql.Rows) (domain.BlockedProcessReport, error) {
 	return domain.BlockedProcessReport{
 		EventUTC:    time.Date(at.Time.Year(), at.Time.Month(), at.Time.Day(), at.Time.Hour(), at.Time.Minute(), at.Time.Second(), at.Time.Nanosecond(), time.UTC),
 		MonitorLoop: loop.Int64,
+		Source:      src.String,
 		Blocked: domain.BlockedProcess{SPID: int(bdSPID.Int64), ECID: int(bdECID.Int64), Login: bdLogin.String, Host: bdHost.String,
 			Program: bdApp.String, Database: bdDB.String, DatabaseID: int(bdDBID.Int64), WaitMs: bdWait.Int64, WaitResource: bdRes.String,
 			LockMode: bdMode.String, Isolation: bdIso.String, TranCount: int(bdTran.Int64), Status: bdStatus.String, TranName: bdTranName.String,

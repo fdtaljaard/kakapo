@@ -17,7 +17,7 @@ const BLK01_NOT_RUN =
 const LOCK_WHY = "Blocking: sessions waiting for locks held by other sessions."
 const THEN_CHECK = "Re-run after a week: fewer occurrences for the top blocker"
 const MISSED_NOTE =
-  "system_health looks every five minutes, so blocks shorter than that are not in this history; the longest and most repeated ones are. With the blocked process threshold set and kakapo's Extended Events session (phase 5e) every block over 5 seconds is kept."
+  "system_health looks every five minutes, so blocks shorter than that are not in this history; the longest and most repeated ones are. kakapo's event session (Installed helpers on the instance page) keeps every block over 5 seconds."
 
 // The server's clock in the fixtures: the browser's own, as "2026-11-03T14:00".
 function hourText(d: Date): string {

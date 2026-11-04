@@ -17,6 +17,11 @@ import (
 // the object it held, classifies the head blocker as the live blocking page does (domain/blocking.go)
 // and states one BLK01 finding per leader. A block shorter than the five-minute snapshot is missed,
 // and the report says so (MissedNote).
+//
+// Phase 5e (docs/phase5e-contract.md): when kakapo's event session exists, its files come first. Its
+// blocked_process_report fires at every threshold interval while a block lasts, so every block over the
+// threshold is there with its real duration; system_health's snapshots fill only the days before the
+// session existed (KakapoSince), and the report says which source each day came from.
 
 // BlockingHistoryDays is the window the read takes by default, and its most.
 const BlockingHistoryDays = 7
@@ -73,7 +78,26 @@ type BlockedProcessReport struct {
 	MonitorLoop int64
 	Blocked     BlockedProcess
 	Blocking    BlockedProcess
+	// Source is BlockSourceKakapo for a report of kakapo's session; "" for system_health's.
+	Source string
 }
+
+// BlockSourceKakapo marks a report read from kakapo's session files, and the history source when they
+// cover the whole window.
+const BlockSourceKakapo = "kakapo"
+
+// KakapoSource is the history's (and the deadlock report's) source when kakapo's files were read:
+// "kakapo" when they cover the whole window, else "kakapo+" and system_health's source (file,
+// ring-buffer) for the days before.
+func KakapoSource(systemHealth string, coversWindow bool) string {
+	if coversWindow || systemHealth == "" {
+		return BlockSourceKakapo
+	}
+	return BlockSourceKakapo + "+" + systemHealth
+}
+
+// FromKakapo says whether a source includes kakapo's session files.
+func FromKakapo(source string) bool { return strings.HasPrefix(source, BlockSourceKakapo) }
 
 // HeadOnly says whether the report names a head of a chain without a blocker.
 func (r BlockedProcessReport) HeadOnly() bool { return r.Blocking.SPID == 0 }
@@ -103,6 +127,13 @@ type BlockingHistoryInputs struct {
 	RCSI             bool
 	Reports          []BlockedProcessReport
 	Notes            []string
+	// KakapoSince is when kakapo's session files begin (UTC): the session's start or its first report,
+	// whichever is earlier; nil when they were not read. system_health's reports from then on are left
+	// out (kakapo's have them all).
+	KakapoSince *time.Time
+	// Helper is kakapo's session as read before the history (nil when it could not be read): without
+	// the session, BLK01's Do this ends with installing it and the finding carries the fix.
+	Helper *XESession
 }
 
 // BlockingHistory is BLK01's report (POST .../cards/performance/blocking-history), stored as JSON.
@@ -110,8 +141,8 @@ type BlockingHistory struct {
 	CapturedAt      time.Time `json:"capturedAt"`
 	DurationSeconds float64   `json:"durationSeconds"`
 	Days            int       `json:"days"`
-	Source          string    `json:"source"`       // file, ring-buffer
-	Snapshots       int       `json:"snapshots"`    // system_health snapshots that saw blocking in this database
+	Source          string    `json:"source"`       // file, ring-buffer, kakapo, kakapo+file, kakapo+ring-buffer
+	Snapshots       int       `json:"snapshots"`    // snapshots (system_health) and lock monitor passes (kakapo) that saw blocking here
 	ReportsTotal    int       `json:"reportsTotal"` // blocked-process reports in this database
 	MissedNote      string    `json:"missedNote"`
 	// ThresholdSeconds is the blocked process threshold (s) from sys.configurations; 0 means only the
@@ -121,7 +152,25 @@ type BlockingHistory struct {
 	ByHour           []BlockingHour   `json:"byHour"`   // every hour of the window, server time, oldest first
 	Findings         []Finding        `json:"findings"` // one BLK01 finding per leader, ranked
 	Notes            []string         `json:"notes"`
+	// KakapoSince is when kakapo's session files begin (UTC); left out when they were not read.
+	KakapoSince *time.Time `json:"kakapoSince,omitempty"`
+	// DaySources says where each server day of the window came from (kakapo, system_health, or both on
+	// the day the session began); left out when kakapo's files were not read.
+	DaySources []BlockingDaySource `json:"daySources,omitempty"`
 }
+
+// BlockingDaySource is a server day (2026-11-03) and where its blocking was read from.
+type BlockingDaySource struct {
+	Day    string `json:"day"`
+	Source string `json:"source"` // kakapo, system_health, both
+}
+
+// The sources of a day.
+const (
+	DaySourceKakapo       = "kakapo"
+	DaySourceSystemHealth = "system_health"
+	DaySourceBoth         = "both"
+)
 
 // BlockingLeader is the blocking by one head blocker's statement on one object, in the window.
 type BlockingLeader struct {
@@ -137,7 +186,10 @@ type BlockingLeader struct {
 	// transaction id) seen in one or more snapshots counts once.
 	Occurrences int `json:"occurrences"`
 	// Snapshots are the five-minute system_health snapshots (one lock monitor loop each) that saw it.
-	Snapshots              int           `json:"snapshots"`
+	Snapshots int `json:"snapshots"`
+	// Passes are the lock monitor passes kakapo's session reported it in (one every threshold interval
+	// while it lasted).
+	Passes                 int           `json:"passes,omitempty"`
 	LongestWaitSec         int64         `json:"longestWaitSec"`
 	TotalBlockedSessions   int           `json:"totalBlockedSessions"` // distinct sessions behind it, per episode
 	Kinds                  []string      `json:"kinds"`
@@ -170,14 +222,77 @@ type BlockingHour struct {
 	SessionsBlocked int    `json:"sessionsBlocked"`
 }
 
-// MissedNote is what the history cannot show, by the blocked process threshold.
+// MissedNote is what the history cannot show without kakapo's session, by the blocked process threshold.
 func MissedNote(thresholdSeconds int) string {
 	if thresholdSeconds <= 0 {
 		return fmt.Sprintf("system_health looks every five minutes, so blocks shorter than that are not in this history; "+
-			"the longest and most repeated ones are. With the blocked process threshold set and kakapo's Extended Events "+
-			"session (phase 5e) every block over %d seconds is kept.", blkThresholdAdvised)
+			"the longest and most repeated ones are. kakapo's event session (Installed helpers on the instance page) "+
+			"keeps every block over %d seconds.", blkThresholdAdvised)
 	}
-	return fmt.Sprintf("The blocked process threshold is %d s, but nothing records those reports yet; kakapo's session (phase 5e) will.", thresholdSeconds)
+	return fmt.Sprintf("The blocked process threshold is %d s, but nothing kakapo reads records those reports; kakapo's event session (Installed helpers on the instance page) would.", thresholdSeconds)
+}
+
+// KakapoMissedNote is what the history says when kakapo's session files were read: every block over
+// the threshold since the session began (on the server's clock), and system_health for the days before
+// when the window starts earlier.
+func KakapoMissedNote(thresholdSeconds int, since, windowStart time.Time, offset time.Duration) string {
+	if thresholdSeconds <= 0 {
+		return "kakapo's event session runs, but the blocked process threshold is 0 (off), so it records no block, only deadlocks; " +
+			"Remove and Create it again (Installed helpers on the instance page) to set the threshold."
+	}
+	s := fmt.Sprintf("kakapo's session keeps every block over %d s since %s", thresholdSeconds, since.Add(offset).Format("2006-01-02"))
+	if since.After(windowStart) {
+		s += "; the days before come from system_health's five-minute snapshots, which miss shorter blocks"
+	}
+	return s + "."
+}
+
+// blk01Install is what BLK01's Do this ends with on a server without kakapo's session.
+const blk01Install = "Install kakapo's session to keep every block over 5 seconds (Installed helpers on the instance page)."
+
+// kakapoPasses gives kakapo's reports of one lock monitor pass one time, the pass's first report:
+// the pass reports each blocked session separately, milliseconds apart, where system_health writes a
+// snapshot's reports with one time. A loop number seen again more than a minute later (the counter
+// restarts with SQL Server) is another pass.
+func kakapoPasses(reports []BlockedProcessReport) []BlockedProcessReport {
+	out := append([]BlockedProcessReport(nil), reports...)
+	idx := []int{}
+	for i, r := range out {
+		if r.Source == BlockSourceKakapo {
+			idx = append(idx, i)
+		}
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return out[idx[a]].EventUTC.Before(out[idx[b]].EventUTC) })
+	start := map[int64]time.Time{}
+	for _, i := range idx {
+		t := out[i].EventUTC.UTC()
+		if s, ok := start[out[i].MonitorLoop]; ok && t.Sub(s) <= time.Minute {
+			out[i].EventUTC = s
+			continue
+		}
+		start[out[i].MonitorLoop] = t
+		out[i].EventUTC = t
+	}
+	return out
+}
+
+// daySources says where each server day of the window came from: start, end and since on the server's
+// clock.
+func daySources(start, end, since time.Time) []BlockingDaySource {
+	out := []BlockingDaySource{}
+	cut := since.Format("2006-01-02")
+	for d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC); !d.After(end); d = d.AddDate(0, 0, 1) {
+		day := d.Format("2006-01-02")
+		src := DaySourceKakapo
+		switch {
+		case day < cut:
+			src = DaySourceSystemHealth
+		case day == cut && since.After(start):
+			src = DaySourceBoth
+		}
+		out = append(out, BlockingDaySource{Day: day, Source: src})
+	}
+	return out
 }
 
 // BlockingHistoryHint is what the live blocking sentences (the blocking page, the sample) gain once the
@@ -213,6 +328,7 @@ func (p *PerfSample) AddHistoryHint(h *BlockingHistory) {
 // blkEpisode is one head blocker in one snapshot: who, the sessions behind it, and the object.
 type blkEpisode struct {
 	snapshot time.Time // UTC
+	kakapo   bool      // a lock monitor pass of kakapo's session, not a system_health snapshot
 	head     BlockedProcess
 	object   string
 	victims  map[int]bool
@@ -240,10 +356,29 @@ func BuildBlockingHistory(in BlockingHistoryInputs) BlockingHistory {
 	h.Notes = append(h.Notes, in.Notes...)
 	since := h.CapturedAt.AddDate(0, 0, -days)
 
+	// kakapo's files first: from the time they begin, system_health's snapshots are left out.
+	reports := kakapoPasses(in.Reports)
+	var cut *time.Time
+	if in.KakapoSince != nil {
+		c := in.KakapoSince.UTC()
+		for _, r := range reports {
+			if r.Source == BlockSourceKakapo && r.EventUTC.Before(c) {
+				c = r.EventUTC.UTC()
+			}
+		}
+		cut = &c
+		h.KakapoSince = &c
+		h.MissedNote = KakapoMissedNote(in.ThresholdSeconds, c, since, offset)
+		h.DaySources = daySources(since.Add(offset), h.CapturedAt.Add(offset), c.Add(offset))
+	}
+
 	// The reports of this database in the window, by snapshot.
 	bySnap := map[time.Time][]BlockedProcessReport{}
-	for _, r := range in.Reports {
+	for _, r := range reports {
 		if r.EventUTC.Before(since) || !r.inDatabase(in.Database, in.DatabaseID) {
+			continue
+		}
+		if cut != nil && r.Source != BlockSourceKakapo && !r.EventUTC.Before(*cut) {
 			continue
 		}
 		t := r.EventUTC.UTC()
@@ -287,7 +422,11 @@ func BuildBlockingHistory(in BlockingHistoryInputs) BlockingHistory {
 			hr.Reports += len(reports)
 			hr.SessionsBlocked = max(hr.SessionsBlocked, len(blocked))
 		}
-		episodes = append(episodes, blkSnapshotEpisodes(t, local, reports)...)
+		eps := blkSnapshotEpisodes(t, local, reports)
+		for i := range eps {
+			eps[i].kakapo = reports[0].Source == BlockSourceKakapo
+		}
+		episodes = append(episodes, eps...)
 	}
 
 	h.Leaders = blkLeaders(episodes, in.Database)
@@ -295,8 +434,14 @@ func BuildBlockingHistory(in BlockingHistoryInputs) BlockingHistory {
 		h.Notes = append(h.Notes, fmt.Sprintf("%d more blockers were seen less often and are not listed.", len(h.Leaders)-blkLeadersMax))
 		h.Leaders = h.Leaders[:blkLeadersMax]
 	}
+	install := in.Helper != nil && !in.Helper.Exists
 	for _, l := range h.Leaders {
-		h.Findings = append(h.Findings, blk01Finding(l, days, offset, in.RCSI))
+		x := blk01Finding(l, days, offset, in.RCSI)
+		if install {
+			x.DoThis += " " + blk01Install
+			x.FixID = FixInstallXESession
+		}
+		h.Findings = append(h.Findings, x)
 	}
 	RankFindings(h.Findings)
 	return h
@@ -456,6 +601,7 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		episodes  map[string]time.Time // episode id -> first sighting (server clock)
 		sessions  map[string]bool      // episode id / victim
 		snapshots map[time.Time]bool
+		passes    map[time.Time]bool
 		kinds     map[string]bool
 	}
 	objects := map[string]map[string]bool{}
@@ -482,7 +628,8 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		a := byKey[key]
 		if a == nil {
 			a = &acc{l: BlockingLeader{Key: key, BlockerStatement: stmt, Procedure: proc, Object: e.object},
-				episodes: map[string]time.Time{}, sessions: map[string]bool{}, snapshots: map[time.Time]bool{}, kinds: map[string]bool{}}
+				episodes: map[string]time.Time{}, sessions: map[string]bool{}, snapshots: map[time.Time]bool{}, passes: map[time.Time]bool{},
+				kinds: map[string]bool{}}
 			byKey[key] = a
 			order = append(order, key)
 		}
@@ -494,7 +641,11 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		for v := range e.victims {
 			a.sessions[fmt.Sprintf("%s/%d", id, v)] = true
 		}
-		a.snapshots[e.snapshot] = true
+		if e.kakapo {
+			a.passes[e.snapshot] = true
+		} else {
+			a.snapshots[e.snapshot] = true
+		}
 		for _, k := range blkHistoryKinds(e.head, e.local, database, e.headOnly) {
 			a.kinds[k] = true
 		}
@@ -530,7 +681,7 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 	for _, key := range order {
 		a := byKey[key]
 		l := a.l
-		l.Occurrences, l.Snapshots, l.TotalBlockedSessions = len(a.episodes), len(a.snapshots), len(a.sessions)
+		l.Occurrences, l.Snapshots, l.Passes, l.TotalBlockedSessions = len(a.episodes), len(a.snapshots), len(a.passes), len(a.sessions)
 		l.Kinds = []string{}
 		for _, k := range blkHistoryKindOrder {
 			if a.kinds[k] {
@@ -879,11 +1030,16 @@ func blk01Finding(l BlockingLeader, days int, offset time.Duration, rcsi bool) F
 		if clause != "" {
 			clause = "; " + clause
 		}
-		finding = fmt.Sprintf("%s held an open transaction for %s while waiting (%s), %s in %d days%s%s, the last on %s.",
-			blkLabel(l), longest, blkBehind(l.TotalBlockedSessions), blkTimes(l.Occurrences), days, where, clause, last)
+		finding = fmt.Sprintf("%s held an open transaction for %s while waiting (%s), %s in %s%s%s, the last on %s.",
+			blkLabel(l), longest, blkBehind(l.TotalBlockedSessions), blkTimes(l.Occurrences), plural(int64(days), "day", "days"), where, clause, last)
+	} else if l.Passes > 0 && l.Snapshots == 0 {
+		// kakapo's session saw every block: "{n} blocks, the longest {s}".
+		finding = fmt.Sprintf("%s caused %s in %s on %s, the longest %s, %s blocked in all; %s, the last on %s.",
+			blkLabel(l), plural(int64(l.Occurrences), "block", "blocks"), plural(int64(days), "day", "days"), on, longest,
+			plural(int64(l.TotalBlockedSessions), "session", "sessions"), clause, last)
 	} else {
-		finding = fmt.Sprintf("%s blocked %s %s in %d days on %s, the longest for %s; %s, the last on %s.",
-			blkLabel(l), plural(int64(l.TotalBlockedSessions), "session", "sessions"), blkTimes(l.Occurrences), days, on, longest, clause, last)
+		finding = fmt.Sprintf("%s blocked %s %s in %s on %s, the longest for %s; %s, the last on %s.",
+			blkLabel(l), plural(int64(l.TotalBlockedSessions), "session", "sessions"), blkTimes(l.Occurrences), plural(int64(days), "day", "days"), on, longest, clause, last)
 	}
 
 	byDay := []string{}
@@ -911,7 +1067,7 @@ func blk01Finding(l BlockingLeader, days int, offset time.Duration, rcsi bool) F
 		on = "not recorded"
 	}
 	ev = append(ev, fmt.Sprintf("Object: %s. Seen in %s, %s blocked in all, at most %d at once", on,
-		plural(int64(l.Snapshots), "five-minute snapshot", "five-minute snapshots"), plural(int64(l.TotalBlockedSessions), "session", "sessions"), l.MostAtOnce))
+		blkSeen(l), plural(int64(l.TotalBlockedSessions), "session", "sessions"), l.MostAtOnce))
 	if len(byDay) > 0 {
 		ev = append(ev, "By day: "+strings.Join(byDay, ", "))
 	}
@@ -923,6 +1079,19 @@ func blk01Finding(l BlockingLeader, days int, offset time.Duration, rcsi bool) F
 		Object: object, Finding: finding, Why: wrk01Why[waitLOCK], DoThis: doThis, ThenCheck: chk.ThenCheck,
 		Evidence: left(strings.Join(ev, ". ")+".", 4000), Clock: ClockWindow,
 	}
+}
+
+// blkSeen is where a leader was seen: system_health's snapshots, kakapo's reports, or both.
+func blkSeen(l BlockingLeader) string {
+	snaps := plural(int64(l.Snapshots), "five-minute snapshot", "five-minute snapshots")
+	passes := plural(int64(l.Passes), "report of kakapo's session", "reports of kakapo's session")
+	switch {
+	case l.Passes == 0:
+		return snaps
+	case l.Snapshots == 0:
+		return passes
+	}
+	return snaps + " and " + passes
 }
 
 // blk01CodeKind says whether the leader has a kind its sentence names: one that is code (implicit,
@@ -957,9 +1126,12 @@ func blk01Check(st CheckStatus, last *BlockingHistory) CheckStatus {
 		}
 	}
 	st.Status = CheckPassed
-	if len(last.Leaders) == 0 {
+	switch {
+	case len(last.Leaders) == 0 && FromKakapo(last.Source) && last.ThresholdSeconds > 0:
+		st.Note = fmt.Sprintf("No block over %d s in this database in the last %d days (kakapo's session).", last.ThresholdSeconds, last.Days)
+	case len(last.Leaders) == 0:
 		st.Note = fmt.Sprintf("No blocking in this database that system_health saw in the last %d days (it looks every five minutes).", last.Days)
-	} else {
+	default:
 		st.Note = fmt.Sprintf("No blocker came back in the last %d days: %s seen once.", last.Days, plural(int64(len(last.Leaders)), "blocker", "blockers"))
 	}
 	return st

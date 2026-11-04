@@ -6,6 +6,7 @@ import { mockProgress, startMockRun } from "./api-progress.mock"
 import { mockSample } from "./api-sample.mock"
 import { mockTables, withArchives } from "./api-tables.mock"
 import { mockTuning, withRecordedChanges } from "./api-tuning.mock"
+import { mockHelpers } from "./api-helpers.mock"
 
 // Dev-only fixture backend. Loaded by api.ts only when import.meta.env.DEV and VITE_MOCK_API=1,
 // so it never reaches a production build. One server, three databases: Query Store ok, ok, off;
@@ -2359,6 +2360,7 @@ const featureMocks: FeatureMock[] = [
   mockTables,
   mockMaintenance,
   mockTuning,
+  mockHelpers,
 ]
 
 export async function mockRequest<T>(path: string, init?: RequestInit): Promise<T> {

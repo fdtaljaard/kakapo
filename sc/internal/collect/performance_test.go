@@ -250,7 +250,8 @@ func TestPerformanceFactsLive(t *testing.T) {
 		t.Logf("  %s %s cpu %d execs %d wait %q plan %d chars big %v: %.80s", q.QueryHash, q.ObjectName, q.CPU, q.Execs, q.TopWait, len(q.Plan), q.PlanTooBig, q.Text)
 	}
 
-	events, health, source, err := ReadDeadlocks(ctx, db, domain.DeadlockDays)
+	in, err := ReadDeadlocks(ctx, db, domain.DeadlockDays, domain.XEFiles{})
+	events, health, source := in.Events, in.Health, in.Source
 	if err != nil {
 		t.Fatal(err)
 	}

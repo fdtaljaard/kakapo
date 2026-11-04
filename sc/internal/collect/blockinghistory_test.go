@@ -44,8 +44,8 @@ func TestBlockingHistoryQueryShape(t *testing.T) {
 		strings.Count(q, "WHERE object_name = N'sp_server_diagnostics_component_result'"); n != 2 {
 		t.Errorf("%d file reads filtered on object_name, want 2 (2017 and later, and before)", n)
 	}
-	if n := strings.Count(q, "BEGIN TRY"); n != 4 {
-		t.Errorf("%d TRY blocks: the configuration, the session, the files, the reports", n)
+	if n := strings.Count(q, "BEGIN TRY"); n != 5 {
+		t.Errorf("%d TRY blocks: the configuration, kakapo's files, the session, the files, the reports", n)
 	}
 	for _, want := range []string{
 		"sys.fn_xe_file_target_read_file(@p, NULL, NULL, NULL)", "AND CONVERT(datetime2, timestamp_utc) >= @s", "system_health*.xel",
@@ -58,7 +58,13 @@ func TestBlockingHistoryQueryShape(t *testing.T) {
 		// a head kept with an empty blocking-process when it holds a transaction
 		"AND (bg.exist('process/@spid') = 1 OR bd.exist('process[@trancount > 0]') = 1)", "(process/inputbuf/text())[1]", "(process/@currentdbname)[1]",
 		"N'blocked process threshold (s)'", "is_read_committed_snapshot_on", "DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME())",
-		"SELECT @source, @err, @fileErr, @shredErr, @configErr, @threshold, @dbid, @rcsi, @offset, @major;",
+		"SELECT @source, @err, @fileErr, @shredErr, @configErr, @threshold, @dbid, @rcsi, @offset, @major, @kread, @kakapoErr, @cut;",
+		// Phase 5e: kakapo's files first, filtered the same way; system_health only before them.
+		"IF ISNULL(@kpath, N'') <> N''", "WHERE object_name = N''blocked_process_report''", "@p = @kpath, @s = @since",
+		"/event/data[@name=\"blocked_process\"]/value/blocked-process-report", "(/event/data[@name=\"duration\"]/value/text())[1]",
+		"IF @cut IS NULL OR @cut > @since", "WHERE t.ts >= @since AND (@cut IS NULL OR t.ts < @cut);",
+		"CASE WHEN @kstart IS NULL THEN @kfirst WHEN @kfirst IS NULL OR @kstart < @kfirst THEN @kstart ELSE @kfirst END",
+		"bg_inputbuf, src\nFROM @pairs ORDER BY event_utc;",
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("history query lacks %q", want)

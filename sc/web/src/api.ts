@@ -175,6 +175,53 @@ export interface InstanceInfo {
   startedAt: string // UTC
   uptimeDays: number // one decimal
   databaseCount: number // user databases
+  xeSession?: XESession // phase 5e: kakapo's installed event session, read with the header
+}
+
+// Phase 5e: where a history or deadlock report was read from. "kakapo" when kakapo's event session files
+// cover the whole window; "kakapo+file" / "kakapo+ring-buffer" when system_health fills the days before
+// the session existed (docs/phase5e-contract.md).
+export type EventSource = "file" | "ring-buffer" | "kakapo" | "kakapo+file" | "kakapo+ring-buffer"
+
+// Phase 5e: kakapo's Extended Events session as read (docs/phase5e-contract.md).
+export interface XESession {
+  exists: boolean
+  running: boolean
+  ours: boolean // the events and target kakapo creates (two events, kakapo.xel)
+  events: string[]
+  targets: string[]
+  fileName?: string // the file target's filename as configured
+  currentFile?: string // the file it writes now
+  maxFileMB?: number
+  maxFiles?: number
+  dispatchSeconds?: number
+  startupState: boolean
+  startedAt?: string // UTC, while it runs
+  eventsCaptured: number // the file target's execution_count
+  thresholdSeconds: number // the blocked process threshold in use; -1 when not read
+  otherSessions?: string[] // other sessions that record the blocked process report
+  error?: string // what could not be read
+}
+
+// Phase 5e: the instance page's "Installed helpers" row (GET /api/servers/{id}/helpers).
+export interface InstalledHelpers {
+  serverName: string
+  database: string // the database the fix routes go through; "" when no user database is online
+  sentence: string // the row's sentence first
+  helpers: InstalledHelper[]
+}
+
+export type HelperState = "running" | "stopped" | "not installed" | "not kakapo's" | "unknown"
+
+export interface InstalledHelper {
+  id: string // "xe-session"
+  title: string
+  state: HelperState
+  sentence: string
+  details: string[]
+  fixId?: string // install-xe-session (Create) or remove-xe-session (Remove)
+  fixLabel?: string
+  session?: XESession
 }
 
 export type CardID = "backups" | "setup" | "storage" | "upkeep" | "performance" | "design"
@@ -292,10 +339,11 @@ export interface DeadlockReport {
   durationSeconds: number
   days: number // 7
   total: number
-  source: "file" | "ring-buffer"
+  source: EventSource
   pairs: DeadlockPair[] // by count desc
   findings: Finding[] // one DLK01 finding per pair with count >= 1, ranked
   health?: HealthEvent[] // phase 3f: SYSTEM and IO_SUBSYSTEM warnings of the window, newest first, at most 50; omitted when none
+  kakapoSince?: string // phase 5e: when kakapo's session files begin (UTC); the deadlocks before are system_health's
 }
 
 // Phase 3f, item 21: one sp_server_diagnostics_component_result event of the system_health session in
@@ -313,8 +361,8 @@ export interface BlockingHistory {
   capturedAt: string
   durationSeconds: number
   days: number // 1 to 7
-  source: "file" | "ring-buffer"
-  snapshots: number // snapshots that saw blocking in this database
+  source: EventSource
+  snapshots: number // snapshots (system_health) and lock monitor passes (kakapo's session) that saw blocking in this database
   reportsTotal: number // blocked-process reports in this database
   missedNote: string // what the history cannot show (blocks shorter than the snapshot)
   thresholdSeconds: number // the blocked process threshold (s); 0 means only the five-minute snapshots exist
@@ -322,6 +370,8 @@ export interface BlockingHistory {
   byHour: BlockingHour[] // every hour of the window on the server's clock, oldest first
   findings: Finding[] // one BLK01 finding per leader, ranked (Info for a leader seen once)
   notes: string[] // what could not be read
+  kakapoSince?: string // phase 5e: when kakapo's session files begin (UTC); omitted when they were not read
+  daySources?: { day: string; source: "kakapo" | "system_health" | "both" }[] // phase 5e: where each server day came from
 }
 
 // How a head blocker is classified (the live blocking page's kinds, plus a blocker in another database).
@@ -338,6 +388,7 @@ export interface BlockingLeader {
   database: string
   occurrences: number // distinct blocking episodes (one blocker transaction counts once)
   snapshots: number // five-minute snapshots that saw it
+  passes?: number // phase 5e: lock monitor passes kakapo's session reported it in (one every threshold interval)
   longestWaitSec: number
   totalBlockedSessions: number
   kinds: HistoryKind[]

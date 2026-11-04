@@ -74,18 +74,18 @@ func (s *Service) DeadlockReport(ctx context.Context, serverID int64, dbName str
 	readCtx, cancel := context.WithTimeout(ctx, deadlockReadTimeout)
 	defer cancel()
 	start := time.Now()
-	events, health, source, err := collect.ReadDeadlocks(readCtx, db, domain.DeadlockDays)
+	// Phase 5e: kakapo's session files first when the session exists (docs/phase5e-contract.md).
+	files, _ := xeReadForHistory(readCtx, db)
+	in, err := collect.ReadDeadlocks(readCtx, db, domain.DeadlockDays, files)
 	if err != nil {
 		msg := err.Error()
 		if lower := strings.ToLower(msg); strings.Contains(lower, "permission") || strings.Contains(lower, "denied") {
-			msg += " (reading the system_health session needs VIEW SERVER STATE)"
+			msg += " (reading the event sessions needs VIEW SERVER STATE)"
 		}
-		return domain.DeadlockReport{}, newError(KindUnreachable, "could not read the deadlocks from the system_health session on %s: %s", srv.Name, msg)
+		return domain.DeadlockReport{}, newError(KindUnreachable, "could not read the deadlocks from %s on %s: %s", xeSourceWords(files), srv.Name, msg)
 	}
-	r := domain.BuildDeadlockReport(domain.DeadlockInputs{
-		Database: d.Name, CapturedAt: time.Now().UTC().Truncate(time.Microsecond), Duration: time.Since(start),
-		Days: domain.DeadlockDays, Source: source, Events: events, Health: health,
-	})
+	in.Database, in.CapturedAt, in.Duration, in.Days = d.Name, time.Now().UTC().Truncate(time.Microsecond), time.Since(start), domain.DeadlockDays
+	r := domain.BuildDeadlockReport(in)
 	if err := s.store.InsertDeadlockReport(ctx, serverID, d.Name, r); err != nil {
 		return domain.DeadlockReport{}, err
 	}

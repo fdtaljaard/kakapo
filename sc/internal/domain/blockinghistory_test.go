@@ -273,11 +273,23 @@ func TestBlk01Rules(t *testing.T) {
 
 func TestMissedNote(t *testing.T) {
 	if MissedNote(0) != "system_health looks every five minutes, so blocks shorter than that are not in this history; the longest and most repeated ones are. "+
-		"With the blocked process threshold set and kakapo's Extended Events session (phase 5e) every block over 5 seconds is kept." {
+		"kakapo's event session (Installed helpers on the instance page) keeps every block over 5 seconds." {
 		t.Errorf("no threshold %q", MissedNote(0))
 	}
-	if MissedNote(20) != "The blocked process threshold is 20 s, but nothing records those reports yet; kakapo's session (phase 5e) will." {
+	if MissedNote(20) != "The blocked process threshold is 20 s, but nothing kakapo reads records those reports; kakapo's event session (Installed helpers on the instance page) would." {
 		t.Errorf("threshold %q", MissedNote(20))
+	}
+	// Phase 5e: with kakapo's session files read.
+	since := time.Date(2026, 11, 3, 23, 30, 0, 0, time.UTC)
+	if got := KakapoMissedNote(5, since, since.Add(time.Hour), 2*time.Hour); got != "kakapo's session keeps every block over 5 s since 2026-11-04." {
+		t.Errorf("kakapo covers the window %q", got)
+	}
+	if got := KakapoMissedNote(5, since, since.AddDate(0, 0, -3), 0); got != "kakapo's session keeps every block over 5 s since 2026-11-03; "+
+		"the days before come from system_health's five-minute snapshots, which miss shorter blocks." {
+		t.Errorf("kakapo since the middle of the window %q", got)
+	}
+	if got := KakapoMissedNote(0, since, since, 0); !strings.Contains(got, "threshold is 0 (off), so it records no block") {
+		t.Errorf("kakapo without threshold %q", got)
 	}
 }
 
@@ -470,5 +482,79 @@ func TestBlockingHistoryHeadMerged(t *testing.T) {
 		l.SampleVictimStatement != "SELECT * FROM dbo.Pick WHERE Id = 1042" ||
 		!strings.Contains(h.Findings[0].Finding, "for 39 minutes while waiting (1 session was recorded behind it), once in 7 days on dbo.Pick, the last on Wed 2026-11-04 10:05") {
 		t.Errorf("across snapshots %+v %s", l, h.Findings[0].Finding)
+	}
+}
+
+// Phase 5e: kakapo's session files first. A block of session 83 reported in three lock monitor passes
+// (each pass's reports milliseconds apart) is one block with its real duration; system_health's report
+// of the same time is left out, its report from before kakapo's files is kept; the days say where they
+// came from; with the session installed BLK01's Do this does not ask for it.
+func TestBlockingHistoryKakapoFirst(t *testing.T) {
+	key := "KEY: 7:72057594043039744 (8194443284a0)"
+	upd := "UPDATE dbo.Pick SET Done = 1 WHERE Id = 1042"
+	head := bhSleeping(9100, "BEGIN TRAN; UPDATE dbo.Pick SET Qty = 5 WHERE Id = 1042")
+	t0 := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	ms := time.Millisecond
+	k := func(at time.Time, loop int64, v BlockedProcess) BlockedProcessReport {
+		return BlockedProcessReport{EventUTC: at, MonitorLoop: loop, Blocked: v, Blocking: head, Source: BlockSourceKakapo}
+	}
+	reports := []BlockedProcessReport{
+		k(t0, 500, bhVictim(91, 6000, key, "dbo.Pick", upd)),
+		k(t0.Add(5*time.Second), 501, bhVictim(91, 11000, key, "dbo.Pick", upd)),
+		k(t0.Add(5*time.Second+3*ms), 501, bhVictim(95, 5500, key, "dbo.Pick", "SELECT * FROM dbo.Pick WHERE Id = 1042")),
+		k(t0.Add(10*time.Second), 502, bhVictim(91, 16000, key, "dbo.Pick", upd)),
+		// system_health: the same block in its snapshot (after kakapo's files begin: left out), and an
+		// older one before them (kept).
+		{EventUTC: t0.Add(2 * time.Minute), MonitorLoop: 77, Blocked: bhVictim(91, 120000, key, "dbo.Pick", upd), Blocking: head},
+		{EventUTC: time.Date(2026, 10, 30, 8, 0, 0, 0, time.UTC), MonitorLoop: 12, Blocked: bhVictim(70, 400000, key, "dbo.Pick", upd),
+			Blocking: bhSleeping(8000, "BEGIN TRAN; UPDATE dbo.Pick SET Qty = 1 WHERE Id = 1")},
+	}
+	since := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	h := BuildBlockingHistory(BlockingHistoryInputs{Database: "WarehouseLive", DatabaseID: 7, CapturedAt: bhNow, Days: 7, Source: KakapoSource("file", false),
+		OffsetMinutes: 120, ThresholdSeconds: 5, Reports: reports, KakapoSince: &since, Helper: &XESession{Exists: true, Ours: true}})
+	if h.Source != "kakapo+file" || h.KakapoSince == nil || !h.KakapoSince.Equal(since) || h.ReportsTotal != 5 || h.Snapshots != 4 ||
+		h.MissedNote != "kakapo's session keeps every block over 5 s since 2026-11-02; the days before come from system_health's five-minute snapshots, which miss shorter blocks." {
+		t.Fatalf("history %+v", h)
+	}
+	if len(h.DaySources) != 8 || h.DaySources[0] != (BlockingDaySource{"2026-10-28", DaySourceSystemHealth}) ||
+		h.DaySources[5] != (BlockingDaySource{"2026-11-02", DaySourceBoth}) || h.DaySources[7] != (BlockingDaySource{"2026-11-04", DaySourceKakapo}) {
+		t.Errorf("day sources %+v", h.DaySources)
+	}
+	// The kakapo block and the older system_health one share the statement: one leader, two episodes,
+	// seen in one snapshot and three of kakapo's passes.
+	if len(h.Leaders) != 1 {
+		t.Fatalf("leaders %+v", h.Leaders)
+	}
+	if l := h.Leaders[0]; l.Occurrences != 2 || l.Passes != 3 || l.Snapshots != 1 || l.LongestWaitSec != 400 || l.TotalBlockedSessions != 3 || l.MostAtOnce != 2 {
+		t.Errorf("leader %+v", l)
+	}
+	if x := h.Findings[0]; strings.Contains(x.DoThis, "Install kakapo's session") || x.FixID != "" ||
+		!strings.Contains(x.Evidence, "Seen in 1 five-minute snapshot and 3 reports of kakapo's session") {
+		t.Errorf("finding %+v", x)
+	}
+
+	// kakapo's files alone: "{n} blocks, the longest {s}".
+	only := BuildBlockingHistory(BlockingHistoryInputs{Database: "WarehouseLive", DatabaseID: 7, CapturedAt: bhNow, Days: 7, Source: KakapoSource("", true),
+		ThresholdSeconds: 5, Reports: reports[:4], KakapoSince: &since})
+	if x := only.Findings[0]; only.Source != "kakapo" ||
+		x.Finding != `"BEGIN TRAN; UPDATE dbo.Pick SET Qty = ? WHERE Id = ?" caused 1 block in 7 days on dbo.Pick, the longest 16 seconds, 2 sessions blocked in all; `+
+			"the blocker held its transaction open while doing nothing (sleeping), the last on Tue 2026-11-03 09:00 (server time)." ||
+		!strings.Contains(x.Evidence, "Seen in 3 reports of kakapo's session") {
+		t.Errorf("kakapo only %q / %q", x.Finding, x.Evidence)
+	}
+	if st := blk01Check(CheckStatus{}, &BlockingHistory{Days: 7, Source: "kakapo", ThresholdSeconds: 5}); st.Note != "No block over 5 s in this database in the last 7 days (kakapo's session)." {
+		t.Errorf("check note %q", st.Note)
+	}
+
+	// Without the session: BLK01's Do this ends with installing it and carries the fix.
+	none := BuildBlockingHistory(BlockingHistoryInputs{Database: "WarehouseLive", DatabaseID: 7, CapturedAt: bhNow, Days: 7, Source: "file",
+		Reports: bhReports(), Helper: &XESession{}})
+	for _, x := range none.Findings {
+		if !strings.HasSuffix(x.DoThis, " Install kakapo's session to keep every block over 5 seconds (Installed helpers on the instance page).") || x.FixID != FixInstallXESession {
+			t.Errorf("no session: %q %q", x.DoThis, x.FixID)
+		}
+	}
+	if none.KakapoSince != nil || none.DaySources != nil || none.MissedNote != MissedNote(0) {
+		t.Errorf("no session history %+v", none)
 	}
 }

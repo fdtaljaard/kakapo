@@ -94,6 +94,9 @@ type InstanceInfo struct {
 	StartedAt      time.Time `json:"startedAt"`   // UTC
 	UptimeDays     float64   `json:"uptimeDays"`  // one decimal
 	DatabaseCount  int       `json:"databaseCount"`
+	// XESession is kakapo's installed event session as read with the header (docs/phase5e-contract.md),
+	// its own read: a part that failed is in its Error. Left out when it was not read.
+	XESession *XESession `json:"xeSession,omitempty"`
 }
 
 // ChangeEntry is one row of the change log as the database page shows it.

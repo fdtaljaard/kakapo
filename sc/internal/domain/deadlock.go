@@ -15,13 +15,41 @@ type DeadlockReport struct {
 	DurationSeconds float64        `json:"durationSeconds"`
 	Days            int            `json:"days"`
 	Total           int            `json:"total"`
-	Source          string         `json:"source"`   // file, ring-buffer
+	Source          string         `json:"source"`   // file, ring-buffer, kakapo, kakapo+file, kakapo+ring-buffer
 	Pairs           []DeadlockPair `json:"pairs"`    // by count desc
 	Findings        []Finding      `json:"findings"` // one DLK01 finding per pair, ranked
 	// Health is the server's own health events of the window from the same session: SYSTEM and
 	// IO_SUBSYSTEM components in state warning or error, newest first, at most 50
 	// (docs/phase3f-contract.md, item 21). Left out of the JSON when there are none.
 	Health []HealthEvent `json:"health,omitempty"`
+	// KakapoSince is when kakapo's session files begin (UTC, docs/phase5e-contract.md): the deadlocks
+	// from then on are kakapo's, the ones before system_health's. Left out when they were not read.
+	KakapoSince *time.Time `json:"kakapoSince,omitempty"`
+}
+
+// MergeKakapoDeadlocks keeps one copy of each deadlock when kakapo's session files were read beside
+// system_health (docs/phase5e-contract.md): kakapo's from the time its files begin (the session's start
+// or its first deadlock, whichever is earlier), system_health's before. since is that time; nil when
+// neither is known, and then system_health's are all kept.
+func MergeKakapoDeadlocks(kakapo, systemHealth []DeadlockEvent, started *time.Time) (events []DeadlockEvent, since *time.Time) {
+	var cut *time.Time
+	if started != nil {
+		c := started.UTC()
+		cut = &c
+	}
+	for _, e := range kakapo {
+		if t := e.Time.UTC(); cut == nil || t.Before(*cut) {
+			cut = &t
+		}
+	}
+	events = append([]DeadlockEvent{}, kakapo...)
+	for _, e := range systemHealth {
+		if cut == nil || e.Time.UTC().Before(*cut) {
+			events = append(events, e)
+		}
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })
+	return events, cut
 }
 
 // HealthEvent is one sp_server_diagnostics_component_result event worth showing: when (UTC), the
@@ -168,6 +196,8 @@ type DeadlockInputs struct {
 	Source     string
 	Events     []DeadlockEvent
 	Health     []HealthEvent
+	// KakapoSince is when kakapo's session files begin (MergeKakapoDeadlocks); nil when not read.
+	KakapoSince *time.Time
 }
 
 // BuildDeadlockReport keeps the deadlocks of this database in the window, groups them by the pair
@@ -181,6 +211,7 @@ func BuildDeadlockReport(in DeadlockInputs) DeadlockReport {
 	r := DeadlockReport{
 		CapturedAt: in.CapturedAt.UTC(), DurationSeconds: math.Round(in.Duration.Seconds()*1000) / 1000,
 		Days: days, Source: in.Source, Pairs: []DeadlockPair{}, Findings: []Finding{}, Health: []HealthEvent{},
+		KakapoSince: in.KakapoSince,
 	}
 	since := in.CapturedAt.UTC().AddDate(0, 0, -days)
 	for _, h := range in.Health {

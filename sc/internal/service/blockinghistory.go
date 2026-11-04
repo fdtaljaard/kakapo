@@ -41,14 +41,17 @@ func (s *Service) BlockingHistory(ctx context.Context, serverID int64, dbName st
 	readCtx, cancel := context.WithTimeout(ctx, deadlockReadTimeout)
 	defer cancel()
 	start := time.Now()
-	in, err := collect.ReadBlockingHistory(readCtx, db, d.Name, days)
+	// Phase 5e: kakapo's session files first when the session exists (docs/phase5e-contract.md).
+	files, helper := xeReadForHistory(readCtx, db)
+	in, err := collect.ReadBlockingHistory(readCtx, db, d.Name, days, files)
 	if err != nil {
 		msg := err.Error()
 		if lower := strings.ToLower(msg); strings.Contains(lower, "permission") || strings.Contains(lower, "denied") {
-			msg += " (reading the system_health session needs VIEW SERVER STATE)"
+			msg += " (reading the event sessions needs VIEW SERVER STATE)"
 		}
-		return domain.BlockingHistory{}, newError(KindUnreachable, "could not read the blocking history from the system_health session on %s: %s", srv.Name, msg)
+		return domain.BlockingHistory{}, newError(KindUnreachable, "could not read the blocking history from %s on %s: %s", xeSourceWords(files), srv.Name, msg)
 	}
+	in.Helper = helper
 	in.CapturedAt, in.Duration = time.Now().UTC().Truncate(time.Microsecond), time.Since(start)
 	h := domain.BuildBlockingHistory(in)
 	if err := s.store.InsertBlockingHistory(ctx, serverID, d.Name, h); err != nil {

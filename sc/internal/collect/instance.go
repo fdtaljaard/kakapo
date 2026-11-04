@@ -28,9 +28,9 @@ SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)),
           AND source_database_id IS NULL -- not database snapshots
        );`
 
-// InstanceInfo reads @@SERVERNAME, the edition and build, when the instance started (UTC) and how
-// many user databases it holds. ServerID, Name, Host, ProductName and UptimeDays are left for the
-// caller, which knows the registration and the time.
+// InstanceInfo reads @@SERVERNAME, the edition and build, when the instance started (UTC), how
+// many user databases it holds and the state of kakapo's event session (ReadHelpers). ServerID, Name,
+// Host, ProductName and UptimeDays are left for the caller, which knows the registration and the time.
 func InstanceInfo(ctx context.Context, db *sql.DB) (domain.InstanceInfo, error) {
 	var i domain.InstanceInfo
 	var started sql.NullTime
@@ -43,6 +43,12 @@ func InstanceInfo(ctx context.Context, db *sql.DB) (domain.InstanceInfo, error) 
 		t := started.Time
 		// datetime2 has no zone; the query already moved it to UTC.
 		i.StartedAt = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	}
+	// Phase 5e: kakapo's installed helper, in its own read; a failure there never costs the header.
+	if hf, err := ReadHelpers(ctx, db); err != nil {
+		i.XESession = &domain.XESession{Events: []string{}, Targets: []string{}, ThresholdSeconds: -1, Error: err.Error()}
+	} else {
+		i.XESession = &hf.Session
 	}
 	return i, nil
 }

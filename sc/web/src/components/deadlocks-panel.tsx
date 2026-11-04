@@ -14,6 +14,10 @@ const seconds = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
 const sourceText: Record<DeadlockReport["source"], string> = {
   file: "from the system_health files",
   "ring-buffer": "from the system_health ring buffer (no file target)",
+  // Phase 5e: kakapo's event session first (docs/phase5e-contract.md).
+  kakapo: "from kakapo's event session files",
+  "kakapo+file": "from kakapo's event session files, and the system_health files before it existed",
+  "kakapo+ring-buffer": "from kakapo's event session files, and the system_health ring buffer before it existed",
 }
 
 // DLK01 on the Performance card page (docs/phase3e-contract.md): the last stored deadlock report, or the

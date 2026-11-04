@@ -27,11 +27,37 @@ import (
 //
 // Source: DarlingData sp_HealthParser/sp_HealthParser.sql 3090-3135, 4700-4750 (MIT): the component,
 // state and counter XPaths of the health events.
+//
+// Phase 5e (docs/phase5e-contract.md): when kakapo's event session exists (@kpath, its files'
+// pattern), its xml_deadlock_report events of the window are read first, in their own TRY, marked
+// kakapo; system_health is still read for its health events and the deadlocks before kakapo's files
+// begin (domain.MergeKakapoDeadlocks keeps one copy). The first row gains whether kakapo's files were
+// read and why not; each deadlock event its source.
 var deadlockQuery = Tag(safeSession + `SET NOCOUNT ON;
 DECLARE @path nvarchar(520), @source nvarchar(20), @err nvarchar(2048), @fileErr nvarchar(2048), @healthErr nvarchar(2048), @running bit = 0;
-DECLARE @events TABLE (event_xml nvarchar(max) NULL);
+DECLARE @kread bit = 0, @kakapoErr nvarchar(2048);
+DECLARE @events TABLE (event_xml nvarchar(max) NULL, src nvarchar(20) NULL);
 DECLARE @health TABLE (event_xml nvarchar(max) NULL);
 DECLARE @major int = CONVERT(int, PARSENAME(CONVERT(varchar(32), SERVERPROPERTY('ProductVersion')), 4));
+IF ISNULL(@kpath, N'') <> N''
+BEGIN TRY
+    IF @major >= 14
+        INSERT @events (event_xml, src)
+        EXEC sys.sp_executesql N'/* kakapo */ SELECT CONVERT(nvarchar(max), event_data), N''kakapo''
+            FROM sys.fn_xe_file_target_read_file(@p, NULL, NULL, NULL)
+            WHERE object_name = N''xml_deadlock_report''
+              AND CONVERT(datetime2, timestamp_utc) >= DATEADD(DAY, -@days, SYSUTCDATETIME());', N'@p nvarchar(520), @days int', @p = @kpath, @days = @days;
+    ELSE
+        INSERT @events (event_xml, src)
+        SELECT CONVERT(nvarchar(max), event_data), N'kakapo'
+        FROM sys.fn_xe_file_target_read_file(@kpath, NULL, NULL, NULL)
+        WHERE object_name = N'xml_deadlock_report';
+    SET @kread = 1;
+END TRY
+BEGIN CATCH
+    SET @kakapoErr = ERROR_MESSAGE();
+    DELETE @events;
+END CATCH;
 BEGIN TRY
     SELECT @running = 1 FROM sys.dm_xe_sessions WHERE name = N'system_health';
     IF @running = 0
@@ -62,7 +88,7 @@ BEGIN TRY
         END TRY
         BEGIN CATCH
             SET @fileErr = ERROR_MESSAGE();
-            DELETE @events;
+            DELETE @events WHERE src IS NULL;
         END CATCH;
 
         IF @source = N'file'
@@ -122,68 +148,86 @@ END TRY
 BEGIN CATCH
     SET @err = ERROR_MESSAGE();
 END CATCH;
-SELECT @source, @err, @fileErr, @healthErr;
-SELECT event_xml FROM @events;
+SELECT @source, @err, @fileErr, @healthErr, @kread, @kakapoErr;
+SELECT event_xml, src FROM @events;
 SELECT event_xml FROM @health;`)
 
-// ReadDeadlocks reads the deadlocks of the last days from the system_health session, SELECTs only,
-// and parses each event's graph, and with them the session's SYSTEM and IO_SUBSYSTEM health
-// events in state WARNING or ERROR. It says where it read from (file or ring-buffer); an error says
-// why the session could not be read. Events whose XML cannot be parsed are left out, and so are
-// the health events when only their read failed.
-func ReadDeadlocks(ctx context.Context, db *sql.DB, days int) ([]domain.DeadlockEvent, []domain.HealthEvent, string, error) {
-	rows, err := db.QueryContext(ctx, deadlockQuery, sql.Named("days", days))
+// ReadDeadlocks reads the deadlocks of the last days, SELECTs only: kakapo's session files first when
+// the session exists, then the system_health session for the time before them; it parses each event's
+// graph, and with them system_health's SYSTEM and IO_SUBSYSTEM health events in state WARNING or ERROR.
+// It fills the inputs' events, health, source (file, ring-buffer, kakapo, kakapo+file,
+// kakapo+ring-buffer) and when kakapo's files begin, for the window from now; an error says why
+// nothing could be read. Events whose XML cannot be parsed are left out, and so are the health events
+// when only their read failed.
+func ReadDeadlocks(ctx context.Context, db *sql.DB, days int, kakapo domain.XEFiles) (domain.DeadlockInputs, error) {
+	in := domain.DeadlockInputs{Days: days, Events: []domain.DeadlockEvent{}, Health: []domain.HealthEvent{}}
+	kpath, _ := kakapoParams(kakapo)
+	rows, err := db.QueryContext(ctx, deadlockQuery, sql.Named("days", days), sql.Named("kpath", kpath))
 	if err != nil {
-		return nil, nil, "", friendlyError(err)
+		return in, friendlyError(err)
 	}
 	defer rows.Close()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return nil, nil, "", friendlyError(err)
+			return in, friendlyError(err)
 		}
-		return nil, nil, "", errors.New("SQL Server returned nothing from the system_health session")
+		return in, errors.New("SQL Server returned nothing from the system_health session")
 	}
-	var source, readErr, fileErr, healthErr sql.NullString
-	if err := rows.Scan(&source, &readErr, &fileErr, &healthErr); err != nil {
-		return nil, nil, "", err
+	var source, readErr, fileErr, healthErr, kakapoErr sql.NullString
+	var kread sql.NullBool
+	if err := rows.Scan(&source, &readErr, &fileErr, &healthErr, &kread, &kakapoErr); err != nil {
+		return in, err
 	}
-	if readErr.String != "" {
+	if readErr.String != "" && !kread.Bool {
 		msg := readErr.String
 		if fileErr.String != "" {
 			msg = "the session files could not be read (" + fileErr.String + ") and then " + msg
 		}
-		return nil, nil, "", errors.New(msg)
+		if kakapoErr.String != "" {
+			msg = "kakapo's session files could not be read (" + kakapoErr.String + "), and " + msg
+		}
+		return in, errors.New(msg)
 	}
 	if err := nextResultSet(rows, "deadlock events"); err != nil {
-		return nil, nil, "", err
+		return in, err
 	}
-	out := []domain.DeadlockEvent{}
+	mine, theirs := []domain.DeadlockEvent{}, []domain.DeadlockEvent{}
 	for rows.Next() {
-		var x sql.NullString
-		if err := rows.Scan(&x); err != nil {
-			return nil, nil, "", err
+		var x, src sql.NullString
+		if err := rows.Scan(&x, &src); err != nil {
+			return in, err
 		}
 		if e, err := ParseDeadlockEvent(x.String); err == nil {
-			out = append(out, e)
+			if src.String == domain.BlockSourceKakapo {
+				mine = append(mine, e)
+			} else {
+				theirs = append(theirs, e)
+			}
 		}
 	}
 	if err := nextResultSet(rows, "health events"); err != nil {
-		return nil, nil, "", err
+		return in, err
 	}
-	health := []domain.HealthEvent{}
 	for rows.Next() {
 		var x sql.NullString
 		if err := rows.Scan(&x); err != nil {
-			return nil, nil, "", err
+			return in, err
 		}
 		if e, err := ParseHealthEvent(x.String); err == nil {
-			health = append(health, e)
+			in.Health = append(in.Health, e)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, "", friendlyError(err)
+		return in, friendlyError(err)
 	}
-	return out, health, source.String, nil
+	if !kread.Bool {
+		in.Events, in.Source = theirs, source.String
+		return in, nil
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	in.Events, in.KakapoSince = domain.MergeKakapoDeadlocks(mine, theirs, kakapo.StartedAt)
+	in.Source = historySource(true, in.KakapoSince, since, source.String)
+	return in, nil
 }
 
 // The parts of an sp_server_diagnostics_component_result event the health list reads: the
