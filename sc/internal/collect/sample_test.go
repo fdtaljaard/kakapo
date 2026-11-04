@@ -34,7 +34,7 @@ func TestSampleAndIndexQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, q := range map[string]string{"snapshot": sampleSnapshotQuery, "texts": text, "index batch": indexFactsBatch("Granite]Live"),
+	for name, q := range map[string]string{"snapshot": sampleSnapshotQuery, "texts": text, "index batch": indexFactsBatch("Warehouse]Live"),
 		"index facts": Tag(indexFactsQuery)} {
 		if !strings.HasPrefix(q, KakapoTag+" ") || strings.Count(q, KakapoTag) < 1 || strings.HasPrefix(q, KakapoTag+" "+KakapoTag) {
 			t.Errorf("%s query is not tagged once: %.60s", name, q)
@@ -53,7 +53,7 @@ func TestSampleAndIndexQueries(t *testing.T) {
 	if !strings.Contains(sampleSnapshotQuery, "INSERT @benign (wait_type) VALUES (N'BROKER_EVENTHANDLER')") {
 		t.Error("the snapshot leaves out the benign waits")
 	}
-	if b := indexFactsBatch("Granite]Live"); !strings.Contains(b, "EXEC [Granite]]Live].sys.sp_executesql @stmt, N'@schema nvarchar(128), @table nvarchar(128)', @schema = @schema, @table = @table;") {
+	if b := indexFactsBatch("Warehouse]Live"); !strings.Contains(b, "EXEC [Warehouse]]Live].sys.sp_executesql @stmt, N'@schema nvarchar(128), @table nvarchar(128)', @schema = @schema, @table = @table;") {
 		t.Errorf("index batch %s", b)
 	}
 }

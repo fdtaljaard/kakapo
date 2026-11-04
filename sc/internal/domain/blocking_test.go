@@ -9,7 +9,7 @@ import (
 
 var blkNow = time.Date(2026, 11, 3, 10, 14, 0, 0, time.UTC)
 
-// blockingFixture: two chains in WMS. Session 83 (GraniteScheduler, sleeping with a transaction open 6
+// blockingFixture: two chains in WMS. Session 83 (AppScheduler, sleeping with a transaction open 6
 // minutes) blocks 91 and 95; 91 blocks 102 (two levels). Session 64, a SQL Agent job under SERIALIZABLE,
 // has run one INSERT for 4 minutes and blocks 70. Session 120 was blocking when the list was read and
 // is not any more (no victims). READ COMMITTED SNAPSHOT is off.
@@ -22,30 +22,30 @@ func blockingFixture() BlockingFacts {
 				JobName: "Nightly stock import", Status: "running", IsUser: true, Command: "INSERT", Database: "WMS",
 				Statement: "INSERT INTO dbo.Stock (ItemID, Qty) SELECT ItemID, Qty FROM staging.Stock", IsolationLevel: 4, OpenTran: 1,
 				TranName: "user_transaction", TranStarted: ago(250), RequestStarted: ago(240), LogBytes: 52428800, LoginTime: ago(3600)},
-			{Session: 70, BlockedBy: 64, Login: "granite", Host: "WMS-APP02", Program: "Granite Integration", Status: "suspended", IsUser: true,
+			{Session: 70, BlockedBy: 64, Login: "appsvc", Host: "WMS-APP02", Program: "Integration Service", Status: "suspended", IsUser: true,
 				Command: "UPDATE", Database: "WMS", Statement: "UPDATE dbo.Stock SET Qty = Qty - 1 WHERE ItemID = @id", WaitType: "LCK_M_IX",
 				WaitMs: 45000, WaitResource: "OBJECT: 7:1977058079:0 ", IsolationLevel: 2, RequestStarted: ago(45)},
-			{Session: 83, Login: "granite", Host: "WMS-APP01", Program: "GraniteScheduler", Status: "sleeping", IsUser: true, Database: "WMS",
-				Statement: "UPDATE dbo.MasterItem SET LastCounted = GETDATE() WHERE MasterItemID = @id", ObjectName: "dbo.Prescript_Packing_MasterItem",
+			{Session: 83, Login: "appsvc", Host: "WMS-APP01", Program: "AppScheduler", Status: "sleeping", IsUser: true, Database: "WMS",
+				Statement: "UPDATE dbo.Item SET LastCounted = GETDATE() WHERE ItemID = @id", ObjectName: "dbo.usp_Packing_Item",
 				StatementIsLast: true, IsolationLevel: 2, OpenTran: 1, TranName: "user_transaction", TranStarted: ago(362), LogBytes: 125829120,
 				LoginTime: ago(7200)},
-			{Session: 91, BlockedBy: 83, Login: "scanner", Host: "HH12", Program: "Granite Scanner", Status: "suspended", IsUser: true,
-				Command: "UPDATE", Database: "WMS", Statement: "UPDATE dbo.MasterItem SET Qty = @q WHERE MasterItemID = @id", WaitType: "LCK_M_U",
+			{Session: 91, BlockedBy: 83, Login: "scanner", Host: "HH12", Program: "Scanner App", Status: "suspended", IsUser: true,
+				Command: "UPDATE", Database: "WMS", Statement: "UPDATE dbo.Item SET Qty = @q WHERE ItemID = @id", WaitType: "LCK_M_U",
 				WaitMs: 300000, WaitResource: "KEY: 7:72057594043236352 (8194443284a0)", IsolationLevel: 2, OpenTran: 1,
 				TranStarted: ago(301), RequestStarted: ago(300), LogBytes: 8192},
 			{Session: 95, BlockedBy: 83, Login: "report", Host: "BI01", Program: "Report Server", Status: "suspended", IsUser: true,
-				Command: "SELECT", Database: "WMS", Statement: "SELECT * FROM dbo.MasterItem", WaitType: "LCK_M_S", WaitMs: 240000,
+				Command: "SELECT", Database: "WMS", Statement: "SELECT * FROM dbo.Item", WaitType: "LCK_M_S", WaitMs: 240000,
 				WaitResource: "KEY: 7:72057594043236352 (8194443284a0)", IsolationLevel: 2, RequestStarted: ago(240)},
-			{Session: 102, BlockedBy: 91, Login: "scanner", Host: "HH07", Program: "Granite Scanner", Status: "suspended", IsUser: true,
-				Command: "SELECT", Database: "WMS", Statement: "SELECT Qty FROM dbo.MasterItem WHERE MasterItemID = @id", WaitType: "LCK_M_S",
+			{Session: 102, BlockedBy: 91, Login: "scanner", Host: "HH07", Program: "Scanner App", Status: "suspended", IsUser: true,
+				Command: "SELECT", Database: "WMS", Statement: "SELECT Qty FROM dbo.Item WHERE ItemID = @id", WaitType: "LCK_M_S",
 				WaitMs: 120000, WaitResource: "KEY: 7:72057594043236352 (8194443284a0)", IsolationLevel: 2, RequestStarted: ago(120)},
-			{Session: 120, Login: "granite", Host: "WMS-APP01", Program: "GraniteScheduler", Status: "sleeping", IsUser: true, Database: "WMS"},
+			{Session: 120, Login: "appsvc", Host: "WMS-APP01", Program: "AppScheduler", Status: "sleeping", IsUser: true, Database: "WMS"},
 		},
 		Waits: []LockWait{
 			{Session: 70, ResourceType: "OBJECT", Database: "WMS", Object: "dbo.Stock", WaitMode: "IX", HeldMode: "X"},
-			{Session: 91, ResourceType: "KEY", Database: "WMS", Object: "dbo.MasterItem", Index: "PK_MasterItem", WaitMode: "U", HeldMode: "X"},
-			{Session: 95, ResourceType: "KEY", Database: "WMS", Object: "dbo.MasterItem", Index: "PK_MasterItem", WaitMode: "S", HeldMode: "X"},
-			{Session: 102, ResourceType: "KEY", Database: "WMS", Object: "dbo.MasterItem", Index: "PK_MasterItem", WaitMode: "S", HeldMode: "U"},
+			{Session: 91, ResourceType: "KEY", Database: "WMS", Object: "dbo.Item", Index: "PK_Item", WaitMode: "U", HeldMode: "X"},
+			{Session: 95, ResourceType: "KEY", Database: "WMS", Object: "dbo.Item", Index: "PK_Item", WaitMode: "S", HeldMode: "X"},
+			{Session: 102, ResourceType: "KEY", Database: "WMS", Object: "dbo.Item", Index: "PK_Item", WaitMode: "S", HeldMode: "U"},
 		},
 	}
 }
@@ -61,7 +61,7 @@ func TestBlockingTree(t *testing.T) {
 		t.Errorf("head 83: %+v", h)
 	}
 	v := h.Victims[0]
-	if v.Session != 91 || v.Resource != "dbo.MasterItem (PK_MasterItem)" || v.LockMode != "wants U, held X" || v.Behind != 1 ||
+	if v.Session != 91 || v.Resource != "dbo.Item (PK_Item)" || v.LockMode != "wants U, held X" || v.Behind != 1 ||
 		len(v.Victims) != 1 || v.Victims[0].Session != 102 || h.Victims[1].Session != 95 {
 		t.Errorf("second level: %+v", v)
 	}
@@ -72,8 +72,8 @@ func TestBlockingTree(t *testing.T) {
 	}
 	want := []string{
 		"Right now 4 sessions wait in 2 blocking chains.",
-		"Session 83 (GraniteScheduler on WMS-APP01) has held a lock on dbo.MasterItem for 6 minutes in a transaction that is still open and is doing nothing (sleeping); 3 sessions wait behind it, the longest for 5 minutes.",
-		"A sleeping session with an open transaction is usually an application that did not commit, or an SSMS window left open. Ask granite on WMS-APP01 to commit or close it; Kill session 83 ends it and undoes its work (the rollback can take up to 6 minutes).",
+		"Session 83 (AppScheduler on WMS-APP01) has held a lock on dbo.Item for 6 minutes in a transaction that is still open and is doing nothing (sleeping); 3 sessions wait behind it, the longest for 5 minutes.",
+		"A sleeping session with an open transaction is usually an application that did not commit, or an SSMS window left open. Ask appsvc on WMS-APP01 to commit or close it; Kill session 83 ends it and undoes its work (the rollback can take up to 6 minutes).",
 		"Session 64 (SQL Agent job Nightly stock import on SQL01) has held a lock on dbo.Stock for 4 minutes while one statement has run for 4 minutes: \"INSERT INTO dbo.Stock (ItemID, Qty) SELECT ItemID, Qty FROM staging.Stock\"; 1 session waits behind it.",
 		"Session 64 uses the SERIALIZABLE isolation level, which locks ranges of rows and blocks far more than the default (.NET's TransactionScope picks it unless told otherwise). Copy the chain for the vendor.",
 		"Its statement has run for 4 minutes. If it should be quicker, Copy it for the vendor; Kill session 64 undoes everything it did so far, which can take as long again.",
@@ -82,8 +82,8 @@ func TestBlockingTree(t *testing.T) {
 	if strings.Join(tr.Explain, "\n") != strings.Join(want, "\n") {
 		t.Errorf("explain:\n%s\nwant:\n%s", strings.Join(tr.Explain, "\n"), strings.Join(want, "\n"))
 	}
-	for _, s := range []string{"Blocking chain on SQL01\\WMS (database WMS)", "\nSession 83: granite, GraniteScheduler on WMS-APP01; sleeping, database WMS; transaction open 6 minutes, 120.0 MB of log; READ COMMITTED; last ran dbo.Prescript_Packing_MasterItem: UPDATE dbo.MasterItem",
-		"\n  Session 91: scanner, Granite Scanner on HH12; suspended", "\n    Session 102: scanner", "waits 2 minutes on LCK_M_S for dbo.MasterItem (PK_MasterItem)"} {
+	for _, s := range []string{"Blocking chain on SQL01\\WMS (database WMS)", "\nSession 83: appsvc, AppScheduler on WMS-APP01; sleeping, database WMS; transaction open 6 minutes, 120.0 MB of log; READ COMMITTED; last ran dbo.usp_Packing_Item: UPDATE dbo.Item",
+		"\n  Session 91: scanner, Scanner App on HH12; suspended", "\n    Session 102: scanner", "waits 2 minutes on LCK_M_S for dbo.Item (PK_Item)"} {
 		if !strings.Contains(tr.Handover, s) {
 			t.Errorf("handover lacks %q:\n%s", s, tr.Handover)
 		}

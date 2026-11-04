@@ -72,9 +72,9 @@ func TestBuildCardsOrderAndGreyCards(t *testing.T) {
 }
 
 func TestOverviewJSONCarriesDatabase(t *testing.T) {
-	o := Overview{Instance: InstanceInfo{ProductName: "SQL Server 2019"}, Database: readDB("GraniteLive", okQS()), Cards: []Card{}, RecentChanges: []ChangeEntry{}}
+	o := Overview{Instance: InstanceInfo{ProductName: "SQL Server 2019"}, Database: readDB("WarehouseLive", okQS()), Cards: []Card{}, RecentChanges: []ChangeEntry{}}
 	b, _ := json.Marshal(o)
-	if !strings.Contains(string(b), `"database":{"name":"GraniteLive","state":"ONLINE"`) {
+	if !strings.Contains(string(b), `"database":{"name":"WarehouseLive","state":"ONLINE"`) {
 		t.Errorf("overview JSON: %s", b)
 	}
 }

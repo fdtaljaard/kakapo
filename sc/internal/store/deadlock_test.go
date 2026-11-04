@@ -17,34 +17,34 @@ func TestDeadlockReport(t *testing.T) {
 	}
 	defer st.Close()
 
-	if r, err := st.LastDeadlockReport(ctx, 1, "GraniteLive"); err != nil || r != nil {
+	if r, err := st.LastDeadlockReport(ctx, 1, "WarehouseLive"); err != nil || r != nil {
 		t.Fatalf("never run: %+v %v", r, err)
 	}
 
 	first := time.Date(2026, 11, 2, 7, 0, 0, 0, time.UTC)
-	ev := domain.DeadlockEvent{Time: first.Add(-time.Hour), Database: "GraniteLive",
-		Victim:  domain.DeadlockProcess{Procedure: "dbo.PRESCRIPT_PICKING", Statement: "UPDATE dbo.Pick SET Done = 1"},
+	ev := domain.DeadlockEvent{Time: first.Add(-time.Hour), Database: "WarehouseLive",
+		Victim:  domain.DeadlockProcess{Procedure: "dbo.USP_PICKING", Statement: "UPDATE dbo.Pick SET Done = 1"},
 		Winner:  domain.DeadlockProcess{Procedure: "dbo.IntegrationPost"},
 		Objects: []string{"dbo.Pick"}, LockModes: []string{"keylock dbo.Pick: held X, wanted U"}}
-	older := domain.BuildDeadlockReport(domain.DeadlockInputs{Database: "GraniteLive", CapturedAt: first, Duration: 2500 * time.Millisecond,
+	older := domain.BuildDeadlockReport(domain.DeadlockInputs{Database: "WarehouseLive", CapturedAt: first, Duration: 2500 * time.Millisecond,
 		Days: 7, Source: domain.DeadlockSourceFile, Events: []domain.DeadlockEvent{ev, ev, ev}})
-	if err := st.InsertDeadlockReport(ctx, 1, "GraniteLive", older); err != nil {
+	if err := st.InsertDeadlockReport(ctx, 1, "WarehouseLive", older); err != nil {
 		t.Fatal(err)
 	}
-	newer := domain.BuildDeadlockReport(domain.DeadlockInputs{Database: "GraniteLive", CapturedAt: first.Add(24 * time.Hour),
+	newer := domain.BuildDeadlockReport(domain.DeadlockInputs{Database: "WarehouseLive", CapturedAt: first.Add(24 * time.Hour),
 		Days: 7, Source: domain.DeadlockSourceRingBuffer})
-	if err := st.InsertDeadlockReport(ctx, 1, "GraniteLive", newer); err != nil {
+	if err := st.InsertDeadlockReport(ctx, 1, "WarehouseLive", newer); err != nil {
 		t.Fatal(err)
 	}
 	// Another database and another server keep their own.
 	if err := st.InsertDeadlockReport(ctx, 1, "Other", newer); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.InsertDeadlockReport(ctx, 2, "GraniteLive", older); err != nil {
+	if err := st.InsertDeadlockReport(ctx, 2, "WarehouseLive", older); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := st.LastDeadlockReport(ctx, 1, "GraniteLive")
+	got, err := st.LastDeadlockReport(ctx, 1, "WarehouseLive")
 	if err != nil || got == nil {
 		t.Fatalf("last: %+v %v", got, err)
 	}
@@ -52,7 +52,7 @@ func TestDeadlockReport(t *testing.T) {
 		got.Pairs == nil || len(got.Pairs) != 0 || got.Findings == nil || len(got.Findings) != 0 {
 		t.Errorf("newer %+v", got)
 	}
-	o, err := st.LastDeadlockReport(ctx, 2, "GraniteLive")
+	o, err := st.LastDeadlockReport(ctx, 2, "WarehouseLive")
 	if err != nil || o == nil {
 		t.Fatalf("server 2: %+v %v", o, err)
 	}
@@ -76,7 +76,7 @@ func TestCardReadKeepsClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	id, err := st.InsertCardRead(ctx, 1, "GraniteLive", domain.Card{ID: domain.CardPerformance, Status: domain.StatusAmber},
+	id, err := st.InsertCardRead(ctx, 1, "WarehouseLive", domain.Card{ID: domain.CardPerformance, Status: domain.StatusAmber},
 		[]domain.Finding{{CheckID: "PRS01", Severity: domain.SeverityHigh, Clock: domain.ClockNow}, {CheckID: "STO01", Severity: domain.SeverityLow}},
 		[]domain.CheckStatus{})
 	if err != nil {

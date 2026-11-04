@@ -14,7 +14,7 @@ import (
 func goodUpkeep() UpkeepFacts {
 	return UpkeepFacts{
 		ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", EngineEdition: 2,
-		Database: "GraniteLive", State: "ONLINE", CanChange: true,
+		Database: "WarehouseLive", State: "ONLINE", CanChange: true,
 		AgentStatus: "Running", AgentStartup: "Automatic",
 		FailedJobs: []FailedJob{}, MaintenanceJob: "IndexOptimize - USER_DATABASES", ShrinkJobs: []ShrinkJob{},
 		MissingAlerts: []string{}, Operators: 1, AlertsOn: 10,
@@ -151,7 +151,7 @@ func TestUpkeepMNT02(t *testing.T) {
 	f.FailedJobs = []FailedJob{
 		{Name: "DatabaseBackup - USER_DATABASES - FULL", Fails: 3, LastDate: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC),
 			Step: "Backup", Message: "Executed as user: NT SERVICE\\SQLAgent. The disk is full.", HasStep: true},
-		{Name: "Granite cleanup", Fails: 1, LastDate: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
+		{Name: "Nightly cleanup", Fails: 1, LastDate: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
 	}
 	c, fs, cs := runUpkeep(f)
 	got := findingsOf(fs, "MNT02")
@@ -165,7 +165,7 @@ func TestUpkeepMNT02(t *testing.T) {
 		b.Why != mnt02Why || b.DoThis != mnt02Do || b.ThenCheck != "Re-run after 7 days: MNT02 gone." {
 		t.Errorf("backup job %+v", b)
 	}
-	if o.Severity != SeverityMedium || o.Finding != `Agent job "Granite cleanup" failed 1 time(s) in the last 7 days.` || o.Evidence != "Last failure: 2026-10-30." {
+	if o.Severity != SeverityMedium || o.Finding != `Agent job "Nightly cleanup" failed 1 time(s) in the last 7 days.` || o.Evidence != "Last failure: 2026-10-30." {
 		t.Errorf("other job %+v", o)
 	}
 	if c.StatusText != "2 things to do" || c.Verdict != b.Finding || statusOf(cs, "MNT02").Status != CheckFinding {
@@ -216,10 +216,10 @@ func TestUpkeepMNT04(t *testing.T) {
 	}
 	c, fs, cs := runUpkeep(f)
 	x := one(t, fs, "MNT04")
-	if x.Severity != SeverityMedium || x.Owner != OwnerUs || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Object != "GraniteLive" ||
+	if x.Severity != SeverityMedium || x.Owner != OwnerUs || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Object != "WarehouseLive" ||
 		x.Finding != "7 statistics on large tables are out of date (over 20% of rows changed, not updated for 7+ days)." ||
 		x.Why != mnt04Why ||
-		x.DoThis != "Update them outside peak hours: USE [GraniteLive]; EXEC sp_updatestats;  Then schedule regular statistics maintenance (MNT03)." ||
+		x.DoThis != "Update them outside peak hours: USE [WarehouseLive]; EXEC sp_updatestats;  Then schedule regular statistics maintenance (MNT03)." ||
 		x.Evidence != "Most changed tables: dbo.Big (400000 changes / 900000 rows), wms.Tx (30000 changes / 70000 rows), dbo.Mid (20000 changes / 50000 rows), wms.Log (9000 changes / 20000 rows), dbo.Six (2500 changes / 12000 rows)" ||
 		x.FixID != FixUpdateStatistics || x.ThenCheck != "Re-run after the job: MNT04 empty." {
 		t.Errorf("MNT04 %+v", x)
@@ -244,10 +244,10 @@ func TestUpkeepMNT05(t *testing.T) {
 	last := time.Date(2026, 11, 2, 22, 5, 30, 0, time.UTC)
 	f := goodUpkeep()
 	f.TraceCommands = []TraceCommand{
-		{Kind: TraceShrink, Database: "GraniteLive", Count: 4, LastAt: last, Login: `CORP\dba`, App: "SQLAgent - TSQL JobStep", Sample: "DBCC SHRINKFILE (2, 0)"},
+		{Kind: TraceShrink, Database: "WarehouseLive", Count: 4, LastAt: last, Login: `CORP\dba`, App: "SQLAgent - TSQL JobStep", Sample: "DBCC SHRINKFILE (2, 0)"},
 		{Kind: TraceCache, Count: 1, LastAt: last, Sample: "DBCC FREEPROCCACHE"},
 	}
-	f.ShrinkJobs = []ShrinkJob{{Job: "Nightly shrink", Step: 2, Command: "DBCC SHRINKDATABASE(N'GraniteLive')" + strings.Repeat(" ", 400)}}
+	f.ShrinkJobs = []ShrinkJob{{Job: "Nightly shrink", Step: 2, Command: "DBCC SHRINKDATABASE(N'WarehouseLive')" + strings.Repeat(" ", 400)}}
 	_, fs, cs := runUpkeep(f)
 	got := findingsOf(fs, "MNT05")
 	if len(got) != 3 {
@@ -261,7 +261,7 @@ func TestUpkeepMNT05(t *testing.T) {
 		}
 	}
 	s := byFinding["A database or file was shrunk 4 time(s) in the last 7 days."]
-	if s.Object != "GraniteLive" || s.Why != mnt05ShrinkWhy || s.DoThis != mnt05ShrinkDo ||
+	if s.Object != "WarehouseLive" || s.Why != mnt05ShrinkWhy || s.DoThis != mnt05ShrinkDo ||
 		s.Evidence != `Last: 2026-11-02 22:05 by CORP\dba from SQLAgent - TSQL JobStep. Example: DBCC SHRINKFILE (2, 0)` {
 		t.Errorf("shrink %+v", s)
 	}
@@ -291,7 +291,7 @@ func TestUpkeepMNT05(t *testing.T) {
 			}
 			continue
 		}
-		if len(got) != 1 || got[0].Severity != want || got[0].Object != "GraniteLive" ||
+		if len(got) != 1 || got[0].Severity != want || got[0].Object != "WarehouseLive" ||
 			got[0].Finding != fmtGrowth(n) || got[0].Why != mnt05GrowthWhy || got[0].DoThis != mnt05GrowthDo ||
 			got[0].Evidence != "Data file growths: "+nInt(n-5)+", log growths: 5. Last: 2026-11-02 22:05." {
 			t.Errorf("%d growths: %+v", n, got)
@@ -322,7 +322,7 @@ func nInt(n int) string { return n0int(int64(n)) }
 func TestUpkeepMNT06(t *testing.T) {
 	last := time.Date(2026, 11, 1, 3, 0, 0, 0, time.UTC)
 	f := goodUpkeep()
-	f.SevereErrors = []SevereErrors{{Count: 2, LastAt: last, Sample: "Error: 17310"}, {Database: "GraniteLive", Count: 1, LastAt: last, Sample: "Error: 824"}}
+	f.SevereErrors = []SevereErrors{{Count: 2, LastAt: last, Sample: "Error: 17310"}, {Database: "WarehouseLive", Count: 1, LastAt: last, Sample: "Error: 824"}}
 	_, fs, cs := runUpkeep(f)
 	got := findingsOf(fs, "MNT06")
 	if len(got) != 2 {
@@ -335,7 +335,7 @@ func TestUpkeepMNT06(t *testing.T) {
 		}
 	}
 	objects := got[0].Object + "|" + got[1].Object
-	if !strings.Contains(objects, `SQL01\WMS`) || !strings.Contains(objects, "GraniteLive") {
+	if !strings.Contains(objects, `SQL01\WMS`) || !strings.Contains(objects, "WarehouseLive") {
 		t.Errorf("objects %s", objects)
 	}
 	for _, x := range got {
@@ -453,7 +453,7 @@ func TestUpkeepGrey(t *testing.T) {
 	}
 	f = goodUpkeep()
 	f.State = "RESTORING"
-	if c, _, _ = runUpkeep(f); c.Status != StatusGrey || c.Note != "GraniteLive is RESTORING, not online, so its upkeep was not checked." {
+	if c, _, _ = runUpkeep(f); c.Status != StatusGrey || c.Note != "WarehouseLive is RESTORING, not online, so its upkeep was not checked." {
 		t.Errorf("offline %+v", c)
 	}
 }
@@ -485,7 +485,7 @@ func TestUpdateStatisticsFix(t *testing.T) {
 	if p.Statement != wantStmt {
 		t.Errorf("statement\n%s", p.Statement)
 	}
-	if p.Rollback != "No rollback: updated statistics are never worse than stale ones." || p.Database != "GraniteLive" || p.EngineVersion != "16.0.4255.3" {
+	if p.Rollback != "No rollback: updated statistics are never worse than stale ones." || p.Database != "WarehouseLive" || p.EngineVersion != "16.0.4255.3" {
 		t.Errorf("preview %+v", p)
 	}
 	if !reflect.DeepEqual(p.Changes, []Drift{{Setting: "Statistics", Current: "5 statistics on 4 tables out of date", Target: "none out of date"}}) {
@@ -502,7 +502,7 @@ func TestUpdateStatisticsFix(t *testing.T) {
 	if got := AvailableUpkeepFixes(f, func() []Finding { _, fs, _ := runUpkeep(f); return fs }()); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Errorf("available %+v", got)
 	}
-	if f.UpdateStatisticsTables() != 4 || UpdateStatisticsDescription("GraniteLive", 4) != "Statistics on GraniteLive: 4 tables updated" {
+	if f.UpdateStatisticsTables() != 4 || UpdateStatisticsDescription("WarehouseLive", 4) != "Statistics on WarehouseLive: 4 tables updated" {
 		t.Error("description")
 	}
 	if StaleStatsValue(0) != "none out of date" || StaleStatsValue(2) != "2 still out of date" {
@@ -587,8 +587,8 @@ func TestUpkeepMNT05Phase3f(t *testing.T) {
 	f := goodUpkeep()
 	f.AutoShrinkOn = true
 	f.TraceCommands = []TraceCommand{
-		{Kind: TraceEvict, Database: "GraniteLive", Count: 3, LastAt: last, Login: `CORP\dba`, App: "SSMS", Sample: "DBCC FREEPROCCACHE (0x0600050012345678)"},
-		{Kind: TraceAutoShrink, Database: "GraniteLive", Count: 6, LastAt: last},
+		{Kind: TraceEvict, Database: "WarehouseLive", Count: 3, LastAt: last, Login: `CORP\dba`, App: "SSMS", Sample: "DBCC FREEPROCCACHE (0x0600050012345678)"},
+		{Kind: TraceAutoShrink, Database: "WarehouseLive", Count: 6, LastAt: last},
 		{Kind: TraceAutoShrink, Database: "Archive", Count: 2, LastAt: last},
 	}
 	c, fs, cs := runUpkeep(f)
@@ -602,11 +602,11 @@ func TestUpkeepMNT05Phase3f(t *testing.T) {
 	}
 	ev := by["One plan was evicted from the cache 3 time(s) in the last 7 days."]
 	if ev.Severity != SeverityInfo || ev.When != WhenNone || ev.Effort != EffortNone || ev.Why != mnt05EvictWhy ||
-		ev.DoThis != "No action." || ev.FixID != "" || ev.Object != "GraniteLive" ||
+		ev.DoThis != "No action." || ev.FixID != "" || ev.Object != "WarehouseLive" ||
 		ev.Evidence != `Last: 2026-11-02 22:05 by CORP\dba from SSMS. Example: DBCC FREEPROCCACHE (0x0600050012345678)` {
 		t.Errorf("evict %+v", ev)
 	}
-	as := by["AUTO_SHRINK ran 6 times in the last 7 days on GraniteLive."]
+	as := by["AUTO_SHRINK ran 6 times in the last 7 days on WarehouseLive."]
 	if as.Severity != SeverityMedium || as.When != WhenOnline || as.Why != dbc03Why || as.FixID != FixAutoShrink ||
 		as.Evidence != "Last: 2026-11-02 22:05 by ? from ?." {
 		t.Errorf("auto-shrink here %+v", as)
@@ -644,11 +644,11 @@ func TestUpkeepMNT05Phase3f(t *testing.T) {
 	}
 
 	// The slowest growth: a second or more is evidence, less is not.
-	for ms, want := range map[int64]string{999: "", 1000: " The slowest growth took 1.0 s (GraniteLive_log, 2026-11-02 21:00).",
-		4230: " The slowest growth took 4.2 s (GraniteLive_log, 2026-11-02 21:00)."} {
+	for ms, want := range map[int64]string{999: "", 1000: " The slowest growth took 1.0 s (WarehouseLive_log, 2026-11-02 21:00).",
+		4230: " The slowest growth took 4.2 s (WarehouseLive_log, 2026-11-02 21:00)."} {
 		f := goodUpkeep()
 		f.Growth = &TraceGrowth{Count: 25, Seconds: 30, LogGrows: 5, LastAt: last,
-			SlowestMs: ms, SlowestFile: "GraniteLive_log", SlowestAt: time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)}
+			SlowestMs: ms, SlowestFile: "WarehouseLive_log", SlowestAt: time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)}
 		_, fs, _ := runUpkeep(f)
 		x := one(t, fs, "MNT05")
 		if x.Evidence != "Data file growths: 20, log growths: 5. Last: 2026-11-02 22:05."+want {

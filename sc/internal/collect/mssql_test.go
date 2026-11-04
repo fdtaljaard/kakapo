@@ -22,8 +22,8 @@ func TestConnString(t *testing.T) {
 		},
 		{
 			name: "host and port, sql login with awkward password",
-			in:   domain.ServerInput{Host: "172.20.1.100,1433", Auth: domain.AuthSQL, Username: "sa", Password: "p;a}s", Database: "GraniteLive", Encrypt: true, TrustCert: true},
-			want: []string{"server={172.20.1.100}", "port=1433", "user id={sa}", "password={p;a}}s}", "database={GraniteLive}", "encrypt=true", "TrustServerCertificate=true"},
+			in:   domain.ServerInput{Host: "172.20.1.100,1433", Auth: domain.AuthSQL, Username: "sa", Password: "p;a}s", Database: "WarehouseLive", Encrypt: true, TrustCert: true},
+			want: []string{"server={172.20.1.100}", "port=1433", "user id={sa}", "password={p;a}}s}", "database={WarehouseLive}", "encrypt=true", "TrustServerCertificate=true"},
 		},
 	}
 	for _, c := range cases {

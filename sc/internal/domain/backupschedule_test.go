@@ -19,7 +19,7 @@ func scheduleFacts(model string) BackupFacts {
 	f.HasAgent, f.AgentRunning, f.AgentStatus = true, true, "Running"
 	f.JobsRead, f.BackupJobs, f.KakapoJobs = true, []BackupJob{}, []string{}
 	f.DefaultBackupDir, f.CompressionOK = `E:\Backup\`, true
-	f.DataFiles = []string{`D:\Data\GraniteLive.mdf`}
+	f.DataFiles = []string{`D:\Data\WarehouseLive.mdf`}
 	return f
 }
 
@@ -36,51 +36,51 @@ func mustSchedule(t *testing.T, f BackupFacts, options map[string]string, folder
 // compression, nobody to notify.
 const wantNativeBatch = `DECLARE @owner sysname = SUSER_SNAME(0x01);
 BEGIN TRY
-    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: GraniteLive full backup')
-        THROW 50000, N'A job named kakapo: GraniteLive full backup already exists', 1;
-    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: GraniteLive log backup')
-        THROW 50000, N'A job named kakapo: GraniteLive log backup already exists', 1;
+    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: WarehouseLive full backup')
+        THROW 50000, N'A job named kakapo: WarehouseLive full backup already exists', 1;
+    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: WarehouseLive log backup')
+        THROW 50000, N'A job named kakapo: WarehouseLive log backup already exists', 1;
     BEGIN TRANSACTION;
     IF NOT EXISTS (SELECT 1 FROM msdb.dbo.syscategories WHERE name = N'Database Maintenance' AND category_class = 1)
         EXEC msdb.dbo.sp_add_category @class = N'JOB', @type = N'LOCAL', @name = N'Database Maintenance';
-    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: GraniteLive full backup', @enabled = 1,
-        @description = N'Created by kakapo on 2026-11-03 for GraniteLive: daily 22:00, log every 15 min, keep 7 days',
+    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: WarehouseLive full backup', @enabled = 1,
+        @description = N'Created by kakapo on 2026-11-03 for WarehouseLive: daily 22:00, log every 15 min, keep 7 days',
         @category_name = N'Database Maintenance', @owner_login_name = @owner;
-    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: GraniteLive full backup', @step_id = 1, @step_name = N'Back up and verify',
+    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: WarehouseLive full backup', @step_id = 1, @step_name = N'Back up and verify',
         @subsystem = N'TSQL', @database_name = N'master', @on_success_action = 3, @on_fail_action = 2,
         @command = N'/* kakapo */
-DECLARE @dir nvarchar(400) = N''E:\Backup\GraniteLive'';
+DECLARE @dir nvarchar(400) = N''E:\Backup\WarehouseLive'';
 EXEC master.dbo.xp_create_subdir @dir;
-DECLARE @file nvarchar(600) = @dir + N''\GraniteLive_FULL_'' + CONVERT(nvarchar(8), GETDATE(), 112) + N''_'' + REPLACE(CONVERT(nvarchar(5), GETDATE(), 108), N'':'', N'''') + N''.bak'';
-BACKUP DATABASE [GraniteLive] TO DISK = @file WITH CHECKSUM, INIT, COMPRESSION;
+DECLARE @file nvarchar(600) = @dir + N''\WarehouseLive_FULL_'' + CONVERT(nvarchar(8), GETDATE(), 112) + N''_'' + REPLACE(CONVERT(nvarchar(5), GETDATE(), 108), N'':'', N'''') + N''.bak'';
+BACKUP DATABASE [WarehouseLive] TO DISK = @file WITH CHECKSUM, INIT, COMPRESSION;
 RESTORE VERIFYONLY FROM DISK = @file WITH CHECKSUM;';
-    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: GraniteLive full backup', @step_id = 2, @step_name = N'Delete backups older than 7 days',
+    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: WarehouseLive full backup', @step_id = 2, @step_name = N'Delete backups older than 7 days',
         @subsystem = N'TSQL', @database_name = N'master', @on_success_action = 1, @on_fail_action = 2,
         @command = N'/* kakapo */
 DECLARE @cutoff datetime = DATEADD(DAY, -7, GETDATE());
-EXEC master.dbo.xp_delete_file 0, N''E:\Backup\GraniteLive'', N''bak'', @cutoff, 0;';
-    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: GraniteLive full backup', @name = N'kakapo: GraniteLive full backup, daily 22:00', @enabled = 1,
+EXEC master.dbo.xp_delete_file 0, N''E:\Backup\WarehouseLive'', N''bak'', @cutoff, 0;';
+    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: WarehouseLive full backup', @name = N'kakapo: WarehouseLive full backup, daily 22:00', @enabled = 1,
         @freq_type = 4, @freq_interval = 1, @active_start_time = 220000;
-    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: GraniteLive full backup', @server_name = N'(local)';
-    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: GraniteLive log backup', @enabled = 1,
-        @description = N'Created by kakapo on 2026-11-03 for GraniteLive: daily 22:00, log every 15 min, keep 7 days',
+    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: WarehouseLive full backup', @server_name = N'(local)';
+    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: WarehouseLive log backup', @enabled = 1,
+        @description = N'Created by kakapo on 2026-11-03 for WarehouseLive: daily 22:00, log every 15 min, keep 7 days',
         @category_name = N'Database Maintenance', @owner_login_name = @owner;
-    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: GraniteLive log backup', @step_id = 1, @step_name = N'Back up and verify',
+    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: WarehouseLive log backup', @step_id = 1, @step_name = N'Back up and verify',
         @subsystem = N'TSQL', @database_name = N'master', @on_success_action = 3, @on_fail_action = 2,
         @command = N'/* kakapo */
-DECLARE @dir nvarchar(400) = N''E:\Backup\GraniteLive'';
+DECLARE @dir nvarchar(400) = N''E:\Backup\WarehouseLive'';
 EXEC master.dbo.xp_create_subdir @dir;
-DECLARE @file nvarchar(600) = @dir + N''\GraniteLive_LOG_'' + CONVERT(nvarchar(8), GETDATE(), 112) + N''_'' + REPLACE(CONVERT(nvarchar(5), GETDATE(), 108), N'':'', N'''') + N''.trn'';
-BACKUP LOG [GraniteLive] TO DISK = @file WITH CHECKSUM, INIT, COMPRESSION;
+DECLARE @file nvarchar(600) = @dir + N''\WarehouseLive_LOG_'' + CONVERT(nvarchar(8), GETDATE(), 112) + N''_'' + REPLACE(CONVERT(nvarchar(5), GETDATE(), 108), N'':'', N'''') + N''.trn'';
+BACKUP LOG [WarehouseLive] TO DISK = @file WITH CHECKSUM, INIT, COMPRESSION;
 RESTORE VERIFYONLY FROM DISK = @file WITH CHECKSUM;';
-    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: GraniteLive log backup', @step_id = 2, @step_name = N'Delete backups older than 7 days',
+    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: WarehouseLive log backup', @step_id = 2, @step_name = N'Delete backups older than 7 days',
         @subsystem = N'TSQL', @database_name = N'master', @on_success_action = 1, @on_fail_action = 2,
         @command = N'/* kakapo */
 DECLARE @cutoff datetime = DATEADD(DAY, -7, GETDATE());
-EXEC master.dbo.xp_delete_file 0, N''E:\Backup\GraniteLive'', N''trn'', @cutoff, 0;';
-    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: GraniteLive log backup', @name = N'kakapo: GraniteLive log backup, every 15 minutes', @enabled = 1,
+EXEC master.dbo.xp_delete_file 0, N''E:\Backup\WarehouseLive'', N''trn'', @cutoff, 0;';
+    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: WarehouseLive log backup', @name = N'kakapo: WarehouseLive log backup, every 15 minutes', @enabled = 1,
         @freq_type = 4, @freq_interval = 1, @freq_subday_type = 4, @freq_subday_interval = 15;
-    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: GraniteLive log backup', @server_name = N'(local)';
+    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: WarehouseLive log backup', @server_name = N'(local)';
     COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
@@ -98,12 +98,12 @@ func TestBackupScheduleNativeFull(t *testing.T) {
 	if p.Statement != wantNativeBatch {
 		t.Errorf("batch:\n%s", p.Statement)
 	}
-	if p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: GraniteLive full backup';\nEXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: GraniteLive log backup';" {
+	if p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: WarehouseLive full backup';\nEXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: WarehouseLive log backup';" {
 		t.Errorf("rollback %q", p.Rollback)
 	}
 	wantChanges := []Drift{
-		{"Full backup job", "none", `daily 22:00 to E:\Backup\GraniteLive, verified`},
-		{"Log backup job", "none", `every 15 minutes to E:\Backup\GraniteLive`},
+		{"Full backup job", "none", `daily 22:00 to E:\Backup\WarehouseLive, verified`},
+		{"Log backup job", "none", `every 15 minutes to E:\Backup\WarehouseLive`},
 		{"Keep", "", "7 days of files"},
 		{"Compressed", "", "yes"},
 		{"Tell on failure", "", "no one (MNT07: no operator with an email)"},
@@ -126,12 +126,12 @@ func TestBackupScheduleNativeFull(t *testing.T) {
 		t.Errorf("options %v", p.Options)
 	}
 	if fix.ID != FixBackupSchedule || fix.CheckID != "BAK01" || fix.Current != "no backup job" ||
-		fix.Target != "kakapo: GraniteLive full backup (daily 22:00) and kakapo: GraniteLive log backup (every 15 minutes)" {
+		fix.Target != "kakapo: WarehouseLive full backup (daily 22:00) and kakapo: WarehouseLive log backup (every 15 minutes)" {
 		t.Errorf("fix %+v", fix)
 	}
 	s := NewBackupSchedule(f, nil)
-	if s.Description() != `Created the jobs kakapo: GraniteLive full backup (daily 22:00) and kakapo: GraniteLive log backup (every 15 minutes) writing to E:\Backup\GraniteLive, 7 days kept` ||
-		s.StartStatement() != "EXEC msdb.dbo.sp_start_job @job_name = N'kakapo: GraniteLive full backup';" || !s.RunNow {
+	if s.Description() != `Created the jobs kakapo: WarehouseLive full backup (daily 22:00) and kakapo: WarehouseLive log backup (every 15 minutes) writing to E:\Backup\WarehouseLive, 7 days kept` ||
+		s.StartStatement() != "EXEC msdb.dbo.sp_start_job @job_name = N'kakapo: WarehouseLive full backup';" || !s.RunNow {
 		t.Errorf("schedule %+v: %q", s, s.Description())
 	}
 	// Every step command carries the kakapo tag.
@@ -145,7 +145,7 @@ func TestBackupScheduleOla(t *testing.T) {
 	f.OlaBackup = true
 	p, _ := mustSchedule(t, f, nil, true, false)
 	for _, want := range []string{
-		"@command = N'/* kakapo */\nEXECUTE master.dbo.DatabaseBackup @Databases = N''GraniteLive'', @Directory = N''E:\\Backup'', @BackupType = ''FULL'', @Verify = ''Y'', @CheckSum = ''Y'', @CleanupTime = 168, @Compress = ''Y'';';",
+		"@command = N'/* kakapo */\nEXECUTE master.dbo.DatabaseBackup @Databases = N''WarehouseLive'', @Directory = N''E:\\Backup'', @BackupType = ''FULL'', @Verify = ''Y'', @CheckSum = ''Y'', @CleanupTime = 168, @Compress = ''Y'';';",
 		"@BackupType = ''LOG''",
 	} {
 		if !strings.Contains(p.Statement, want) {
@@ -176,7 +176,7 @@ func TestBackupScheduleCompressionOff(t *testing.T) {
 	if strings.Contains(p.Statement, "COMPRESSION") || !strings.Contains(p.Statement, "WITH CHECKSUM, INIT;") {
 		t.Errorf("batch compresses:\n%s", p.Statement)
 	}
-	if p.Changes[0].Target != `daily 22:00 to E:\Backup\GraniteLive, verified` {
+	if p.Changes[0].Target != `daily 22:00 to E:\Backup\WarehouseLive, verified` {
 		t.Errorf("target %q", p.Changes[0].Target)
 	}
 	if p.Warnings[0] != "Web edition cannot compress backups: the files will be full size." || p.Changes[3].Target != "no (this edition cannot compress)" {
@@ -188,16 +188,16 @@ func TestBackupScheduleSimpleOneJob(t *testing.T) {
 	f := scheduleFacts("SIMPLE")
 	p, fix := mustSchedule(t, f, nil, true, false)
 	if strings.Contains(p.Statement, "log backup") || strings.Count(p.Statement, "sp_add_job ") != 1 ||
-		p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: GraniteLive full backup';" {
+		p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: WarehouseLive full backup';" {
 		t.Errorf("SIMPLE batch:\n%s\n%s", p.Statement, p.Rollback)
 	}
 	if p.Changes[1] != (Drift{"Log backup job", "none", "not needed (SIMPLE recovery; DBC08 decides)"}) {
 		t.Errorf("log row %+v", p.Changes[1])
 	}
-	if fix.Current != "no backup job" || fix.Target != "kakapo: GraniteLive full backup (daily 22:00)" {
+	if fix.Current != "no backup job" || fix.Target != "kakapo: WarehouseLive full backup (daily 22:00)" {
 		t.Errorf("fix %+v", fix)
 	}
-	if d := NewBackupSchedule(f, nil).Description(); d != `Created the job kakapo: GraniteLive full backup (daily 22:00) writing to E:\Backup\GraniteLive, 7 days kept` {
+	if d := NewBackupSchedule(f, nil).Description(); d != `Created the job kakapo: WarehouseLive full backup (daily 22:00) writing to E:\Backup\WarehouseLive, 7 days kept` {
 		t.Errorf("description %q", d)
 	}
 }
@@ -284,7 +284,7 @@ func TestBackupScheduleWarningOrder(t *testing.T) {
 	want := []string{
 		"This folder is on the same drive as the data files (D:): a disk failure loses the database and its backups together. Prefer another drive or a share.",
 		"SQL Server Agent is stopped (Stopped): the jobs will not run until it starts (MNT01).",
-		"A maintenance plan exists on this server; check it does not already back up GraniteLive before creating a second schedule.",
+		"A maintenance plan exists on this server; check it does not already back up WarehouseLive before creating a second schedule.",
 		"Web edition cannot compress backups: the files will be full size.",
 		"The backup job runs as the SQL Server service account; the folder must let it write.",
 		"Uses the DatabaseBackup procedure already on this server.",
@@ -315,9 +315,9 @@ func TestBackupScheduleExpress(t *testing.T) {
 		t.Errorf("Express preview %+v", p)
 	}
 	for _, want := range []string{
-		`-- Save the FULL part as backup-GraniteLive.sql and run it daily at 22:00: sqlcmd -S SQL01\EXPRESS -E -i backup-GraniteLive.sql`,
-		`-- Save the LOG part as backup-GraniteLive-log.sql and run it every 15 minutes: sqlcmd -S SQL01\EXPRESS -E -i backup-GraniteLive-log.sql`,
-		"BACKUP DATABASE [GraniteLive] TO DISK = @file WITH CHECKSUM, INIT;", "BACKUP LOG [GraniteLive]", "\nGO",
+		`-- Save the FULL part as backup-WarehouseLive.sql and run it daily at 22:00: sqlcmd -S SQL01\EXPRESS -E -i backup-WarehouseLive.sql`,
+		`-- Save the LOG part as backup-WarehouseLive-log.sql and run it every 15 minutes: sqlcmd -S SQL01\EXPRESS -E -i backup-WarehouseLive-log.sql`,
+		"BACKUP DATABASE [WarehouseLive] TO DISK = @file WITH CHECKSUM, INIT;", "BACKUP LOG [WarehouseLive]", "\nGO",
 	} {
 		if !strings.Contains(p.Statement, want) {
 			t.Errorf("Express script lacks %q:\n%s", want, p.Statement)
@@ -375,7 +375,7 @@ func TestAvailableBackupFixesCoverage(t *testing.T) {
 		t.Errorf("BAK01 with a full job: %+v", b1)
 	}
 	if findingOf(t, fs, "BAK02").FixID != FixBackupSchedule || len(fixes) != 1 || fixes[0].CheckID != "BAK02" ||
-		fixes[0].Current != "no log backup job" || fixes[0].Target != "kakapo: GraniteLive log backup (every 15 minutes)" {
+		fixes[0].Current != "no log backup job" || fixes[0].Target != "kakapo: WarehouseLive log backup (every 15 minutes)" {
 		t.Errorf("BAK02 with a full job: %+v", fixes)
 	}
 	p, _ := mustSchedule(t, f, nil, true, false)
@@ -443,15 +443,15 @@ func TestBackupScheduleReadBack(t *testing.T) {
 	s := NewBackupSchedule(scheduleFacts("FULL"), nil)
 	next := time.Date(2026, 11, 3, 22, 0, 0, 0, time.UTC)
 	states := []BackupJobState{
-		{Name: "kakapo: GraniteLive full backup", Enabled: true, ScheduleEnabled: true, NextRun: &next},
-		{Name: "kakapo: GraniteLive log backup", Enabled: true, ScheduleEnabled: true},
+		{Name: "kakapo: WarehouseLive full backup", Enabled: true, ScheduleEnabled: true, NextRun: &next},
+		{Name: "kakapo: WarehouseLive log backup", Enabled: true, ScheduleEnabled: true},
 	}
 	after, ok := s.ReadBack(states, serverNow, true, "")
-	if !ok || after != "kakapo: GraniteLive full backup: enabled, next run 2026-11-03 22:00; kakapo: GraniteLive log backup: enabled, next run 2026-11-03 09:30 (expected; Agent has not set it yet); full backup started: it runs under SQL Server Agent, and the Backups card shows it when it finishes." {
+	if !ok || after != "kakapo: WarehouseLive full backup: enabled, next run 2026-11-03 22:00; kakapo: WarehouseLive log backup: enabled, next run 2026-11-03 09:30 (expected; Agent has not set it yet); full backup started: it runs under SQL Server Agent, and the Backups card shows it when it finishes." {
 		t.Errorf("read back %v %q", ok, after)
 	}
 	after, ok = s.ReadBack(states[:1], serverNow, false, "Agent is not running")
-	if ok || !strings.Contains(after, "kakapo: GraniteLive log backup: not found") || !strings.HasSuffix(after, "the full backup could not be started: Agent is not running") {
+	if ok || !strings.Contains(after, "kakapo: WarehouseLive log backup: not found") || !strings.HasSuffix(after, "the full backup could not be started: Agent is not running") {
 		t.Errorf("missing job %v %q", ok, after)
 	}
 	if got := s.expectedNextRun(JobFull, time.Date(2026, 11, 3, 23, 0, 0, 0, time.UTC)); !got.Equal(time.Date(2026, 11, 4, 22, 0, 0, 0, time.UTC)) {
@@ -472,7 +472,7 @@ func TestRemoveBackupSchedule(t *testing.T) {
 		f.BackupJobs = []BackupJob{{Name: f.KakapoJobs[0], Enabled: true, Kind: JobFull}, {Name: f.KakapoJobs[1], Enabled: true, Kind: JobLog}}
 		_, fs, _ := build(f)
 		fixes := AvailableBackupFixes(f, fs)
-		if len(fixes) != 1 || fixes[0].ID != FixRemoveBackupSchedule || fixes[0].Current != "kakapo: GraniteLive full backup, kakapo: GraniteLive log backup" {
+		if len(fixes) != 1 || fixes[0].ID != FixRemoveBackupSchedule || fixes[0].Current != "kakapo: WarehouseLive full backup, kakapo: WarehouseLive log backup" {
 			t.Fatalf("ola %v: fixes %+v", ola, fixes)
 		}
 		p, fix, err := BuildRemoveBackupScheduleFix(f)
@@ -495,7 +495,7 @@ func TestRemoveBackupSchedule(t *testing.T) {
 
 	// Only the log job left; a step changed by hand: no rollback, said so.
 	f := scheduleFacts("FULL")
-	f.KakapoJobs, f.KakapoCommand = []string{"kakapo: GraniteLive log backup"}, "BACKUP LOG [GraniteLive] TO DISK = N'X:\\l.trn';"
+	f.KakapoJobs, f.KakapoCommand = []string{"kakapo: WarehouseLive log backup"}, "BACKUP LOG [WarehouseLive] TO DISK = N'X:\\l.trn';"
 	p, _, err := BuildRemoveBackupScheduleFix(f)
 	if err != nil || p.Rollback != "" || len(p.Changes) != 1 || p.Changes[0].Setting != "Log backup job" || !strings.Contains(p.Warnings[1], "no rollback") {
 		t.Errorf("hand-changed: %v %+v", err, p)
@@ -670,9 +670,9 @@ func TestBackupScheduleSettings(t *testing.T) {
 	options := map[string]string{OptionFullTime: "1:30", OptionLogMinutes: "5", OptionKeepDays: " 14 ", OptionCompress: "false", OptionRunNow: "false"}
 	p, fix := mustSchedule(t, f, options, true, false)
 	for _, want := range []string{
-		"@name = N'kakapo: GraniteLive full backup, daily 01:30', @enabled = 1,\n        @freq_type = 4, @freq_interval = 1, @active_start_time = 13000;",
-		"@name = N'kakapo: GraniteLive log backup, every 5 minutes', @enabled = 1,\n        @freq_type = 4, @freq_interval = 1, @freq_subday_type = 4, @freq_subday_interval = 5;",
-		"@description = N'Created by kakapo on 2026-11-03 for GraniteLive: daily 01:30, log every 5 min, keep 14 days',",
+		"@name = N'kakapo: WarehouseLive full backup, daily 01:30', @enabled = 1,\n        @freq_type = 4, @freq_interval = 1, @active_start_time = 13000;",
+		"@name = N'kakapo: WarehouseLive log backup, every 5 minutes', @enabled = 1,\n        @freq_type = 4, @freq_interval = 1, @freq_subday_type = 4, @freq_subday_interval = 5;",
+		"@description = N'Created by kakapo on 2026-11-03 for WarehouseLive: daily 01:30, log every 5 min, keep 14 days',",
 		"WITH CHECKSUM, INIT;\n",
 	} {
 		if !strings.Contains(p.Statement, want) {
@@ -684,8 +684,8 @@ func TestBackupScheduleSettings(t *testing.T) {
 		t.Errorf("batch:\n%s", p.Statement)
 	}
 	wantChanges := []Drift{
-		{"Full backup job", "none", `daily 01:30 to E:\Backup\GraniteLive, verified`},
-		{"Log backup job", "none", `every 5 minutes to E:\Backup\GraniteLive`},
+		{"Full backup job", "none", `daily 01:30 to E:\Backup\WarehouseLive, verified`},
+		{"Log backup job", "none", `every 5 minutes to E:\Backup\WarehouseLive`},
 		{"Keep", "", "14 days of files"},
 		{"Compressed", "", "no"},
 		{"Tell on failure", "", noOperator},
@@ -704,11 +704,11 @@ func TestBackupScheduleSettings(t *testing.T) {
 	if !strings.HasPrefix(p.Warnings[0], "Until the first full backup tomorrow at 01:30, the log backup job fails every 5 minutes") {
 		t.Errorf("warnings %q", p.Warnings)
 	}
-	if fix.Target != "kakapo: GraniteLive full backup (daily 01:30) and kakapo: GraniteLive log backup (every 5 minutes)" {
+	if fix.Target != "kakapo: WarehouseLive full backup (daily 01:30) and kakapo: WarehouseLive log backup (every 5 minutes)" {
 		t.Errorf("fix target %q", fix.Target)
 	}
 	s := NewBackupSchedule(f, options)
-	if d := s.Description(); d != `Created the jobs kakapo: GraniteLive full backup (daily 01:30) and kakapo: GraniteLive log backup (every 5 minutes) writing to E:\Backup\GraniteLive, 14 days kept` {
+	if d := s.Description(); d != `Created the jobs kakapo: WarehouseLive full backup (daily 01:30) and kakapo: WarehouseLive log backup (every 5 minutes) writing to E:\Backup\WarehouseLive, 14 days kept` {
 		t.Errorf("description %q", d)
 	}
 	if got := s.expectedNextRun(JobLog, serverNow); !got.Equal(time.Date(2026, 11, 3, 9, 25, 0, 0, time.UTC)) {

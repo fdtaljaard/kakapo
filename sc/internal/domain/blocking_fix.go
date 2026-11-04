@@ -148,7 +148,7 @@ func BuildKillSessionFix(t KillTarget) (FixPreview, Fix, error) {
 	return p, fix, nil
 }
 
-// killCurrent is the preview's "before": "running UPDATE dbo.MasterItem …", or "sleeping; last ran …".
+// killCurrent is the preview's "before": "running UPDATE dbo.Item …", or "sleeping; last ran …".
 func killCurrent(s BlockingSession) string {
 	what := "a statement kakapo could not read"
 	if s.Statement != "" {

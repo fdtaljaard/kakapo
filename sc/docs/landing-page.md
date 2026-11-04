@@ -7,7 +7,7 @@ Draft for agreement, 2026-11-03. Mockup: `docs/mockups/instance-overview.html`.
 A consultant who is not a DBA opens an instance and gets one page that answers, in plain words, the six questions
 they would ask a DBA. Each question is a **card**. A card shows a colour, one verdict sentence with the number
 that proves it, three or four facts, and how many things need doing. Opening a card shows the findings behind it
-in the Granite layout (Start here, For the client's IT, everything else) with **Do this** and, where the app can
+in the toolkit's layout (Start here, For the client's IT, everything else) with **Do this** and, where the app can
 do it, an **Apply** button that previews first (the fix pattern from phase 1).
 
 **The page is for one database** (revised 2026-11-03). A consultant works on one database at a time, as the
@@ -25,7 +25,7 @@ one tile per instance   pick a database          header + six cards         the 
                         registration names one)  for this database          Client IT / rest, Do this, Apply
 ```
 
-Breadcrumb: `Instances › Client A production › GraniteLive › Setup and configuration`. The database crumb opens
+Breadcrumb: `Instances › Client A production › WarehouseLive › Setup and configuration`. The database crumb opens
 the picker again ("change database"). The database picked is remembered on the server registration, so the next
 time the instance opens straight into it. Four levels, no deeper. A finding's Do this is the end of the road.
 
@@ -38,7 +38,7 @@ time the instance opens straight into it. Four levels, no deeper. A finding's Do
 | **Storage and space** | Will it run out of room? | STO01 to STO09 (free disk, autogrowth, file limits, drives, log size, VLFs, latency), TMP01 to TMP03, IDX01/IDX07 (where the space goes), IDX10 (log tables), IDX13 (identity range). Lite: Database Sizes, Storage Growth, tempdb. | Free space on the tightest drive, biggest database and its growth, log tables without cleanup, tempdb fill, disk latency |
 | **Upkeep** | Is someone looking after it? | MNT01 to MNT07 (Agent running, failed jobs, index and statistics maintenance, stale statistics, shrinks and cache clears, crashes and severe errors, alerts and operator). Lite: Job History, Agent Alerts. | Agent state, failed jobs in 7 days, maintenance job yes/no, stale statistics on big tables, who gets told about errors |
 | **Performance** | Is it slow, and why? | WRK01 to WRK07 (waits in plain English, CPU pressure, missing indexes, top queries, poison waits, deadlocks per day, open transactions), ACT01 to ACT03 (blocking now, open transactions, costliest queries), SRV03/04/06/07. Later: the 30-second live sample (DESIGN.md 5.3) and the tuning report. Lite: Overview, Wait Stats, Queries, Blocking. | Biggest wait and what it means, CPU pressure, blocking right now, deadlocks per day, top query by CPU |
-| **Database design** | Is the database built well? | IDX02 to IDX06, IDX08, IDX09, IDX11, IDX12, IDX14 (over-indexed, unused, duplicates, heaps, lock waits per table, forwarded records, unindexed foreign keys), COD01 to COD03 (Granite PreScripts and views). Per database. Lite: Index Analysis. | Over-indexed tables, unused indexes writing for nothing, heaps, the table everyone waits on, PreScripts over the read budget |
+| **Database design** | Is the database built well? | IDX02 to IDX06, IDX08, IDX09, IDX11, IDX12, IDX14 (over-indexed, unused, duplicates, heaps, lock waits per table, forwarded records, unindexed foreign keys), COD01 to COD03 (the application's stored procedures and views). Per database. Lite: Index Analysis. | Over-indexed tables, unused indexes writing for nothing, heaps, the table everyone waits on, PreScripts over the read budget |
 
 Below the cards, one slim panel: **Recent changes**, from the `change` table: what was changed, when, by which fix,
 and (later, from the tuning report) whether it helped. This is the "prove it" pillar of the toolkit and it must
@@ -51,7 +51,7 @@ be visible on the landing page, but it is history, not a question, so it is not 
 | Backups and data safety                     o Needs attention |   colour: green / amber / red / grey
 | Could you lose data?                                          |
 |                                                               |
-| You could lose up to 26 hours of data on GraniteLive.         |   verdict: one sentence, one number
+| You could lose up to 26 hours of data on WarehouseLive.         |   verdict: one sentence, one number
 |                                                               |
 | Worst-case data loss     26 h       Last CHECKDB    9 days    |   three or four facts
 | Last full backup         02:00      Damaged pages   none      |

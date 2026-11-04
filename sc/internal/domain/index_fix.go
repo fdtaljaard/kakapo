@@ -489,7 +489,7 @@ func bracketList(cols []string) string {
 // plainList is "A, B".
 func plainList(cols []string) string { return strings.Join(cols, ", ") }
 
-// createIndexGuards are the triage's index checks run against the new index (docs/phase4c-contract.md,
+// createIndexGuards are PerformanceTriage.sql's index checks run against the new index (docs/phase4c-contract.md,
 // part 3, item 2), in that order: a column that is not in the table or cannot be a key (blocks),
 // IDX04/IDX08 the same leading keys (blocks), the same keys in another order (does not block),
 // IDX02 over-indexed (does not block), IDX09 a near-copy of the table (blocks), the size over

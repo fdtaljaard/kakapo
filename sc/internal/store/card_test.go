@@ -21,16 +21,16 @@ func TestInsertCardRead(t *testing.T) {
 		Verdict: "Database uses FULL recovery but its log has never been backed up.", ToDo: 1}
 	findings := []domain.Finding{
 		{CheckID: "BAK02", Severity: domain.SeverityHigh, Owner: domain.OwnerClientIT, When: domain.WhenOnline,
-			Effort: domain.EffortQuickWin, Object: "GraniteLive", Finding: card.Verdict, Why: "w", DoThis: "d",
+			Effort: domain.EffortQuickWin, Object: "WarehouseLive", Finding: card.Verdict, Why: "w", DoThis: "d",
 			ThenCheck: "t", Evidence: "Log file size: 512 MB."},
 		{CheckID: "BAK05", Severity: domain.SeverityInfo, Owner: domain.OwnerClientIT, When: domain.WhenNone,
-			Effort: domain.EffortNone, Object: "GraniteLive", Finding: "You could lose up to 24 hours of data."},
+			Effort: domain.EffortNone, Object: "WarehouseLive", Finding: "You could lose up to 24 hours of data."},
 	}
 	checks := []domain.CheckStatus{{CheckID: "BAK02", Status: domain.CheckFinding},
 		{CheckID: "BAK03", Status: domain.CheckSkipped, Note: "not on this version"}}
 
 	for want := int64(1); want <= 2; want++ {
-		id, err := st.InsertCardRead(ctx, 7, "GraniteLive", card, findings, checks)
+		id, err := st.InsertCardRead(ctx, 7, "WarehouseLive", card, findings, checks)
 		if err != nil {
 			t.Fatal(err)
 		}

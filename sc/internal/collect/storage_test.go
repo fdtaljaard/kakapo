@@ -55,10 +55,39 @@ func TestStorageInstanceQuery(t *testing.T) {
 	}
 	// The dynamic SQL inside the database is cached under its own text: it carries the tag too.
 	if !strings.Contains(storageDatabaseQuery, "N'"+KakapoTag+" SELECT @o") || strings.Contains(storageDatabaseQuery, "SQLMonitor") {
-		t.Error("the log-table read must carry the kakapo tag")
+		t.Error("the oldest-row read of the tables that only grow must carry the kakapo tag")
 	}
-	if !strings.HasPrefix(inDatabase("GraniteLive"), KakapoTag) {
-		t.Errorf("in-database batch not tagged: %q", inDatabase("GraniteLive"))
+	if !strings.HasPrefix(inDatabase("WarehouseLive"), KakapoTag) {
+		t.Errorf("in-database batch not tagged: %q", inDatabase("WarehouseLive"))
+	}
+}
+
+// TestGrowingTablesQuery checks IDX10's read: user tables named like log or history tables (the
+// domain's words), a million rows or 500 MB, the 10 biggest, and one MIN of the first date column
+// per table, only when that column leads an index (a seek), read uncommitted and in its own TRY so
+// one table cannot stop the others.
+func TestGrowingTablesQuery(t *testing.T) {
+	q := storageDatabaseQuery
+	for _, w := range domain.GrowingTableWords {
+		if !strings.Contains(q, "(N'"+w+"')") {
+			t.Errorf("growing tables read lacks the word %q", w)
+		}
+	}
+	for _, want := range []string{"FROM sys.tables AS t", "JOIN sys.dm_db_partition_stats AS p ON p.object_id = t.object_id",
+		"WHERE LOWER(t.name) LIKE N'%' + w.word + N'%'", "SELECT TOP (10) t.object_id", ">= 1000000", ">= 500",
+		"TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')", "ORDER BY c.column_id",
+		"JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id",
+		"ic.column_id = d.column_id AND ic.key_ordinal = 1", "i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0",
+		"MIN(' + QUOTENAME(@col) + N')", "WITH (READUNCOMMITTED)", "IF @col IS NOT NULL AND @indexed = 1",
+		"SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, oldest FROM @gt ORDER BY n;"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("growing tables read lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"IntegrationLog", "COL_LENGTH", "[Date]", "@lt"} {
+		if strings.Contains(q, gone) {
+			t.Errorf("growing tables read still names %q", gone)
+		}
 	}
 }
 
@@ -117,12 +146,12 @@ func TestStorageFactsLive(t *testing.T) {
 			x.Database, x.Type, x.LogicalName, x.SizeMB, x.UsedMB, x.Growth, x.IsPercentGrowth, x.MaxSizePages,
 			x.Volume, x.VolumeFreeMB, x.HasIO, x.Reads, x.Writes)
 	}
-	t.Logf("state %s, %s, reuse %s, edition %d, cpu %d, vlf %v, tempdb %v/%v log %v, tables %d (%.0f + %.0f MB), top %d, log tables %+v, identities %d",
+	t.Logf("state %s, %s, reuse %s, edition %d, cpu %d, vlf %v, tempdb %v/%v log %v, tables %d (%.0f + %.0f MB), top %d, tables that only grow %+v, identities %d",
 		f.State, f.RecoveryModel, f.LogReuseWait, f.EngineEdition, f.CPUCount, f.VLFCount, f.TempdbAllocMB, f.TempdbFreeMB,
-		f.TempdbLogUsedPct, f.TableCount, f.TotalDataMB, f.TotalIndexMB, len(f.Tables), f.LogTables, len(f.Identities))
-	t.Logf("errors: files %q vol %q io %q cpu %q vlf %q temp %q space %q tables %q log %q ident %q",
+		f.TempdbLogUsedPct, f.TableCount, f.TotalDataMB, f.TotalIndexMB, len(f.Tables), f.GrowingTables, len(f.Identities))
+	t.Logf("errors: files %q vol %q io %q cpu %q vlf %q temp %q space %q tables %q grow %q ident %q",
 		f.FilesError, f.VolumeError, f.LatencyError, f.CPUError, f.VLFError, f.TempdbError, f.SpaceUsedError,
-		f.TablesError, f.LogTablesError, f.IdentityError)
+		f.TablesError, f.GrowingTablesError, f.IdentityError)
 
 	kb, took, err := RunCheckdbEstimate(ctx, db, name)
 	if err != nil || kb <= 0 {

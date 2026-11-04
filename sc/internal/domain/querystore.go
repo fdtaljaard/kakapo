@@ -458,7 +458,7 @@ func BuildQueryStoreFix(o QueryStoreOptions, engineMajor int, dbName string) Fix
 }
 
 // ChangeDescription is the one line the change log keeps for a Query Store fix,
-// e.g. "Query Store on GraniteLive: INTERVAL_LENGTH_MINUTES 60 -> 15, MAX_STORAGE_SIZE_MB 1000 -> 2048".
+// e.g. "Query Store on WarehouseLive: INTERVAL_LENGTH_MINUTES 60 -> 15, MAX_STORAGE_SIZE_MB 1000 -> 2048".
 func ChangeDescription(dbName string, changes []Drift) string {
 	parts := []string{}
 	for _, d := range changes {

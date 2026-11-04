@@ -24,7 +24,7 @@ export function duration(sec: number): string {
   return `${(sec / 3600).toFixed(1).replace(/\.0$/, "")} hours`
 }
 
-// "GraniteScheduler on WMS-APP01", or the SQL Agent job.
+// "AppScheduler on WMS-APP01", or the SQL Agent job.
 export function whoText(n: BlockingNode): string {
   const what = n.jobName
     ? `SQL Agent job ${n.jobName}`

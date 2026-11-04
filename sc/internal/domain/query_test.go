@@ -11,12 +11,12 @@ import (
 // variable, a temporary table, an implicit conversion and two compiled parameters.
 const queryPlanXML = `<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564" Build="16.0.4255.2">
 <BatchSequence><Batch><Statements>
-<StmtSimple StatementText="SELECT t.Qty FROM dbo.TrackingEntity t JOIN dbo.Location l ON l.ID = t.LocationID WHERE l.Code = @code" StatementId="1" StatementType="SELECT">
+<StmtSimple StatementText="SELECT t.Qty FROM dbo.StockUnit t JOIN dbo.Location l ON l.ID = t.LocationID WHERE l.Code = @code" StatementId="1" StatementType="SELECT">
  <QueryPlan CachedPlanSize="40" CompileTime="3">
   <Warnings><PlanAffectingConvert ConvertIssue="Seek Plan" Expression="CONVERT_IMPLICIT(nvarchar(50),[l].[Code],0)=[@code]"/></Warnings>
   <MissingIndexes>
    <MissingIndexGroup Impact="87.5">
-    <MissingIndex Database="[GraniteLive]" Schema="[dbo]" Table="[TrackingEntity]">
+    <MissingIndex Database="[WarehouseLive]" Schema="[dbo]" Table="[StockUnit]">
      <ColumnGroup Usage="EQUALITY"><Column Name="[LocationID]" ColumnId="3"/></ColumnGroup>
      <ColumnGroup Usage="INEQUALITY"><Column Name="[CreatedDate]" ColumnId="7"/></ColumnGroup>
      <ColumnGroup Usage="INCLUDE"><Column Name="[Qty]" ColumnId="5"/><Column Name="[Barcode]" ColumnId="2"/></ColumnGroup>
@@ -25,9 +25,9 @@ const queryPlanXML = `<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver
   </MissingIndexes>
   <RelOp NodeId="0" PhysicalOp="Nested Loops">
    <NestedLoops>
-    <RelOp NodeId="1"><IndexScan Lookup="true"><Object Database="[GraniteLive]" Schema="[dbo]" Table="[TrackingEntity]" Index="[PK_TrackingEntity]" IndexKind="Clustered"/></IndexScan></RelOp>
-    <RelOp NodeId="2"><IndexScan><Object Database="[GraniteLive]" Schema="[dbo]" Table="[TrackingEntity]" Index="[IX_TE_Location]"/></IndexScan></RelOp>
-    <RelOp NodeId="3"><IndexScan><Object Database="[GraniteLive]" Schema="[dbo]" Table="[Location]" Index="[IX_Location_Code]"/></IndexScan></RelOp>
+    <RelOp NodeId="1"><IndexScan Lookup="true"><Object Database="[WarehouseLive]" Schema="[dbo]" Table="[StockUnit]" Index="[PK_StockUnit]" IndexKind="Clustered"/></IndexScan></RelOp>
+    <RelOp NodeId="2"><IndexScan><Object Database="[WarehouseLive]" Schema="[dbo]" Table="[StockUnit]" Index="[IX_TE_Location]"/></IndexScan></RelOp>
+    <RelOp NodeId="3"><IndexScan><Object Database="[WarehouseLive]" Schema="[dbo]" Table="[Location]" Index="[IX_Location_Code]"/></IndexScan></RelOp>
     <RelOp NodeId="4"><TableScan><Object Table="[@t]"/></TableScan></RelOp>
     <RelOp NodeId="5"><IndexScan><Object Database="[tempdb]" Schema="[dbo]" Table="[#work]"/></IndexScan></RelOp>
     <RelOp NodeId="6"><IndexScan><Object Database="[OtherDb]" Schema="[dbo]" Table="[Elsewhere]"/></IndexScan></RelOp>
@@ -68,7 +68,7 @@ func TestParseShowplan(t *testing.T) {
 		t.Fatalf("missing indexes %+v", sp.MissingIndexes)
 	}
 	mi := sp.MissingIndexes[0]
-	if mi.Table != "[GraniteLive].[dbo].[TrackingEntity]" || mi.TableName != "dbo.TrackingEntity" || mi.Equality != "[LocationID]" ||
+	if mi.Table != "[WarehouseLive].[dbo].[StockUnit]" || mi.TableName != "dbo.StockUnit" || mi.Equality != "[LocationID]" ||
 		mi.Inequality != "[CreatedDate]" || mi.Included != "[Qty], [Barcode]" || mi.Impact != 87.5 {
 		t.Errorf("missing index %+v", mi)
 	}
@@ -76,8 +76,8 @@ func TestParseShowplan(t *testing.T) {
 		t.Errorf("objects %+v", sp.Objects)
 	}
 
-	tables := ShowplanTables("GraniteLive", queryPlanXML, queryPlanXML)
-	if len(tables) != 2 || tables[0].Table != "TrackingEntity" || tables[0].Index != "PK_TrackingEntity\nIX_TE_Location" ||
+	tables := ShowplanTables("WarehouseLive", queryPlanXML, queryPlanXML)
+	if len(tables) != 2 || tables[0].Table != "StockUnit" || tables[0].Index != "PK_StockUnit\nIX_TE_Location" ||
 		tables[1].Table != "Location" || tables[1].Schema != "dbo" {
 		t.Errorf("tables %+v", tables)
 	}
@@ -98,9 +98,9 @@ func qPtime(t time.Time) *time.Time { return &t }
 func regressedQueryFacts() QueryFacts {
 	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	return QueryFacts{
-		Database: "GraniteLive", QueryHash: "0x9F3A00112233AABB", ServerName: "WMS-SQL01", ProductVersion: "16.0.4255.2",
+		Database: "WarehouseLive", QueryHash: "0x9F3A00112233AABB", ServerName: "WMS-SQL01", ProductVersion: "16.0.4255.2",
 		ServerNow: now, UTCOffsetMinutes: 120, QueryStoreState: "READ_WRITE",
-		Text: "SELECT t.Qty FROM dbo.TrackingEntity t ...", ObjectName: "dbo.PickList",
+		Text: "SELECT t.Qty FROM dbo.StockUnit t ...", ObjectName: "dbo.PickList",
 		Plans: []QueryStorePlanFact{
 			{PlanID: 12, QueryID: 345, PlanHash: "0x00000000000000AA", Runs: 10000, CPU: 10000 * 40000, MaxCPU: 900000,
 				Duration: 10000 * 100000, MaxDuration: 2000000, Reads: 10000 * 3000, MaxReads: 9000, TempdbKB: -1,
@@ -124,7 +124,7 @@ func regressedQueryFacts() QueryFacts {
 		},
 		Tables: []QueryTableFact{
 			{Schema: "dbo", Table: "Location", Found: true, Rows: 300, Stats: 2, OldestUpdate: qPtime(now.Add(-24 * time.Hour)), MaxModPct: 1},
-			{Schema: "dbo", Table: "TrackingEntity", Found: true, Rows: 4200000, Stats: 5,
+			{Schema: "dbo", Table: "StockUnit", Found: true, Rows: 4200000, Stats: 5,
 				OldestUpdate: qPtime(now.Add(2*time.Hour - 31*24*time.Hour)), MaxModPct: 48, Modifications: 2000000},
 		},
 	}
@@ -150,7 +150,7 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 		t.Errorf("what the plan says %+v", active)
 	}
 	if a := active.MissingIndexes[0].Action; a == nil || a.FixID != "create-index" || a.Options["source"] != "plan" || a.Options["planId"] != "15" ||
-		a.Options["table"] != "[GraniteLive].[dbo].[TrackingEntity]" || a.Options["equality"] != "[LocationID]" ||
+		a.Options["table"] != "[WarehouseLive].[dbo].[StockUnit]" || a.Options["equality"] != "[LocationID]" ||
 		a.Options["inequality"] != "[CreatedDate]" || a.Options["included"] != "[Qty], [Barcode]" {
 		t.Errorf("create-index action %+v", a)
 	}
@@ -180,8 +180,8 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 		t.Errorf("statements %+v", d.Statements)
 	}
 	te := d.Tables[0]
-	if te.Name != "dbo.TrackingEntity" || !te.Stale || te.AgeDays == nil || *te.AgeDays != 31 || te.Action == nil ||
-		te.Action.Options["table"] != "[dbo].[TrackingEntity]" || strings.Join(te.Indexes, ",") != "PK_TrackingEntity,IX_TE_Location" ||
+	if te.Name != "dbo.StockUnit" || !te.Stale || te.AgeDays == nil || *te.AgeDays != 31 || te.Action == nil ||
+		te.Action.Options["table"] != "[dbo].[StockUnit]" || strings.Join(te.Indexes, ",") != "PK_StockUnit,IX_TE_Location" ||
 		d.Tables[1].Stale {
 		t.Errorf("tables %+v", d.Tables)
 	}
@@ -193,8 +193,8 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 		"Remove the plan from the cache so the next run compiles for its own values.",
 		"Its plan converts a column's type for every row (CONVERT_IMPLICIT(nvarchar(50),[l].[Code],0)=[@code])",
 		"Its plan shows key lookups (the index used does not hold every column needed) and reads a table variable (no statistics, estimated as 1 row).",
-		"SQL Server suggests an index on dbo.TrackingEntity (LocationID, CreatedDate) that it estimates would cut this query's cost by 88%. Create the index",
-		"It reads dbo.TrackingEntity (4.2 M rows) whose statistics are 31 days old with 48% of rows changed. Update statistics on it.",
+		"SQL Server suggests an index on dbo.StockUnit (LocationID, CreatedDate) that it estimates would cut this query's cost by 88%. Create the index",
+		"It reads dbo.StockUnit (4.2 M rows) whose statistics are 31 days old with 48% of rows changed. Update statistics on it.",
 		"It waits more than it works: 71% of its waiting time is spent waiting for locks held by other sessions (blocking).",
 		"In dbo.PickList, the statement on line 12 does 72% of the procedure's page reads; it is this query.",
 	}
@@ -212,7 +212,7 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 		}
 	}
 	if len(actions) != 4 || !strings.HasPrefix(actions["force-plan"], "Two plans") || !strings.HasPrefix(actions["evict-plan"], "Its parameters") ||
-		!strings.HasPrefix(actions["create-index"], "SQL Server suggests") || !strings.HasPrefix(actions["update-statistics-table"], "It reads dbo.TrackingEntity") {
+		!strings.HasPrefix(actions["create-index"], "SQL Server suggests") || !strings.HasPrefix(actions["update-statistics-table"], "It reads dbo.StockUnit") {
 		t.Errorf("actions %+v", actions)
 	}
 	for _, l := range d.Explain {
@@ -222,7 +222,7 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 	}
 
 	// The hand-over for the vendor: the numbers, the warnings, the parameters, the text.
-	for _, w := range []string{"Query 0x9F3A00112233AABB in GraniteLive on WMS-SQL01", "Procedure: dbo.PickList", "Runs: 11,240.",
+	for _, w := range []string{"Query 0x9F3A00112233AABB in WarehouseLive on WMS-SQL01", "Procedure: dbo.PickList", "Runs: 11,240.",
 		"- plan 15 (in use): 1,240 runs", "- plan 12 (fastest)", "- Implicit conversion: CONVERT_IMPLICIT", "keys LocationID, CreatedDate include Qty, Barcode, impact 88%",
 		"- @Site (int) = 5, last run with 7", "Query text\nSELECT t.Qty"} {
 		if !strings.Contains(d.Handover, w) {
@@ -262,7 +262,7 @@ func TestQueryDetailForcedPlan(t *testing.T) {
 // Query Store off: the plan cache's figures, and the Query Store fix offered.
 func TestQueryDetailFromPlanCache(t *testing.T) {
 	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
-	f := QueryFacts{Database: "GraniteLive", QueryHash: "0x9F3A00112233AABB", ServerNow: now, UTCOffsetMinutes: 120, QueryStoreState: "OFF",
+	f := QueryFacts{Database: "WarehouseLive", QueryHash: "0x9F3A00112233AABB", ServerNow: now, UTCOffsetMinutes: 120, QueryStoreState: "OFF",
 		CachedPlans: []CachedPlanFact{{PlanHandle: "0x06AA", PlanHash: "0xBB", Runs: 50, CPU: 50 * 2000, Duration: 50 * 4000, MaxDuration: 9000,
 			Reads: 50 * 10, MaxReads: 20, Created: now.Add(-3 * time.Hour), LastRun: now, Text: "SELECT 1", Plan: queryPlanXML}},
 		WaitsError: "", PlanCacheError: ""}
@@ -272,7 +272,7 @@ func TestQueryDetailFromPlanCache(t *testing.T) {
 		t.Fatalf("detail %+v", d)
 	}
 	last := d.Explain[len(d.Explain)-1]
-	if !strings.HasPrefix(last.Text, "Query Store is off for GraniteLive, so these figures come from the plan cache since 09:00") ||
+	if !strings.HasPrefix(last.Text, "Query Store is off for WarehouseLive, so these figures come from the plan cache since 09:00") ||
 		last.Action == nil || last.Action.FixID != FixQueryStore {
 		t.Errorf("last line %+v", last)
 	}
@@ -281,7 +281,7 @@ func TestQueryDetailFromPlanCache(t *testing.T) {
 	}
 
 	// Nothing anywhere: one sentence, and the areas not read are named.
-	none := BuildQueryDetail(QueryFacts{Database: "GraniteLive", QueryHash: "0x01", ServerNow: now, QueryStoreState: "READ_WRITE",
+	none := BuildQueryDetail(QueryFacts{Database: "WarehouseLive", QueryHash: "0x01", ServerNow: now, QueryStoreState: "READ_WRITE",
 		PlanCacheError: "the login does not have VIEW SERVER STATE."}, true)
 	if none.Source != QueryDetailFromNothing || len(none.Explain) != 1 || !strings.HasPrefix(none.Explain[0].Text, "Nothing is known") ||
 		len(none.Notes) != 1 || none.Notes[0] != "Plan cache: could not be read: the login does not have VIEW SERVER STATE." {

@@ -200,14 +200,17 @@ SELECT session_id, login_name, program_name, mb FROM @tsess ORDER BY mb DESC;`
 // storageDatabaseQuery runs inside the database (EXEC [db].sys.sp_executesql): the file latency and
 // the VLF count and how full the log is (sys.dm_db_log_space_usage; read from inside, so an
 // AUTO_CLOSE database is open while they are read), the space
-// used per file, the table sizes, the Granite log tables and the identity columns, each in its own
-// TRY.
-// The log tables' oldest and newest [Date] come from the first and last row by the clustered key
-// (a seek), only for a table of a million rows or 500 MB, as the triage does; never a scan.
+// used per file, the table sizes, the tables that only grow and the identity columns, each in its
+// own TRY.
+// The tables that only grow are user tables whose name contains log, history, audit, trace, event,
+// journal or archive, of a million rows or 500 MB, the 10 biggest. For each whose first datetime,
+// datetime2 or date column is the leading key column of an index (not filtered, disabled or
+// hypothetical), one SELECT MIN of that column, read uncommitted, says how far back its rows go:
+// on the index it is a seek. On any other column it would scan millions of rows, so it is not read.
 // Result sets: errors, the VLF count and the log space used, file latency, space used, totals, the 10 biggest tables,
-// log tables, identity columns.
+// tables that only grow, identity columns.
 const storageDatabaseQuery = `SET NOCOUNT ON;
-DECLARE @spaceError nvarchar(2048), @tableError nvarchar(2048), @logError nvarchar(2048), @identError nvarchar(2048),
+DECLARE @spaceError nvarchar(2048), @tableError nvarchar(2048), @growError nvarchar(2048), @identError nvarchar(2048),
         @ioError nvarchar(2048), @vlfError nvarchar(2048), @vlf int, @vlfMissing bit = 0,
         @logSpaceError nvarchar(2048), @logBytes bigint, @logPct float;
 DECLARE @io TABLE (file_id int NOT NULL, num_reads bigint NOT NULL, num_writes bigint NOT NULL,
@@ -245,9 +248,8 @@ END CATCH;
 DECLARE @space TABLE (file_id int NOT NULL, used_mb bigint NULL);
 DECLARE @tables TABLE (object_id int NOT NULL, table_name nvarchar(300) NOT NULL, data_mb decimal(18, 2) NOT NULL,
                        index_mb decimal(18, 2) NOT NULL, index_count int NOT NULL, rows_count bigint NOT NULL);
-DECLARE @lt TABLE (n int NOT NULL, table_name sysname NOT NULL, object_id int NOT NULL, rows_count bigint NOT NULL,
-                   mb decimal(18, 1) NOT NULL, lead_col sysname NULL, oldest datetime NULL, newest datetime NULL,
-                   cleanup nvarchar(1000) NULL);
+DECLARE @gt TABLE (n int NOT NULL, schema_name sysname NOT NULL, table_name sysname NOT NULL, rows_count bigint NOT NULL,
+                   mb decimal(18, 1) NOT NULL, date_col sysname NULL, date_indexed bit NOT NULL, oldest datetime2 NULL);
 DECLARE @ident TABLE (table_name nvarchar(300) NOT NULL, column_name sysname NOT NULL, type_name sysname NOT NULL,
                       last_value bigint NOT NULL, seed_value bigint NOT NULL, increment_value bigint NOT NULL,
                       pct_used decimal(9, 2) NOT NULL);
@@ -282,54 +284,55 @@ BEGIN CATCH
     SET @tableError = ERROR_MESSAGE();
 END CATCH;
 
-IF @tableError IS NOT NULL SET @logError = @tableError;
-ELSE
+/* Tables that only grow (IDX10): user tables whose name says log or history, of a million rows or
+   500 MB, the 10 biggest; then the lowest value of each one's first date column, read uncommitted
+   and only when that column leads an index (a seek, never a scan) */
 BEGIN TRY
-    INSERT @lt (n, table_name, object_id, rows_count, mb, lead_col)
-    SELECT v.n, v.name, t.object_id, t.rows_count, t.data_mb + t.index_mb,
-           (SELECT c.name FROM sys.index_columns AS ic
-            JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-            WHERE ic.object_id = t.object_id AND ic.index_id = 1 AND ic.key_ordinal = 1)
-    FROM (VALUES (1, N'ScheduledJobsHistory'), (2, N'IntegrationLog'), (3, N'EmailLog')) AS v (n, name)
-    JOIN @tables AS t ON t.object_id = OBJECT_ID(N'dbo.' + QUOTENAME(v.name));
+    INSERT @gt (n, schema_name, table_name, rows_count, mb, date_col, date_indexed)
+    SELECT ROW_NUMBER() OVER (ORDER BY x.mb DESC, x.schema_name, x.table_name), x.schema_name, x.table_name, x.rows_count, x.mb,
+           d.name,
+           CASE WHEN EXISTS (SELECT 1 FROM sys.index_columns AS ic
+                             JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                             WHERE ic.object_id = x.object_id AND ic.column_id = d.column_id AND ic.key_ordinal = 1
+                               AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0)
+                THEN 1 ELSE 0 END
+    FROM (SELECT TOP (10) t.object_id, s.name AS schema_name, t.name AS table_name,
+                 SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) AS rows_count,
+                 CONVERT(decimal(18, 1), SUM(p.used_page_count) * 8 / 1024.0) AS mb
+          FROM sys.tables AS t
+          JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+          JOIN sys.dm_db_partition_stats AS p ON p.object_id = t.object_id
+          WHERE t.is_ms_shipped = 0
+            AND EXISTS (SELECT 1 FROM (VALUES (N'log'), (N'history'), (N'audit'), (N'trace'), (N'event'), (N'journal'), (N'archive')) AS w (word)
+                        WHERE LOWER(t.name) LIKE N'%' + w.word + N'%')
+          GROUP BY t.object_id, s.name, t.name
+          HAVING SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) >= 1000000
+              OR SUM(p.used_page_count) * 8 / 1024.0 >= 500
+          ORDER BY SUM(p.used_page_count) DESC) AS x
+    OUTER APPLY (SELECT TOP (1) c.name, c.column_id FROM sys.columns AS c
+                 WHERE c.object_id = x.object_id AND TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')
+                 ORDER BY c.column_id) AS d;
 
-    DECLARE @i int = 1, @name sysname, @obj int, @pk sysname, @o datetime, @nw datetime, @sql nvarchar(max), @cleanup nvarchar(1000);
-    WHILE @i <= 3
+    DECLARE @i int = 1, @gtCount int, @schema sysname, @table sysname, @col sysname, @indexed bit, @o datetime2, @sql nvarchar(max);
+    SELECT @gtCount = COUNT(*) FROM @gt;
+    WHILE @i <= @gtCount
     BEGIN
-        SELECT @name = NULL, @obj = NULL, @pk = NULL, @o = NULL, @nw = NULL, @cleanup = NULL;
-        SELECT @name = table_name, @obj = object_id, @pk = lead_col FROM @lt
-        WHERE n = @i AND (rows_count >= 1000000 OR mb >= 500);
-        IF @name IS NOT NULL
-        BEGIN
-            IF @pk IS NOT NULL AND COL_LENGTH(N'dbo.' + QUOTENAME(@name), N'Date') IS NOT NULL
-            BEGIN
-                SET @sql = N'` + KakapoTag + ` SELECT @o = (SELECT TOP (1) [Date] FROM dbo.' + QUOTENAME(@name) + N' ORDER BY ' + QUOTENAME(@pk) + N'),'
-                         + N' @n = (SELECT TOP (1) [Date] FROM dbo.' + QUOTENAME(@name) + N' ORDER BY ' + QUOTENAME(@pk) + N' DESC);';
-                EXEC sys.sp_executesql @sql, N'@o datetime OUTPUT, @n datetime OUTPUT', @o = @o OUTPUT, @n = @nw OUTPUT;
-            END;
-            /* Code in this database that already deletes from the table (often written at a site) */
-            SET @cleanup = STUFF((
-                SELECT TOP (5) N', ' + x.object_name
-                FROM (SELECT QUOTENAME(s.name) + N'.' + QUOTENAME(o.name) AS object_name,
-                             REPLACE(REPLACE(REPLACE(REPLACE(LOWER(m.definition), N' ', N''), NCHAR(9), N''), NCHAR(13), N''), NCHAR(10), N'') AS flat
-                      FROM sys.sql_modules AS m
-                      JOIN sys.objects AS o ON o.object_id = m.object_id AND o.is_ms_shipped = 0
-                      JOIN sys.schemas AS s ON s.schema_id = o.schema_id
-                      WHERE o.type IN ('P', 'V', 'FN', 'IF', 'TF', 'TR') AND o.object_id <> @obj
-                        AND LOWER(m.definition) LIKE N'%' + LOWER(@name) + N'%') AS x
-                WHERE EXISTS (SELECT 1 FROM (VALUES (N'delete'), (N'deletefrom'), (N'deletedbo.'), (N'deletefromdbo.'),
-                                                    (N'deletefrom[[]dbo].[[]'), (N'truncatetable'), (N'truncatetabledbo.'),
-                                                    (N'truncatetable[[]dbo].[[]')) AS p (prefix)
-                              WHERE x.flat LIKE N'%' + p.prefix + LOWER(@name) + N'%')
-                ORDER BY x.object_name
-                FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 2, N'');
-            UPDATE @lt SET oldest = @o, newest = @nw, cleanup = @cleanup WHERE n = @i;
-        END;
+        SELECT @schema = schema_name, @table = table_name, @col = date_col, @indexed = date_indexed, @o = NULL FROM @gt WHERE n = @i;
+        IF @col IS NOT NULL AND @indexed = 1
+        BEGIN TRY
+            SET @sql = N'` + KakapoTag + ` SELECT @o = CONVERT(datetime2, MIN(' + QUOTENAME(@col) + N')) FROM '
+                     + QUOTENAME(@schema) + N'.' + QUOTENAME(@table) + N' WITH (READUNCOMMITTED);';
+            EXEC sys.sp_executesql @sql, N'@o datetime2 OUTPUT', @o = @o OUTPUT;
+            UPDATE @gt SET oldest = @o WHERE n = @i;
+        END TRY
+        BEGIN CATCH
+            SET @o = NULL; /* the age stays unknown for this table; the others are still read */
+        END CATCH;
         SET @i += 1;
     END;
 END TRY
 BEGIN CATCH
-    SET @logError = ERROR_MESSAGE();
+    SET @growError = ERROR_MESSAGE();
 END CATCH;
 
 BEGIN TRY
@@ -351,14 +354,14 @@ BEGIN CATCH
     SET @identError = ERROR_MESSAGE();
 END CATCH;
 
-SELECT @spaceError, @tableError, @logError, @identError, @ioError, @vlfError, @vlf, @vlfMissing,
+SELECT @spaceError, @tableError, @growError, @identError, @ioError, @vlfError, @vlf, @vlfMissing,
        @logSpaceError, @logBytes, @logPct;
 SELECT file_id, num_reads, num_writes, stall_read_ms, stall_write_ms FROM @io;
 SELECT file_id, used_mb FROM @space;
 SELECT COUNT(*), ISNULL(SUM(data_mb), 0), ISNULL(SUM(index_mb), 0) FROM @tables;
 SELECT TOP (10) table_name, data_mb, index_mb, index_count, rows_count FROM @tables
 WHERE data_mb + index_mb >= 1 ORDER BY data_mb + index_mb DESC;
-SELECT table_name, rows_count, mb, lead_col, oldest, newest, cleanup FROM @lt ORDER BY n;
+SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, oldest FROM @gt ORDER BY n;
 SELECT table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used FROM @ident
 ORDER BY pct_used DESC;`
 
@@ -374,7 +377,7 @@ func StorageFacts(ctx context.Context, db *sql.DB, database string) (domain.Stor
 	if f.State == "ONLINE" {
 		if err := readStorageDatabase(ctx, db, database, &f); err != nil {
 			msg := "could not read inside the database: " + err.Error()
-			f.SpaceUsedError, f.TablesError, f.LogTablesError, f.IdentityError = msg, msg, msg, msg
+			f.SpaceUsedError, f.TablesError, f.GrowingTablesError, f.IdentityError = msg, msg, msg, msg
 			f.LatencyError, f.VLFError, f.LogSpaceError = msg, msg, msg
 		}
 	}
@@ -504,8 +507,8 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 }
 
 func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *domain.StorageFacts) error {
-	// QUOTED_IDENTIFIER ON for the FOR XML ... .value() that lists cleanup code; the dynamic SQL is
-	// compiled with the session's setting.
+	// QUOTED_IDENTIFIER ON, the standard setting, whatever the connection's default: the dynamic SQL
+	// is compiled with the session's setting.
 	q := Tag(safeSession + "SET QUOTED_IDENTIFIER ON; EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt;")
 	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", Tag(storageDatabaseQuery)))
 	if err != nil {
@@ -521,13 +524,13 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 		return errors.New("SQL Server returned nothing from inside the database")
 	}
 	var (
-		spaceErr, tableErr, logErr, identErr, ioErr, vlfErr sql.NullString
-		vlf                                                 sql.NullInt32
-		logSpaceErr                                         sql.NullString
-		logBytes                                            sql.NullInt64
-		logPct                                              sql.NullFloat64
+		spaceErr, tableErr, growErr, identErr, ioErr, vlfErr sql.NullString
+		vlf                                                  sql.NullInt32
+		logSpaceErr                                          sql.NullString
+		logBytes                                             sql.NullInt64
+		logPct                                               sql.NullFloat64
 	)
-	if err := rows.Scan(&spaceErr, &tableErr, &logErr, &identErr, &ioErr, &vlfErr, &vlf, &f.VLFUnsupported,
+	if err := rows.Scan(&spaceErr, &tableErr, &growErr, &identErr, &ioErr, &vlfErr, &vlf, &f.VLFUnsupported,
 		&logSpaceErr, &logBytes, &logPct); err != nil {
 		return err
 	}
@@ -540,7 +543,7 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 	default:
 		f.LogSpaceError = "sys.dm_db_log_space_usage returned nothing."
 	}
-	f.SpaceUsedError, f.TablesError, f.LogTablesError, f.IdentityError = spaceErr.String, tableErr.String, logErr.String, identErr.String
+	f.SpaceUsedError, f.TablesError, f.GrowingTablesError, f.IdentityError = spaceErr.String, tableErr.String, growErr.String, identErr.String
 	f.LatencyError, f.VLFError = ioErr.String, vlfErr.String
 	if vlf.Valid {
 		n := int(vlf.Int32)
@@ -608,23 +611,22 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 		f.Tables = append(f.Tables, t)
 	}
 
-	// 6: the Granite log tables that exist.
-	if err := nextResultSet(rows, "log tables"); err != nil {
+	// 6: the tables that only grow.
+	if err := nextResultSet(rows, "tables that only grow"); err != nil {
 		return err
 	}
-	f.LogTables = []domain.LogTable{}
+	f.GrowingTables = []domain.GrowingTable{}
 	for rows.Next() {
 		var (
-			t              domain.LogTable
-			lead, cleanup  sql.NullString
-			oldest, newest sql.NullTime
+			t       domain.GrowingTable
+			dateCol sql.NullString
+			oldest  sql.NullTime
 		)
-		if err := rows.Scan(&t.Name, &t.Rows, &t.MB, &lead, &oldest, &newest, &cleanup); err != nil {
+		if err := rows.Scan(&t.Schema, &t.Name, &t.Rows, &t.MB, &dateCol, &t.DateIndexed, &oldest); err != nil {
 			return err
 		}
-		t.LeadCol, t.Cleanup = lead.String, cleanup.String
-		t.Oldest, t.Newest = naivePtr(oldest), naivePtr(newest)
-		f.LogTables = append(f.LogTables, t)
+		t.DateCol, t.Oldest = dateCol.String, naivePtr(oldest)
+		f.GrowingTables = append(f.GrowingTables, t)
 	}
 
 	// 7: identity columns at half their range or more.

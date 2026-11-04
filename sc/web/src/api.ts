@@ -263,7 +263,7 @@ export interface HealthEvent {
 }
 
 export interface DeadlockPair {
-  procedures: [string, string] // e.g. ["dbo.PRESCRIPT_PICKING...", "dbo.IntegrationPost..."]
+  procedures: [string, string] // e.g. ["dbo.USP_PICKING...", "dbo.IntegrationPost..."]
   count: number
   last: string
   objects: string[] // the tables involved, distinct

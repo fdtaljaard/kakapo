@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -90,15 +91,37 @@ type SlowGrowth struct {
 	At   time.Time
 }
 
-// LogTable is one of the Granite log and history tables that only ever grow.
-type LogTable struct {
-	Name    string // ScheduledJobsHistory, IntegrationLog, EmailLog
+// GrowingTable is a user table whose name suggests a log or history table (it contains log,
+// history, audit, trace, event, journal or archive) and that holds a million rows or 500 MB.
+type GrowingTable struct {
+	Schema  string
+	Name    string
 	Rows    int64
 	MB      float64
-	LeadCol string     // the first key column of its clustered index; "" for a heap
-	Oldest  *time.Time // [Date] of the first and last row by that key; nil when not read
-	Newest  *time.Time
-	Cleanup string // code in the database that already deletes from it, "[dbo].[a], [dbo].[b]"
+	DateCol string // its first datetime, datetime2 or date column; "" when it has none
+	// DateIndexed: DateCol leads an index (key_ordinal 1). Only then is its MIN read, because then
+	// it is a seek on the index; on any other column it would be a scan of millions of rows.
+	DateIndexed bool
+	Oldest      *time.Time // the lowest value of DateCol; nil when not read, not readable or empty
+}
+
+// growingMinMonths is how old the oldest row of a table that only grows must be before IDX10
+// says nothing removes old rows: a table whose oldest row is younger is being cleaned up.
+const growingMinMonths = 12
+
+// GrowingTableWords are the words, any case, in the name of a table that looks like a log or
+// history table. The collector's read filters on the same words.
+var GrowingTableWords = []string{"log", "history", "audit", "trace", "event", "journal", "archive"}
+
+// LooksLikeLogTable says whether a table's name contains one of GrowingTableWords, in any case.
+func LooksLikeLogTable(name string) bool {
+	lower := strings.ToLower(name)
+	for _, w := range GrowingTableWords {
+		if strings.Contains(lower, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // IdentityColumn is an identity column that has used half its range or more.
@@ -109,7 +132,7 @@ type IdentityColumn struct {
 	LastValue int64
 	Seed      int64
 	Increment int64
-	PctUsed   float64 // decimal(9, 2), as the triage computes it
+	PctUsed   float64 // decimal(9, 2), as PerformanceTriage.sql computes it
 }
 
 // MaxValue is the largest value of the column's type.
@@ -176,29 +199,29 @@ type StorageFacts struct {
 	LogSizeMB  *int64   // this database's sys.dm_db_log_space_usage total_log_size_in_bytes, in MB
 	LogUsedPct *float64 // its used_log_space_in_percent
 
-	TableCount   int
-	TotalDataMB  float64     // every user table's data (heap or clustered index)
-	TotalIndexMB float64     // every user table's other indexes
-	Tables       []TableSize // the 10 biggest of 1 MB or more, biggest first
-	LogTables    []LogTable  // those of the three that exist
-	Identities   []IdentityColumn
+	TableCount    int
+	TotalDataMB   float64        // every user table's data (heap or clustered index)
+	TotalIndexMB  float64        // every user table's other indexes
+	Tables        []TableSize    // the 10 biggest of 1 MB or more, biggest first
+	GrowingTables []GrowingTable // the 10 biggest that look like log or history tables
+	Identities    []IdentityColumn
 
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
-	Error          string // nothing could be read at all
-	FilesError     string // sys.master_files shows nothing of this database
-	VolumeError    string // sys.dm_os_volume_stats
-	LatencyError   string // sys.dm_io_virtual_file_stats
-	CPUError       string // sys.dm_os_sys_info
-	VLFError       string // sys.dm_db_log_info failed
-	VLFUnsupported bool   // sys.dm_db_log_info does not exist (before 2016 SP2)
-	TempdbError    string // tempdb space usage
-	SpaceUsedError string // FILEPROPERTY inside the database
-	TablesError    string // sys.dm_db_partition_stats inside the database
-	LogTablesError string
-	IdentityError  string
-	LogSpaceError  string // sys.dm_db_log_space_usage inside the database
+	Error              string // nothing could be read at all
+	FilesError         string // sys.master_files shows nothing of this database
+	VolumeError        string // sys.dm_os_volume_stats
+	LatencyError       string // sys.dm_io_virtual_file_stats
+	CPUError           string // sys.dm_os_sys_info
+	VLFError           string // sys.dm_db_log_info failed
+	VLFUnsupported     bool   // sys.dm_db_log_info does not exist (before 2016 SP2)
+	TempdbError        string // tempdb space usage
+	SpaceUsedError     string // FILEPROPERTY inside the database
+	TablesError        string // sys.dm_db_partition_stats inside the database
+	GrowingTablesError string
+	IdentityError      string
+	LogSpaceError      string // sys.dm_db_log_space_usage inside the database
 }
 
 // AsOf is ServerNow in UTC.
@@ -264,8 +287,8 @@ func volumesOf(files []StorageFile) []volume {
 	return out
 }
 
-// Texts from the scan (01-QuickScan.sql sections 3 and 4, STO08, TMP03) and the triage
-// (PerformanceTriage.sql IDX01, IDX07, IDX10, IDX13), verbatim.
+// Texts from the scan (01-QuickScan.sql sections 3 and 4, STO08, TMP03) and
+// PerformanceTriage.sql (IDX01, IDX07, IDX13), verbatim. IDX10 is kakapo's own.
 const (
 	sto01Why      = "When a disk fills up, databases cannot grow, transactions and backups fail, and applications stop working."
 	sto01Do       = "Free up or add space with the infrastructure team. Look for old backup files, oversized log files (STO07) and files that could move to another volume."
@@ -298,7 +321,8 @@ const (
 	idx01Why      = "The biggest tables in this database. Tables where indexes are much bigger than the data are flagged in IDX02."
 	idx07WhyFile  = "Usually a copy of a bigger database, or data that was deleted. The empty space costs disk and backup storage at every copy."
 	idx07WhyLog   = "The log is not being emptied, usually because of missing log backups or a transaction left open (ACT02). It keeps growing until the disk is full."
-	idx10Why      = "The table grows for ever. It slows every query and screen that reads it, and costs disk, memory, backup and restore time. Copies of the database to another site carry it along."
+	idx10Why      = "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk."
+	idx10Do       = "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so."
 	idx13Why      = "When the identity reaches the end of its range, every insert into this table fails with an arithmetic overflow error. There is no warning before it happens."
 	idx13DoHigh   = "Plan the change to bigint now (the column, every foreign key that references it, and the code that holds the value). Deleting old rows (IDX10) does not reset the identity."
 	idx13DoLow    = "Plan a change to bigint with the next major maintenance. If the table is purged regularly and the old values are never referenced, a DBCC CHECKIDENT reseed is an alternative: decide first."
@@ -313,27 +337,13 @@ const (
 	tmp03DoUser    = "Mostly temp tables: the sessions holding the most pages are in the evidence. Find what they run (a report, an import, a session that keeps temp tables open) and have it finish or clean up." + tmp03NormSize
 	tmp03DoIntern  = "Mostly sorts, hashes and spools of queries that spill to TempDB: tune the costliest queries (QRY01 on the Performance card), usually by updating statistics first (MNT04)." + tmp03NormSize
 	sto12Why       = "When the disk fills, the database cannot grow, transactions and backups fail, and the application stops."
-	sto12Do        = "Free or add space with the infrastructure team before then, and find what is growing: the log (STO07, STO11), the Granite log tables (IDX10) or backup files on the same drive."
+	sto12Do        = "Free or add space with the infrastructure team before then, and find what is growing: the log (STO07, STO11), tables that only grow (IDX10) or backup files on the same drive."
 	sto12NeedsPair = "Needs samples a day or more apart"
 
 	// Sto10NotRun is STO10's note in the checks until it is run on request.
 	Sto10NotRun = "Not run yet. Check room for CHECKDB reads an estimate from SQL Server; it can take a minute on a large database."
 	vlfOldNote  = "Needs SQL Server 2016 SP2 or later."
 )
-
-// logTableInfo is what the triage knows of each Granite log table: what it keeps and how long
-// to keep it.
-var logTableInfo = map[string]struct {
-	Purpose  string
-	KeepDays int
-}{
-	"ScheduledJobsHistory": {"a row for every run of every Granite scheduled job", 30},
-	"IntegrationLog":       {"integration messages and errors", 90},
-	"EmailLog":             {"emails sent by Granite", 90},
-}
-
-// LogTableNames are the Granite log tables the collector looks for, in the triage's order.
-var LogTableNames = []string{"ScheduledJobsHistory", "IntegrationLog", "EmailLog"}
 
 // BuildStorageCard answers "Will it run out of room?" for one database from what was read: the
 // card, its findings ranked, and what became of each check behind it, in catalogue order.
@@ -1284,54 +1294,59 @@ func (b *storageBuild) idx07(filesNote string) {
 		fmt.Sprintf("Log used: %s MB. Waiting on: %s. Recovery model: %s.", n0(float64(logUsed)), f.LogReuseWait, f.RecoveryModel))
 }
 
-// idx10: Granite log tables of a million rows or 500 MB, one finding per table.
+// idx10: user tables that look like log or history tables (by name) of a million rows or 500 MB,
+// one finding per table: Low, Medium at 10 million rows or 5 GB. A table whose oldest row is known
+// and younger than 12 months is being cleaned up: no finding. When the age is unknown (no date
+// column, not indexed so not read, or not readable) the finding says nothing about removal.
 func (b *storageBuild) idx10() {
 	f := b.f
-	if f.LogTablesError != "" {
-		b.skipped["IDX10"] = "Could not read the Granite log tables: " + f.LogTablesError
+	if f.GrowingTablesError != "" {
+		b.skipped["IDX10"] = "Could not read the tables that only grow: " + f.GrowingTablesError
 		return
 	}
-	for _, t := range f.LogTables {
-		info, ok := logTableInfo[t.Name]
-		if !ok || (t.Rows < 1000000 && t.MB < 500) {
+	for _, t := range f.GrowingTables {
+		if !LooksLikeLogTable(t.Name) || (t.Rows < 1000000 && t.MB < 500) {
 			continue
 		}
-		rank := 4
-		if t.MB >= 1024 || t.Rows >= 5000000 {
-			rank = 3
-		}
-		qt := QuoteName(t.Name)
-		finding := fmt.Sprintf("%s holds %s rows (%s MB)", t.Name, n0(float64(t.Rows)), n0(t.MB))
+		months := 0
 		if t.Oldest != nil {
-			finding += " going back to " + t.Oldest.Format("2006-01-02")
-		}
-		finding += ". It keeps " + info.Purpose + ", and nothing in Granite removes old rows."
-		if t.Cleanup != "" {
-			finding += " Cleanup code exists (" + t.Cleanup + ") but old rows are still here: check it is scheduled."
-		}
-		doThis := fmt.Sprintf("Agree with the client how long to keep (suggested: %d days), then schedule a cleanup outside busy hours that deletes in small batches, for example:\n", info.KeepDays)
-		if t.LeadCol != "" && t.Oldest != nil {
-			pk := QuoteName(t.LeadCol)
-			doThis += fmt.Sprintf("DECLARE @Cutoff bigint = (SELECT MIN(%s) FROM dbo.%s WHERE [Date] >= DATEADD(DAY, -%d, GETDATE()));\n", pk, qt, info.KeepDays) +
-				fmt.Sprintf("WHILE 1 = 1 BEGIN DELETE TOP (20000) FROM dbo.%s WHERE %s < @Cutoff; IF @@ROWCOUNT = 0 BREAK; END;", qt, pk)
-		} else {
-			doThis += fmt.Sprintf("DELETE TOP (20000) FROM dbo.%s WHERE [Date] < DATEADD(DAY, -%d, GETDATE());  -- repeat until no rows are deleted", qt, info.KeepDays)
-		}
-		doThis += "\nSmall batches keep locks short and the log small"
-		if f.RecoveryModel == "FULL" {
-			doThis += " (run log backups during the first big cleanup)"
-		}
-		doThis += ". Deleting frees space inside the file for new rows; it does not shrink the file. Do not delete everything in one statement." +
-			"\nReady-made: GraniteLogCleanup\\Custom_CleanupLogTables.sql does this for all three tables, with a preview mode and a time limit."
-		evidence := fmt.Sprintf("Rows: %s. Size: %s MB.", n0(float64(t.Rows)), n0(t.MB))
-		if t.Oldest != nil && t.Newest != nil {
-			evidence += " Oldest: " + sqlTime(*t.Oldest) + ", newest: " + sqlTime(*t.Newest) + "."
-			if days := daysBetween(*t.Oldest, *t.Newest); days > 0 {
-				evidence += " About " + n0int(t.Rows/int64(days)) + " new rows a day."
+			if months = wholeMonths(*t.Oldest, f.ServerNow); months < growingMinMonths {
+				continue
 			}
 		}
-		b.add("IDX10", rank, "Planned", EffortModerate, "[dbo]."+qt, finding, idx10Why, doThis, evidence)
+		rank := 4
+		if t.Rows >= 10000000 || t.MB >= 5120 {
+			rank = 3
+		}
+		finding := fmt.Sprintf("%s.%s has %s rows (%s MB) and looks like a log or history table", t.Schema, t.Name, n0(float64(t.Rows)), n0(t.MB))
+		evidence := fmt.Sprintf("Rows: %s. Size: %s MB.", n0(float64(t.Rows)), n0(t.MB))
+		switch {
+		case t.Oldest != nil:
+			finding += fmt.Sprintf("; its oldest row is from %s (%d months ago), so nothing seems to remove old rows.",
+				t.Oldest.Format("2006-01-02"), months)
+			evidence += fmt.Sprintf(" Oldest %s: %s.", t.DateCol, sqlTime(*t.Oldest))
+		case t.DateCol == "":
+			finding += "."
+			evidence += " It has no date column, so how far back its rows go is unknown."
+		case !t.DateIndexed:
+			finding += "."
+			evidence += fmt.Sprintf(" Its date column %s is not indexed, so how far back its rows go was not read.", t.DateCol)
+		default:
+			finding += "."
+			evidence += fmt.Sprintf(" Its date column %s could not be read, so how far back its rows go is unknown.", t.DateCol)
+		}
+		b.add("IDX10", rank, "Planned", EffortModerate, QuoteName(t.Schema)+"."+QuoteName(t.Name), finding, idx10Why, idx10Do, evidence)
 	}
+}
+
+// wholeMonths counts the whole months from a to now: 2025-11-03 to 2026-11-03 is 12, to
+// 2026-11-02 is 11.
+func wholeMonths(a, now time.Time) int {
+	n := monthsBetween(a, now)
+	if now.Day() < a.Day() {
+		n--
+	}
+	return n
 }
 
 // idx13: identity columns at half their range or more, one finding per column.
@@ -1483,8 +1498,8 @@ func (b *storageBuild) facts() []Fact {
 	return []Fact{drive, size, log, b.fourthFact()}
 }
 
-// fourthFact: the identity range when IDX13 fires at 70% or more, else the log tables when IDX10
-// fires, else how full tempdb is.
+// fourthFact: the identity range when IDX13 fires at 70% or more, else the tables that only grow
+// when IDX10 fires, else how full tempdb is.
 func (b *storageBuild) fourthFact() Fact {
 	f := b.f
 	var top *IdentityColumn
@@ -1502,20 +1517,20 @@ func (b *storageBuild) fourthFact() Fact {
 		}
 		return Fact{Label: "Identity range", Value: fmt.Sprintf("%d%% used (%s)", int(top.PctUsed), top.Table), Tone: t}
 	}
-	if logs := b.all("IDX10"); len(logs) > 0 {
-		var biggest *LogTable
-		for i, t := range f.LogTables {
-			for _, x := range logs {
-				if x.Object == "[dbo]."+QuoteName(t.Name) && (biggest == nil || t.MB > biggest.MB) {
-					biggest = &f.LogTables[i]
+	if grows := b.all("IDX10"); len(grows) > 0 {
+		var biggest *GrowingTable
+		for i, t := range f.GrowingTables {
+			for _, x := range grows {
+				if x.Object == QuoteName(t.Schema)+"."+QuoteName(t.Name) && (biggest == nil || t.MB > biggest.MB) {
+					biggest = &f.GrowingTables[i]
 				}
 			}
 		}
-		value := fmt.Sprintf("%d without cleanup", len(logs))
+		value := strconv.Itoa(len(grows))
 		if biggest != nil {
-			value += fmt.Sprintf(", %s %s MB", biggest.Name, n0(biggest.MB))
+			value += fmt.Sprintf(", biggest %s.%s %s MB", biggest.Schema, biggest.Name, n0(biggest.MB))
 		}
-		return Fact{Label: "Log tables", Value: value, Tone: ToneBad}
+		return Fact{Label: "Tables that only grow", Value: value, Tone: ToneBad}
 	}
 	tempdb := Fact{Label: "TempDB", Value: "could not be read", Tone: ToneNormal}
 	if u, ok := f.tempdbUse(); ok {

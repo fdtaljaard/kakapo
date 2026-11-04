@@ -22,7 +22,7 @@ func TestFixRoutesOptionsBody(t *testing.T) {
 		return rec
 	}
 	for _, action := range []string{"preview", "apply"} {
-		path := fmt.Sprintf("/api/servers/%d/databases/GraniteLive/fixes/backup-schedule/%s", id, action)
+		path := fmt.Sprintf("/api/servers/%d/databases/WarehouseLive/fixes/backup-schedule/%s", id, action)
 		for _, c := range []struct {
 			body string
 			code int
@@ -41,7 +41,7 @@ func TestFixRoutesOptionsBody(t *testing.T) {
 			}
 		}
 		// The remove fix and an unknown server: 404 as for every fix.
-		if rec := post(fmt.Sprintf("/api/servers/99/databases/GraniteLive/fixes/remove-backup-schedule/%s", action), ``); rec.Code != 404 {
+		if rec := post(fmt.Sprintf("/api/servers/99/databases/WarehouseLive/fixes/remove-backup-schedule/%s", action), ``); rec.Code != 404 {
 			t.Errorf("unknown server: %d %s", rec.Code, rec.Body.String())
 		}
 	}

@@ -59,7 +59,7 @@ func TestKillFixGuards(t *testing.T) {
 	now := time.Date(2026, 11, 3, 10, 14, 0, 0, time.UTC)
 	login := now.Add(-2 * time.Hour)
 	target := domain.KillTarget{Found: true, ServerName: `SQL01\WMS`, ServerNow: now, Behind: 3,
-		Session: domain.BlockingSession{Session: 83, Login: "granite", Host: "WMS-APP01", Program: "GraniteScheduler", Status: "sleeping",
+		Session: domain.BlockingSession{Session: 83, Login: "appsvc", Host: "WMS-APP01", Program: "AppScheduler", Status: "sleeping",
 			IsUser: true, OpenTran: 1, TranStarted: now.Add(-6 * time.Minute), LoginTime: login, Database: "WMS"}}
 	var se *Error
 

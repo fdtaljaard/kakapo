@@ -349,7 +349,7 @@ const (
 	mnt05ShrinkWhy      = "Shrinking fragments every index in the file and the file grows straight back, pausing queries while it does. Regular shrinking is the most common self-inflicted performance problem."
 	mnt05CacheWhy       = "Clearing the cache makes every query compile again (a CPU spike) and empties the memory SQL Server had filled with data, so everything reads from disk for a while."
 	mnt05ShrinkDo       = "Stop the shrink (find the job or maintenance plan step, or the person). If space must be reclaimed once, shrink once in a window and rebuild the indexes afterwards."
-	mnt05CacheDo        = "Find the job or person running DBCC FREEPROCCACHE / DROPCLEANBUFFERS and stop it. If it was a workaround for parameter sniffing, fix the query instead (ACT03 in the triage)."
+	mnt05CacheDo        = "Find the job or person running DBCC FREEPROCCACHE / DROPCLEANBUFFERS and stop it. If it was a workaround for a query that is fast for some values and slow for others, fix that query instead: its statistics, an index or the query itself."
 	mnt05GrowthWhy      = "Every growth pauses the queries that need the space while the file is extended (and zeroed, without instant file initialization). Many small growths mean the growth setting is too small."
 	mnt05GrowthDo       = "Grow the file once to the size it needs for the next year, and set autogrowth to a fixed 256 MB (data) or 128 MB (log): see STO02 and STO03."
 	mnt05JobWhy         = "A scheduled shrink fragments every index each time it runs, and the file grows straight back while users wait."
@@ -629,7 +629,7 @@ func (b *upkeepBuild) mnt07() {
 }
 
 // SlowGrowthSentence is the evidence sentence for an autogrowth that took a second or more, with
-// its leading space: " The slowest growth took 4.2 s (GraniteLive_log, 2026-11-02 22:05)."; ""
+// its leading space: " The slowest growth took 4.2 s (WarehouseLive_log, 2026-11-02 22:05)."; ""
 // for a quicker one.
 func SlowGrowthSentence(ms int64, file string, at time.Time) string {
 	if ms < 1000 {

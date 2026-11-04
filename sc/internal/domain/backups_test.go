@@ -18,7 +18,7 @@ var backupsDef = CardDefs[0]
 
 // facts is an online database created a year ago, CHECKDB 3 days ago, nothing backed up yet.
 func facts(model string) BackupFacts {
-	return BackupFacts{Database: "GraniteLive", State: "ONLINE", RecoveryModel: model,
+	return BackupFacts{Database: "WarehouseLive", State: "ONLINE", RecoveryModel: model,
 		CreateDate: serverNow.AddDate(-1, 0, 0), LastGoodCheckDb: at(serverNow.AddDate(0, 0, -3)),
 		LogSizeMB: mbPtr(512), ServerNow: serverNow, UTCOffsetMinutes: 120}
 }
@@ -118,7 +118,7 @@ func wantFinding(t *testing.T, f Finding, severity Severity, when, effort, findi
 	if f.Severity != severity || f.When != when || f.Effort != effort || f.Finding != finding {
 		t.Errorf("%s: %s %s %s %q\nwant %s %s %s %q", f.CheckID, f.Severity, f.When, f.Effort, f.Finding, severity, when, effort, finding)
 	}
-	if f.Owner != OwnerClientIT || f.Title == "" || f.ThenCheck == "" || f.Why == "" || f.DoThis == "" || f.Evidence == "" || f.Object != "GraniteLive" {
+	if f.Owner != OwnerClientIT || f.Title == "" || f.ThenCheck == "" || f.Why == "" || f.DoThis == "" || f.Evidence == "" || f.Object != "WarehouseLive" {
 		t.Errorf("%s: incomplete finding %+v", f.CheckID, f)
 	}
 }
@@ -413,7 +413,7 @@ func TestBackupsNotOnlineOrNotRead(t *testing.T) {
 	f := facts("FULL")
 	f.State = "RESTORING"
 	c, fs, checks := build(f)
-	note := "GraniteLive is RESTORING, not online, so its backups were not checked."
+	note := "WarehouseLive is RESTORING, not online, so its backups were not checked."
 	if c.Status != StatusGrey || c.StatusText != "Could not be read" || c.Note != note || c.AsOf != nil || len(fs) != 0 {
 		t.Errorf("not online: %+v %+v", c, fs)
 	}
@@ -426,7 +426,7 @@ func TestBackupsNotOnlineOrNotRead(t *testing.T) {
 		t.Errorf("want eight checks, got %d", len(checks))
 	}
 
-	c, fs, _ = build(BackupFacts{Database: "GraniteLive", Error: "cannot reach the server"})
+	c, fs, _ = build(BackupFacts{Database: "WarehouseLive", Error: "cannot reach the server"})
 	if c.Status != StatusGrey || c.Note != "cannot reach the server" || fs == nil || len(fs) != 0 {
 		t.Errorf("not read: %+v", c)
 	}
@@ -602,9 +602,9 @@ func TestBackupsDelayedDurability(t *testing.T) {
 			continue
 		}
 		x := findingOf(t, fs, "DBC12")
-		sentence := "GraniteLive has delayed durability " + c.mode + ": a committed transaction can be lost if SQL Server crashes."
+		sentence := "WarehouseLive has delayed durability " + c.mode + ": a committed transaction can be lost if SQL Server crashes."
 		if x.Severity != c.want || x.Finding != sentence || x.Owner != OwnerUs || x.When != WhenOnline || x.Effort != EffortQuickWin ||
-			x.Why != dbc12Why || !strings.Contains(x.DoThis, "ALTER DATABASE [GraniteLive] SET DELAYED_DURABILITY = DISABLED;") ||
+			x.Why != dbc12Why || !strings.Contains(x.DoThis, "ALTER DATABASE [WarehouseLive] SET DELAYED_DURABILITY = DISABLED;") ||
 			x.Evidence != "delayed_durability = "+c.mode || x.ThenCheck == "" {
 			t.Errorf("%q: %+v", c.mode, x)
 		}

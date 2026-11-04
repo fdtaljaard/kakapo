@@ -125,7 +125,7 @@ func FindFixDef(id string) (FixDef, bool) {
 // Warnings shared by the server fixes.
 const (
 	warnPlanCache  = "SQL Server clears its plan cache: queries recompile for a few minutes."
-	warnMemoryRoom = "The suggestion leaves room for Windows only. If other software runs on this server (another instance, SSRS, a web shop, Granite services), set a lower value by hand."
+	warnMemoryRoom = "The suggestion leaves room for Windows only. If other software runs on this server (another instance, SSRS, a web shop, the application's own services), set a lower value by hand."
 	warnThirdParty = "Ignore if a third-party tool takes the backups."
 	warnPageVerify = "Pages are protected as they are next written; an index rebuild protects them all."
 	warnVendor     = "Check first that the application vendor does not require this (rare)."

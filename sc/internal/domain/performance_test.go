@@ -15,7 +15,7 @@ var perfStart = time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC) // server clock: 
 func goodPerf() PerformanceFacts {
 	return PerformanceFacts{
 		ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", EngineEdition: 2,
-		Database: "GraniteLive", State: "ONLINE", StartedAt: perfStart, UptimeHours: 240,
+		Database: "WarehouseLive", State: "ONLINE", StartedAt: perfStart, UptimeHours: 240,
 		Waits: []WaitStat{
 			{"PAGEIOLATCH_SH", 200000, 10000, 5000, 900},
 			{"CXPACKET", 240000, 40000, 8000, 1200},
@@ -29,13 +29,13 @@ func goodPerf() PerformanceFacts {
 		Blockers: []Blocker{}, OpenTransactions: []OpenTransaction{}, IdleTransactions: []IdleTransaction{},
 		Schedulers: &SchedulerLoad{MaxWorkers: 576, CurrentWorkers: 120, OnlineSchedulers: 8, RunnableTasks: 2, BusySchedulers: 1, MaxRunnable: 2},
 		Grants:     &MemoryGrants{Granted: 3},
-		Loads: []DatabaseLoad{{1, "master", 100, 1 << 30}, {5, "GraniteLive", 600, 4 << 30}, {6, "WebShop", 200, 1 << 30},
+		Loads: []DatabaseLoad{{1, "master", 100, 1 << 30}, {5, "WarehouseLive", 600, 4 << 30}, {6, "WebShop", 200, 1 << 30},
 			{2, "tempdb", 100, 2 << 30}},
 		MissingIndexes: []MissingIndex{},
 		QuerySource:    QuerySourcePlanCache,
 		TotalCPU:       1000000000,
 		TopQueries: []TopQuery{
-			{QueryHash: "0x01", ObjectName: "dbo.PRESCRIPT_PICKING", Text: "SELECT TOP (1) *\r\n\tFROM dbo.Pick", CPU: 300000000, Execs: 1000,
+			{QueryHash: "0x01", ObjectName: "dbo.USP_PICKING", Text: "SELECT TOP (1) *\r\n\tFROM dbo.Pick", CPU: 300000000, Execs: 1000,
 				Reads: 5000000, MinReads: 4000, MaxReads: 6000, MaxCPU: 900000, Elapsed: 400000000, Variants: 1, Minutes: 14400},
 		},
 		CPUHistory: cpuHistory(240, 20, 5),
@@ -376,9 +376,9 @@ func TestPerformanceSRV07(t *testing.T) {
 func TestPerformanceSRV04(t *testing.T) {
 	_, fs, _ := runPerf(goodPerf())
 	x := one(t, fs, "SRV04")
-	if x.Severity != SeverityInfo || x.Object != "GraniteLive" || x.When != WhenNone ||
+	if x.Severity != SeverityInfo || x.Object != "WarehouseLive" || x.When != WhenNone ||
 		x.Finding != "This database used 60.0% of the query CPU and did 50.0% of the disk reads on this server since the last restart." ||
-		x.DoThis != srv04DoMine || x.Evidence != "CPU share from plans still in cache; disk reads from file statistics. Busiest: GraniteLive 60.0% CPU, 4.0 GB read; WebShop 20.0% CPU, 1.0 GB read; tempdb 10.0% CPU, 2.0 GB read; master 10.0% CPU, 1.0 GB read" {
+		x.DoThis != srv04DoMine || x.Evidence != "CPU share from plans still in cache; disk reads from file statistics. Busiest: WarehouseLive 60.0% CPU, 4.0 GB read; WebShop 20.0% CPU, 1.0 GB read; tempdb 10.0% CPU, 2.0 GB read; master 10.0% CPU, 1.0 GB read" {
 		t.Errorf("SRV04 %+v", x)
 	}
 	f := goodPerf()
@@ -400,10 +400,10 @@ func TestPerformanceWRK03(t *testing.T) {
 	f := goodPerf()
 	last := setupNow.Add(-time.Hour)
 	f.MissingIndexes = []MissingIndex{
-		{Statement: "[GraniteLive].[dbo].[Pick]", Equality: "[Status]", Included: "[Qty]", Uses: 500, Impact: 91.4, Score: 1000000, LastSeek: &last},
-		{Statement: "[GraniteLive].[dbo].[Stock]", Inequality: "[Date]", Uses: 20, Impact: 60, Score: 100000},
-		{Statement: "[GraniteLive].[dbo].[Low]", Uses: 20, Impact: 49.9, Score: 900000},
-		{Statement: "[GraniteLive].[dbo].[Small]", Uses: 20, Impact: 90, Score: 99999},
+		{Statement: "[WarehouseLive].[dbo].[Pick]", Equality: "[Status]", Included: "[Qty]", Uses: 500, Impact: 91.4, Score: 1000000, LastSeek: &last},
+		{Statement: "[WarehouseLive].[dbo].[Stock]", Inequality: "[Date]", Uses: 20, Impact: 60, Score: 100000},
+		{Statement: "[WarehouseLive].[dbo].[Low]", Uses: 20, Impact: 49.9, Score: 900000},
+		{Statement: "[WarehouseLive].[dbo].[Small]", Uses: 20, Impact: 90, Score: 99999},
 	}
 	_, fs, _ := runPerf(f)
 	w := findingsOf(fs, "WRK03")
@@ -411,8 +411,8 @@ func TestPerformanceWRK03(t *testing.T) {
 		t.Fatalf("WRK03 %+v", w)
 	}
 	x := w[0]
-	if x.Severity != SeverityMedium || x.When != WhenWindow || x.Effort != EffortModerate || x.Object != "[GraniteLive].[dbo].[Pick]" ||
-		x.Finding != "SQL Server suggests an index on [GraniteLive].[dbo].[Pick] (estimated 91% faster for 500 queries)." ||
+	if x.Severity != SeverityMedium || x.When != WhenWindow || x.Effort != EffortModerate || x.Object != "[WarehouseLive].[dbo].[Pick]" ||
+		x.Finding != "SQL Server suggests an index on [WarehouseLive].[dbo].[Pick] (estimated 91% faster for 500 queries)." ||
 		x.DoThis != wrk03Do+wrk03DoOffline || x.FixID != FixCreateIndex ||
 		x.Evidence != "Equality: [Status]; inequality: -; include: [Qty]; last wanted: 2026-11-03 10:21." {
 		t.Errorf("WRK03 %+v", x)
@@ -430,7 +430,7 @@ func TestPerformanceWRK03(t *testing.T) {
 func TestPerformanceACT01(t *testing.T) {
 	f := goodPerf()
 	f.Blockers = []Blocker{
-		{Session: 57, Blocked: 3, LongestSec: 30, Database: "GraniteLive", Login: "granite", Host: "APP01", Program: "Granite",
+		{Session: 57, Blocked: 3, LongestSec: 30, Database: "WarehouseLive", Login: "appsvc", Host: "APP01", Program: "AppScheduler",
 			Status: "sleeping", OpenTran: 1, LastStatement: "UPDATE dbo.Pick\r\nSET Done = 1"},
 		{Session: 61, Blocked: 1, LongestSec: 5, Database: "WebShop", Status: "running"},
 		{Session: 62, Blocked: 1, LongestSec: 4, Status: "running"},
@@ -441,9 +441,9 @@ func TestPerformanceACT01(t *testing.T) {
 		t.Fatalf("ACT01 %+v", w)
 	}
 	x := w[0]
-	if x.Severity != SeverityHigh || x.Object != "Session 57 (GraniteLive)" || x.When != WhenNone || x.Effort != EffortNone || x.Clock != ClockNow ||
-		x.Finding != "Session 57 (granite on APP01) is blocking 3 session(s); the longest has waited 30 s." ||
-		x.Evidence != "Program: Granite. Status: sleeping. Open transactions: 1. Last statement: UPDATE dbo.Pick  SET Done = 1" {
+	if x.Severity != SeverityHigh || x.Object != "Session 57 (WarehouseLive)" || x.When != WhenNone || x.Effort != EffortNone || x.Clock != ClockNow ||
+		x.Finding != "Session 57 (appsvc on APP01) is blocking 3 session(s); the longest has waited 30 s." ||
+		x.Evidence != "Program: AppScheduler. Status: sleeping. Open transactions: 1. Last statement: UPDATE dbo.Pick  SET Done = 1" {
 		t.Errorf("ACT01 %+v", x)
 	}
 	if w[1].Severity != SeverityMedium || w[1].Object != "Session 61 (WebShop)" || w[1].Finding != "Session 61 (? on ?) is blocking 1 session(s); the longest has waited 5 s." {
@@ -469,11 +469,11 @@ func TestPerformanceACT02(t *testing.T) {
 	f := goodPerf()
 	started := setupNow.Add(-31 * time.Minute)
 	f.OpenTransactions = []OpenTransaction{
-		{Session: 70, Login: "granite", Host: "APP01", Program: "Granite", Status: "sleeping", Minutes: 31, Started: started, LogBytes: 3 << 20, LastStatement: "BEGIN TRAN"},
+		{Session: 70, Login: "appsvc", Host: "APP01", Program: "AppScheduler", Status: "sleeping", Minutes: 31, Started: started, LogBytes: 3 << 20, LastStatement: "BEGIN TRAN"},
 		{Session: 71, Status: "running", Minutes: 6, Started: setupNow.Add(-6 * time.Minute)},
 	}
 	f.IdleTransactions = []IdleTransaction{
-		{Session: 70, Login: "granite", Host: "APP01", Program: "Granite", Minutes: 31}, // already reported for this database
+		{Session: 70, Login: "appsvc", Host: "APP01", Program: "AppScheduler", Minutes: 31}, // already reported for this database
 		{Session: 80, Login: "erp", Host: "ERP01", Program: "ODBC", Minutes: 12, Implicit: true},
 		{Session: 81, Login: "sa", Host: "PC7", Program: "SSMS", Minutes: 7},
 	}
@@ -488,8 +488,8 @@ func TestPerformanceACT02(t *testing.T) {
 	}
 	x := byObject["Session 70"]
 	if x.Severity != SeverityHigh || x.Owner != OwnerVendor || x.When != WhenNone || x.Effort != EffortNone || x.Clock != ClockNow ||
-		x.Finding != "Session 70 (granite on APP01) has had a transaction open for 31 minutes and is doing nothing." ||
-		x.Evidence != "Program: Granite. Started: 2026-11-03 10:50:00. Log used: 3.0 MB. Last statement: BEGIN TRAN" || x.Why != act02Why {
+		x.Finding != "Session 70 (appsvc on APP01) has had a transaction open for 31 minutes and is doing nothing." ||
+		x.Evidence != "Program: AppScheduler. Started: 2026-11-03 10:50:00. Log used: 3.0 MB. Last statement: BEGIN TRAN" || x.Why != act02Why {
 		t.Errorf("ACT02 %+v", x)
 	}
 	if x := byObject["Session 71"]; x.Severity != SeverityMedium || x.Finding != "Session 71 (? on ?) has had a transaction open for 6 minutes." {
@@ -587,13 +587,13 @@ func qsFacts(qs ...TopQuery) PerformanceFacts {
 }
 
 func TestPerformanceQRY01(t *testing.T) {
-	// The plan cache: since restart, the triage's sentence.
+	// The plan cache: since restart, PerformanceTriage.sql's sentence.
 	_, fs, cs := runPerf(goodPerf())
 	x := one(t, fs, "QRY01")
-	if x.Severity != SeverityInfo || x.Clock != ClockSinceRestart || x.Object != "dbo.PRESCRIPT_PICKING" || x.When != WhenDecideFirst ||
+	if x.Severity != SeverityInfo || x.Clock != ClockSinceRestart || x.Object != "dbo.USP_PICKING" || x.When != WhenDecideFirst ||
 		x.Effort != EffortModerate ||
 		x.Finding != "Uses 30.0% of all query CPU on the server: 1,000 runs, 300 ms CPU and 5,000 page reads per run. About 100 runs a day." ||
-		x.DoThis != qry01Do+" To see every statement in dbo.PRESCRIPT_PICKING, run InvestigateProcedure.sql."+qry01Arithabort || x.Why != qry01Why ||
+		x.DoThis != qry01Do+" To see every statement in dbo.USP_PICKING, open the query: its detail lists them all, most reads first."+qry01Arithabort || x.Why != qry01Why ||
 		x.Evidence != "Page reads per run: min 4,000, avg 5,000, max 6,000. Max CPU: 900 ms. Query hash: 0x01. Query: SELECT TOP (1) *   FROM dbo.Pick" {
 		t.Errorf("plan cache %+v", x)
 	}
@@ -606,7 +606,7 @@ func TestPerformanceQRY01(t *testing.T) {
 		MaxCPU: 50000, Elapsed: 300000000, Variants: 1, Minutes: 10080, TopWait: "Lock"}
 	_, fs, cs = runPerf(qsFacts(plain))
 	x = one(t, fs, "QRY01")
-	if x.Severity != SeverityInfo || x.Clock != ClockWindow || x.Object != "GraniteLive" ||
+	if x.Severity != SeverityInfo || x.Clock != ClockWindow || x.Object != "WarehouseLive" ||
 		x.Finding != "Uses 10.0% of the query CPU in this database over the last 7 days: 100,000 runs, 2 ms CPU and 10 page reads per run. About 14,286 runs a day (one every 6 s): small per run, large in total." ||
 		x.DoThis != qry01Do+" Also ask whether it needs to run this often (a job or integration polling on a timer?)."+qry01Arithabort ||
 		x.Evidence != "Page reads per run: min 1, avg 10, max 100. Max CPU: 50 ms. Top wait: Lock. Query hash: 0xAA. Query: SELECT 1" {
@@ -721,12 +721,12 @@ func TestPerformanceGrey(t *testing.T) {
 	}
 
 	// Nothing read, or the database not online.
-	c, fs, cs = runPerf(PerformanceFacts{Database: "GraniteLive", Error: "login failed"})
+	c, fs, cs = runPerf(PerformanceFacts{Database: "WarehouseLive", Error: "login failed"})
 	if c.Status != StatusGrey || c.Note != perfNotRead+"login failed" || len(fs) != 0 || len(cs) != 14 || statusOf(cs, "DLK01").Status != CheckSkipped {
 		t.Errorf("unread %+v %+v", c, cs)
 	}
-	c, _, _ = runPerf(PerformanceFacts{Database: "GraniteLive", State: "RESTORING"})
-	if c.Status != StatusGrey || c.Note != "GraniteLive is RESTORING, not online, so its performance was not checked." {
+	c, _, _ = runPerf(PerformanceFacts{Database: "WarehouseLive", State: "RESTORING"})
+	if c.Status != StatusGrey || c.Note != "WarehouseLive is RESTORING, not online, so its performance was not checked." {
 		t.Errorf("restoring %+v", c)
 	}
 }
@@ -743,7 +743,7 @@ func TestBuildDeadlockReport(t *testing.T) {
 	events := []DeadlockEvent{}
 	// Ten between picking and integration, whichever was the victim.
 	for i := 0; i < 10; i++ {
-		v, w := "dbo.PRESCRIPT_PICKING", "dbo.IntegrationPost"
+		v, w := "dbo.USP_PICKING", "dbo.IntegrationPost"
 		if i%2 == 1 {
 			v, w = w, v
 		}
@@ -751,23 +751,23 @@ func TestBuildDeadlockReport(t *testing.T) {
 		if i == 9 {
 			obj = "Pick"
 		}
-		events = append(events, deadlockEvent(now.Add(-time.Duration(i+1)*time.Hour), "GraniteLive", v, w, obj))
+		events = append(events, deadlockEvent(now.Add(-time.Duration(i+1)*time.Hour), "WarehouseLive", v, w, obj))
 	}
 	// Three between the scheduler and an ad hoc statement; one alone; others outside the report.
-	adhoc := deadlockEvent(now.Add(-2*24*time.Hour), "GraniteLive", "dbo.Scheduler", "", "Job")
+	adhoc := deadlockEvent(now.Add(-2*24*time.Hour), "WarehouseLive", "dbo.Scheduler", "", "Job")
 	adhoc.Winner.Statement = "DELETE  FROM dbo.Job\r\n WHERE Id = 4"
 	events = append(events, adhoc, adhoc, adhoc,
-		deadlockEvent(now.Add(-3*24*time.Hour), "GraniteLive", "dbo.A", "dbo.B", "T"),
-		deadlockEvent(now.Add(-8*24*time.Hour), "GraniteLive", "dbo.A", "dbo.B", "T"), // outside the window
-		deadlockEvent(now.Add(-time.Hour), "WebShop", "dbo.A", "dbo.B", "T"))          // another database
-	r := BuildDeadlockReport(DeadlockInputs{Database: "granitelive", CapturedAt: now, Duration: 1234567 * time.Microsecond,
+		deadlockEvent(now.Add(-3*24*time.Hour), "WarehouseLive", "dbo.A", "dbo.B", "T"),
+		deadlockEvent(now.Add(-8*24*time.Hour), "WarehouseLive", "dbo.A", "dbo.B", "T"), // outside the window
+		deadlockEvent(now.Add(-time.Hour), "WebShop", "dbo.A", "dbo.B", "T"))            // another database
+	r := BuildDeadlockReport(DeadlockInputs{Database: "warehouselive", CapturedAt: now, Duration: 1234567 * time.Microsecond,
 		Days: 7, Source: DeadlockSourceFile, Events: events})
 
 	if r.Total != 14 || r.Days != 7 || r.Source != "file" || r.DurationSeconds != 1.235 || !r.CapturedAt.Equal(now) || len(r.Pairs) != 3 {
 		t.Fatalf("report %+v", r)
 	}
 	p := r.Pairs[0]
-	if p.Procedures != [2]string{"dbo.IntegrationPost", "dbo.PRESCRIPT_PICKING"} || p.Count != 10 || !p.Last.Equal(now.Add(-time.Hour)) ||
+	if p.Procedures != [2]string{"dbo.IntegrationPost", "dbo.USP_PICKING"} || p.Count != 10 || !p.Last.Equal(now.Add(-time.Hour)) ||
 		strings.Join(p.Objects, ",") != "dbo.Pick,dbo.Stock" || p.LastVictimStatement != "UPDATE dbo.Stock SET x = 1" {
 		t.Errorf("top pair %+v", p)
 	}
@@ -780,8 +780,8 @@ func TestBuildDeadlockReport(t *testing.T) {
 	}
 	x := r.Findings[0]
 	if x.CheckID != "DLK01" || x.Severity != SeverityHigh || x.Clock != ClockWindow || x.When != WhenDecideFirst || x.Effort != EffortModerate ||
-		x.Owner != OwnerUs || x.Why != wrk06Why || x.DoThis != dlk01Do || x.Object != "dbo.IntegrationPost / dbo.PRESCRIPT_PICKING" ||
-		x.Finding != "10 deadlocks in 7 days between dbo.IntegrationPost and dbo.PRESCRIPT_PICKING, on dbo.Pick, dbo.Stock; the last was 2026-11-03 08:30 UTC." ||
+		x.Owner != OwnerUs || x.Why != wrk06Why || x.DoThis != dlk01Do || x.Object != "dbo.IntegrationPost / dbo.USP_PICKING" ||
+		x.Finding != "10 deadlocks in 7 days between dbo.IntegrationPost and dbo.USP_PICKING, on dbo.Pick, dbo.Stock; the last was 2026-11-03 08:30 UTC." ||
 		x.Evidence != "Lock types: keylock dbo.Stock: held X, wanted U. Last victim statement: UPDATE dbo.Stock SET x = 1" {
 		t.Errorf("DLK01 %+v", x)
 	}
@@ -797,15 +797,15 @@ func TestBuildDeadlockReport(t *testing.T) {
 		t.Errorf("empty %s", b)
 	}
 	b, _ = json.Marshal(r.Pairs[0])
-	if string(b) != `{"procedures":["dbo.IntegrationPost","dbo.PRESCRIPT_PICKING"],"count":10,"last":"2026-11-03T08:30:00Z","objects":["dbo.Pick","dbo.Stock"],"lastVictimStatement":"UPDATE dbo.Stock SET x = 1"}` {
+	if string(b) != `{"procedures":["dbo.IntegrationPost","dbo.USP_PICKING"],"count":10,"last":"2026-11-03T08:30:00Z","objects":["dbo.Pick","dbo.Stock"],"lastVictimStatement":"UPDATE dbo.Stock SET x = 1"}` {
 		t.Errorf("pair JSON %s", b)
 	}
 }
 
 func TestPerformanceDLK01Check(t *testing.T) {
 	now := time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
-	r := BuildDeadlockReport(DeadlockInputs{Database: "GraniteLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile,
-		Events: []DeadlockEvent{deadlockEvent(now.Add(-time.Hour), "GraniteLive", "dbo.A", "dbo.B", "T")}})
+	r := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile,
+		Events: []DeadlockEvent{deadlockEvent(now.Add(-time.Hour), "WarehouseLive", "dbo.A", "dbo.B", "T")}})
 	c, fs, cs := BuildPerformanceCard(goodPerf(), perfDef(), &r)
 	if st := statusOf(cs, "DLK01"); st.Status != CheckFinding || st.Note != "" {
 		t.Errorf("DLK01 with deadlocks %+v", st)
@@ -814,7 +814,7 @@ func TestPerformanceDLK01Check(t *testing.T) {
 	if c.Status != StatusGreen {
 		t.Errorf("the report never changes the card %+v", c)
 	}
-	clean := BuildDeadlockReport(DeadlockInputs{Database: "GraniteLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
+	clean := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
 	_, _, cs = BuildPerformanceCard(goodPerf(), perfDef(), &clean)
 	if st := statusOf(cs, "DLK01"); st.Status != CheckPassed || st.Note != "No deadlocks in this database in the last 7 days." {
 		t.Errorf("DLK01 clean %+v", st)
@@ -832,7 +832,7 @@ func TestPerformanceDetailJSON(t *testing.T) {
 		t.Errorf("performance detail JSON: %s", s)
 	}
 	now := time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
-	r := BuildDeadlockReport(DeadlockInputs{Database: "GraniteLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
+	r := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
 	b, _ = json.Marshal(CardDetail{Card: c, Findings: fs, Checks: cs, Deadlocks: &r})
 	if !strings.Contains(string(b), `"deadlocks":{"capturedAt":"2026-11-03T09:30:00Z","durationSeconds":0,"days":7,"total":0,"source":"file","pairs":[],"findings":[]}`) {
 		t.Errorf("with a report: %s", b)
@@ -994,14 +994,14 @@ func TestPerformanceQRY01Workload(t *testing.T) {
 func TestPerformanceRCSIAndSelfBlocking(t *testing.T) {
 	f := goodPerf()
 	f.Blockers = []Blocker{
-		{Session: 57, Blocked: 2, LongestSec: 12, Database: "GraniteLive", Login: "granite", Host: "APP01", Status: "running", SelfBlocked: true},
+		{Session: 57, Blocked: 2, LongestSec: 12, Database: "WarehouseLive", Login: "appsvc", Host: "APP01", Status: "running", SelfBlocked: true},
 		{Session: 61, Blocked: 1, LongestSec: 6, Database: "WebShop", Status: "running"},
 	}
 	waits := TopQuery{QueryHash: "0xDD", Text: "SELECT 1", CPU: 1000000, Execs: 10, Reads: 100, MinReads: 1, MaxReads: 10, Elapsed: 30000000, Variants: 1}
 	f.TopQueries = []TopQuery{waits}
 	_, fs, _ := runPerf(f)
 	a := findingsOf(fs, "ACT01")
-	if a[0].Finding != "Session 57 (granite on APP01) is blocking 2 session(s) (waiting on its own parallel threads); the longest has waited 12 s." ||
+	if a[0].Finding != "Session 57 (appsvc on APP01) is blocking 2 session(s) (waiting on its own parallel threads); the longest has waited 12 s." ||
 		a[0].DoThis != act01Do+act01RCSIOff || a[1].DoThis != act01Do {
 		t.Errorf("ACT01 %+v", a)
 	}
@@ -1125,7 +1125,7 @@ func TestDeadlockReportHealth(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		health = append(health, HealthEvent{At: now.Add(-time.Duration(4*60+i) * time.Minute), Component: "SYSTEM", State: "warning", Detail: "more"})
 	}
-	r := BuildDeadlockReport(DeadlockInputs{Database: "GraniteLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile, Health: health})
+	r := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile, Health: health})
 	if len(r.Health) != 50 || r.Health[0].Detail != "newest" || r.Health[0].State != "warning" || r.Health[1].Detail != "error" {
 		t.Fatalf("health %+v", r.Health[:2])
 	}
@@ -1139,7 +1139,7 @@ func TestDeadlockReportHealth(t *testing.T) {
 		t.Errorf("JSON %s", b)
 	}
 	// None: left out of the JSON.
-	empty := BuildDeadlockReport(DeadlockInputs{Database: "GraniteLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
+	empty := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
 	if b, _ := json.Marshal(empty); strings.Contains(string(b), "health") {
 		t.Errorf("empty %s", b)
 	}
@@ -1155,8 +1155,8 @@ func TestHealthDetail(t *testing.T) {
 		t.Errorf("access violation %q", got)
 	}
 	io := map[string]string{"iolatchtimeouts": "5", "totallongios": "12"}
-	pending := []PendingIO{{File: `D:\Data\GraniteLive.mdf`, DurationMs: 20500}, {File: `E:\Log\GraniteLive_log.ldf`, DurationMs: 900}}
-	if got := HealthDetail("IO_SUBSYSTEM", io, pending); got != `5 I/O latch timeouts; 12 long I/Os (over 15 s) since startup; the longest pending request has waited 20.5 s on D:\Data\GraniteLive.mdf.` {
+	pending := []PendingIO{{File: `D:\Data\WarehouseLive.mdf`, DurationMs: 20500}, {File: `E:\Log\WarehouseLive_log.ldf`, DurationMs: 900}}
+	if got := HealthDetail("IO_SUBSYSTEM", io, pending); got != `5 I/O latch timeouts; 12 long I/Os (over 15 s) since startup; the longest pending request has waited 20.5 s on D:\Data\WarehouseLive.mdf.` {
 		t.Errorf("io %q", got)
 	}
 	if got := HealthDetail("SYSTEM", map[string]string{}, nil); got != "No counter set; SQL Server reported the state only." {
@@ -1169,9 +1169,9 @@ func TestHealthDetail(t *testing.T) {
 func TestAvailablePerformanceFixes(t *testing.T) {
 	f := goodPerf()
 	f.MissingIndexes = []MissingIndex{
-		{Statement: "[GraniteLive].[dbo].[Pick]", Equality: "[Status]", Included: "[Qty]", Uses: 500, Impact: 91.4, Score: 1000000},
-		{Statement: "[GraniteLive].[dbo].[Pick]", Inequality: "[Date]", Uses: 20, Impact: 60, Score: 200000},
-		{Statement: "[GraniteLive].[dbo].[Low]", Uses: 20, Impact: 49.9, Score: 900000},
+		{Statement: "[WarehouseLive].[dbo].[Pick]", Equality: "[Status]", Included: "[Qty]", Uses: 500, Impact: 91.4, Score: 1000000},
+		{Statement: "[WarehouseLive].[dbo].[Pick]", Inequality: "[Date]", Uses: 20, Impact: 60, Score: 200000},
+		{Statement: "[WarehouseLive].[dbo].[Low]", Uses: 20, Impact: 49.9, Score: 900000},
 	}
 	_, fs, _ := runPerf(f)
 	fixes := AvailablePerformanceFixes(f, fs)
@@ -1179,8 +1179,8 @@ func TestAvailablePerformanceFixes(t *testing.T) {
 		t.Fatalf("fixes %+v", fixes)
 	}
 	want := []map[string]string{
-		{OptionTable: "[dbo].[Pick]", OptionEquality: "[Status]", OptionInequality: "", OptionIncluded: "[Qty]", OptionObject: "[GraniteLive].[dbo].[Pick]"},
-		{OptionTable: "[dbo].[Pick]", OptionEquality: "", OptionInequality: "[Date]", OptionIncluded: "", OptionObject: "[GraniteLive].[dbo].[Pick]"},
+		{OptionTable: "[dbo].[Pick]", OptionEquality: "[Status]", OptionInequality: "", OptionIncluded: "[Qty]", OptionObject: "[WarehouseLive].[dbo].[Pick]"},
+		{OptionTable: "[dbo].[Pick]", OptionEquality: "", OptionInequality: "[Date]", OptionIncluded: "", OptionObject: "[WarehouseLive].[dbo].[Pick]"},
 	}
 	for i, x := range fixes {
 		if x.ID != FixCreateIndex || x.CheckID != "WRK03" || x.Scope != ScopeDatabase || len(x.Options) != len(want[i]) {

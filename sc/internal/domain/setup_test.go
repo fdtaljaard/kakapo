@@ -24,10 +24,10 @@ func goodFacts() SetupFacts {
 		ClrStrict: ptr(1), PlanCacheMB: 500, SingleUseMB: 50,
 		MemoryState: "Available physical memory is high", AvailableMB: 4000, PowerScheme: ptr(powerHigh),
 		MinServerMemoryMB: 16, PendingConfig: []PendingConfig{{Name: "min server memory (MB)", Value: 0, ValueInUse: 16}}, TraceFlags: []int{},
-		Database: "GraniteLive", State: "ONLINE", UserAccess: "MULTI_USER", PageVerify: "CHECKSUM", AutoCreateStats: true, AutoUpdateStats: true,
+		Database: "WarehouseLive", State: "ONLINE", UserAccess: "MULTI_USER", PageVerify: "CHECKSUM", AutoCreateStats: true, AutoUpdateStats: true,
 		CompatLevel: 160, TargetRecoverySec: 60, DbCollation: "Latin1_General_CI_AS",
-		DB:           DatabaseStatus{Name: "GraniteLive", State: "ONLINE", QueryStore: &q},
-		DataFileName: "GraniteLive", LegacyCE: ptr(0), Orphans: []OrphanUser{},
+		DB:           DatabaseStatus{Name: "WarehouseLive", State: "ONLINE", QueryStore: &q},
+		DataFileName: "WarehouseLive", LegacyCE: ptr(0), Orphans: []OrphanUser{},
 		ScopedConfigs: []ScopedConfig{{"MAXDOP", "0"}, {"LEGACY_CARDINALITY_ESTIMATION", "0"}, {"PARAMETER_SNIFFING", "1"},
 			{"QUERY_OPTIMIZER_HOTFIXES", "0"}, {"DOP_FEEDBACK", "0"}, {"ELEVATE_ONLINE", "OFF"}},
 		ServerNow: setupNow, UTCOffsetMinutes: 120,
@@ -124,7 +124,7 @@ func TestSetupGreyCards(t *testing.T) {
 	f = goodFacts()
 	f.State = "RESTORING"
 	c, _, cs = runSetup(f)
-	if c.Status != StatusGrey || c.Note != "GraniteLive is RESTORING, not online, so its setup was not checked." ||
+	if c.Status != StatusGrey || c.Note != "WarehouseLive is RESTORING, not online, so its setup was not checked." ||
 		cs[0].Status != CheckSkipped {
 		t.Errorf("restoring: %+v %+v", c, cs[0])
 	}
@@ -431,16 +431,16 @@ func TestDatabaseOptionChecks(t *testing.T) {
 	f.AutoClose, f.AutoShrink, f.PageVerify, f.AutoCreateStats, f.AutoUpdateStats = true, true, "TORN_PAGE_DETECTION", false, false
 	c, fs, _ := runSetup(f)
 	for id, want := range map[string]Finding{
-		"DBC02": {Severity: SeverityHigh, FixID: "auto-close", Finding: "AUTO_CLOSE is on.", DoThis: "ALTER DATABASE [GraniteLive] SET AUTO_CLOSE OFF;"},
-		"DBC03": {Severity: SeverityHigh, FixID: "auto-shrink", Finding: "AUTO_SHRINK is on.", DoThis: "ALTER DATABASE [GraniteLive] SET AUTO_SHRINK OFF;"},
+		"DBC02": {Severity: SeverityHigh, FixID: "auto-close", Finding: "AUTO_CLOSE is on.", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_CLOSE OFF;"},
+		"DBC03": {Severity: SeverityHigh, FixID: "auto-shrink", Finding: "AUTO_SHRINK is on.", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_SHRINK OFF;"},
 		"DBC04": {Severity: SeverityMedium, FixID: "page-verify", Finding: "Page verify is TORN_PAGE_DETECTION instead of CHECKSUM.",
-			DoThis: "ALTER DATABASE [GraniteLive] SET PAGE_VERIFY CHECKSUM;  (Pages are protected as they are next written; an index rebuild protects them all.)"},
+			DoThis: "ALTER DATABASE [WarehouseLive] SET PAGE_VERIFY CHECKSUM;  (Pages are protected as they are next written; an index rebuild protects them all.)"},
 		"DBC05": {Severity: SeverityHigh, FixID: "auto-statistics", Finding: "Automatic creation and updating of statistics are both off.",
-			DoThis: "Check first that the application vendor does not require this (rare), then: ALTER DATABASE [GraniteLive] SET AUTO_CREATE_STATISTICS ON; ALTER DATABASE [GraniteLive] SET AUTO_UPDATE_STATISTICS ON;"},
+			DoThis: "Check first that the application vendor does not require this (rare), then: ALTER DATABASE [WarehouseLive] SET AUTO_CREATE_STATISTICS ON; ALTER DATABASE [WarehouseLive] SET AUTO_UPDATE_STATISTICS ON;"},
 	} {
 		x := one(t, fs, id)
 		if x.Severity != want.Severity || x.FixID != want.FixID || x.Finding != want.Finding || x.DoThis != want.DoThis ||
-			x.Object != "GraniteLive" || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Owner != OwnerUs {
+			x.Object != "WarehouseLive" || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Owner != OwnerUs {
 			t.Errorf("%s: %+v", id, x)
 		}
 	}
@@ -541,8 +541,8 @@ func TestDBC10(t *testing.T) {
 	c, fs, _ := runSetup(f)
 	x := one(t, fs, "DBC10")
 	if x.Severity != SeverityLow || x.FixID != "query-store" || x.Why != dbc10Why || x.Evidence != "Storage used: 0 MB of 100 MB." ||
-		x.Finding != "Query Store is off on GraniteLive, so its query history is lost at every restart." ||
-		!strings.HasPrefix(x.DoThis, "Apply the recommended Query Store settings: ALTER DATABASE [GraniteLive] SET QUERY_STORE = ON (") {
+		x.Finding != "Query Store is off on WarehouseLive, so its query history is lost at every restart." ||
+		!strings.HasPrefix(x.DoThis, "Apply the recommended Query Store settings: ALTER DATABASE [WarehouseLive] SET QUERY_STORE = ON (") {
 		t.Errorf("DBC10 off: %+v", x)
 	}
 	if c.Facts[3].Value != "Off" || c.Facts[3].Tone != ToneBad || c.Verdict != x.Finding {
@@ -553,7 +553,7 @@ func TestDBC10(t *testing.T) {
 	f.DB.QueryStore = &q
 	_, fs, _ = runSetup(f)
 	if x := one(t, fs, "DBC10"); x.Severity != SeverityMedium ||
-		x.Finding != "Query Store is on but differs from the recommended settings on GraniteLive: INTERVAL_LENGTH_MINUTES is 60, recommended 15." {
+		x.Finding != "Query Store is on but differs from the recommended settings on WarehouseLive: INTERVAL_LENGTH_MINUTES is 60, recommended 15." {
 		t.Errorf("DBC10 drift: %+v", x)
 	}
 	q.CanFix = false
@@ -566,7 +566,7 @@ func TestDBC10(t *testing.T) {
 	f.DB.ReadOnly = true
 	_, fs, cs := runSetup(f)
 	none(t, fs, "DBC10")
-	if s := statusOf(cs, "DBC10"); s.Status != CheckSkipped || s.Note != "GraniteLive is read-only, so Query Store cannot be changed." {
+	if s := statusOf(cs, "DBC10"); s.Status != CheckSkipped || s.Note != "WarehouseLive is read-only, so Query Store cannot be changed." {
 		t.Errorf("DBC10 unavailable: %+v", s)
 	}
 
@@ -580,22 +580,22 @@ func TestDBC10(t *testing.T) {
 
 func TestCopiedDatabaseChecks(t *testing.T) {
 	f := goodFacts()
-	f.RestoredAt, f.SourceServer, f.SourceDb = ptr(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)), "CLIENTSQL01", "GraniteProd"
+	f.RestoredAt, f.SourceServer, f.SourceDb = ptr(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)), "CLIENTSQL01", "WarehouseProd"
 	f.SourceBackupAt = ptr(time.Date(2026, 8, 31, 22, 15, 0, 0, time.UTC))
 	_, fs, _ := runSetup(f)
 	if x := one(t, fs, "CPY01"); x.Severity != SeverityInfo || x.When != WhenNone ||
-		x.Finding != "This database is a copy of GraniteProd on CLIENTSQL01, restored on 2026-09-01." ||
-		x.Evidence != "Backup taken: 2026-08-31 22:15. First data file name: GraniteLive." {
+		x.Finding != "This database is a copy of WarehouseProd on CLIENTSQL01, restored on 2026-09-01." ||
+		x.Evidence != "Backup taken: 2026-08-31 22:15. First data file name: WarehouseLive." {
 		t.Errorf("CPY01 restored: %+v", x)
 	}
-	f.SourceServer, f.SourceDb = `SQL01\WMS`, "GraniteLive"
+	f.SourceServer, f.SourceDb = `SQL01\WMS`, "WarehouseLive"
 	_, fs, _ = runSetup(f)
 	none(t, fs, "CPY01")
 
 	f = goodFacts()
-	f.DataFileName = "Granite_Ortho"
+	f.DataFileName = "Warehouse_Ortho"
 	_, fs, _ = runSetup(f)
-	if x := one(t, fs, "CPY01"); x.Finding != "The file names suggest this database was copied from Granite_Ortho." {
+	if x := one(t, fs, "CPY01"); x.Finding != "The file names suggest this database was copied from Warehouse_Ortho." {
 		t.Errorf("CPY01 file name: %+v", x)
 	}
 	f.RestoreError = "denied"
@@ -619,11 +619,11 @@ func TestCopiedDatabaseChecks(t *testing.T) {
 	}
 
 	f = goodFacts()
-	f.Orphans = []OrphanUser{{Name: "granite", DefaultSchema: "dbo", LoginExists: true}, {Name: "old"}}
+	f.Orphans = []OrphanUser{{Name: "appsvc", DefaultSchema: "dbo", LoginExists: true}, {Name: "old"}}
 	c, fs, _ := runSetup(f)
 	got := findingsOf(fs, "CPY04")
 	if len(got) != 2 || got[0].Severity != SeverityMedium ||
-		got[0].DoThis != "A login with the same name exists. Link them: ALTER USER [granite] WITH LOGIN = [granite];" ||
+		got[0].DoThis != "A login with the same name exists. Link them: ALTER USER [appsvc] WITH LOGIN = [appsvc];" ||
 		got[1].DoThis != cpy04NoDo || got[1].Evidence != "Type: SQL user. Default schema: -." || c.ToDo != 2 {
 		t.Errorf("CPY04: %+v", got)
 	}
@@ -864,15 +864,15 @@ func TestINS16(t *testing.T) {
 
 func TestDBC13(t *testing.T) {
 	for mode, want := range map[string]string{
-		"SINGLE_USER":     "GraniteLive is in SINGLE_USER mode (only one connection at a time): the application cannot connect.",
-		"RESTRICTED_USER": "GraniteLive is in RESTRICTED_USER mode (only administrators and the database owner can connect): the application cannot connect.",
+		"SINGLE_USER":     "WarehouseLive is in SINGLE_USER mode (only one connection at a time): the application cannot connect.",
+		"RESTRICTED_USER": "WarehouseLive is in RESTRICTED_USER mode (only administrators and the database owner can connect): the application cannot connect.",
 	} {
 		f := goodFacts()
 		f.UserAccess = mode
 		c, fs, cs := runSetup(f)
 		x := one(t, fs, "DBC13")
-		if x.Severity != SeverityHigh || x.Owner != OwnerUs || x.FixID != FixMultiUser || x.Object != "GraniteLive" || x.Finding != want ||
-			!strings.HasSuffix(x.DoThis, "ALTER DATABASE [GraniteLive] SET MULTI_USER;") || x.Evidence != "user_access_desc = "+mode ||
+		if x.Severity != SeverityHigh || x.Owner != OwnerUs || x.FixID != FixMultiUser || x.Object != "WarehouseLive" || x.Finding != want ||
+			!strings.HasSuffix(x.DoThis, "ALTER DATABASE [WarehouseLive] SET MULTI_USER;") || x.Evidence != "user_access_desc = "+mode ||
 			statusOf(cs, "DBC13").Status != CheckFinding || c.Verdict != want {
 			t.Errorf("DBC13 %s: %+v", mode, x)
 		}
@@ -904,7 +904,7 @@ func TestDBC14(t *testing.T) {
 	} {
 		x := got[i]
 		if x.Severity != SeverityInfo || x.Owner != OwnerUs || x.When != WhenNone || x.FixID != FixScopedConfigReset || x.Object != want.object ||
-			x.Finding != "GraniteLive changes a database scoped configuration from the default: "+want.item+"." ||
+			x.Finding != "WarehouseLive changes a database scoped configuration from the default: "+want.item+"." ||
 			x.Evidence != "sys.database_scoped_configurations: "+list+"." || !strings.HasSuffix(x.DoThis, want.back) {
 			t.Errorf("DBC14 info %d: %+v", i, x)
 		}
@@ -927,7 +927,7 @@ func TestDBC14(t *testing.T) {
 	_, fs, cs = runSetup(f)
 	x := one(t, fs, "DBC14")
 	if x.Severity != SeverityMedium || x.When != WhenDecideFirst || x.Object != "MAXDOP" || x.FixID != FixScopedConfigReset ||
-		x.Finding != "GraniteLive sets its own MAXDOP of 4, which overrides the server's 8 for every query in this database." ||
+		x.Finding != "WarehouseLive sets its own MAXDOP of 4, which overrides the server's 8 for every query in this database." ||
 		x.Evidence != "Non-default database scoped configurations: MAXDOP = 4 (default 0)." || x.Why != dbc14MaxWhy ||
 		statusOf(cs, "DBC14").Status != CheckFinding {
 		t.Errorf("DBC14 maxdop: %+v", x)
@@ -936,7 +936,7 @@ func TestDBC14(t *testing.T) {
 	f.ScopedConfigs[0].Value = "8"
 	_, fs, _ = runSetup(f)
 	if x := one(t, fs, "DBC14"); x.Severity != SeverityInfo ||
-		x.Finding != "GraniteLive changes a database scoped configuration from the default: MAXDOP = 8 (default 0)." {
+		x.Finding != "WarehouseLive changes a database scoped configuration from the default: MAXDOP = 8 (default 0)." {
 		t.Errorf("DBC14 same maxdop: %+v", x)
 	}
 

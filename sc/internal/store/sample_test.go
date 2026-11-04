@@ -34,12 +34,12 @@ func TestStorageSamplesAndDiskTrend(t *testing.T) {
 		{newest, 51200},
 	} {
 		vols := []domain.VolumeSample{{Volume: `D:\`, FreeMB: s.free, TotalMB: 102400}, {Volume: `L:\`, FreeMB: 1, TotalMB: 2}}
-		if err := st.InsertStorageSamples(ctx, 1, "GraniteLive", s.at, vols, sample); err != nil {
+		if err := st.InsertStorageSamples(ctx, 1, "WarehouseLive", s.at, vols, sample); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Another server keeps its own.
-	if err := st.InsertStorageSamples(ctx, 2, "GraniteLive", newest.Add(time.Hour), []domain.VolumeSample{{Volume: `D:\`, FreeMB: 5, TotalMB: 10}}, nil); err != nil {
+	if err := st.InsertStorageSamples(ctx, 2, "WarehouseLive", newest.Add(time.Hour), []domain.VolumeSample{{Volume: `D:\`, FreeMB: 5, TotalMB: 10}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,13 +81,13 @@ func TestPerfSampleRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 
-	if p, err := st.LastPerfSample(ctx, 1, "GraniteLive"); p != nil || err != nil {
+	if p, err := st.LastPerfSample(ctx, 1, "WarehouseLive"); p != nil || err != nil {
 		t.Fatalf("none yet: %+v %v", p, err)
 	}
 	at := time.Date(2026, 11, 3, 8, 15, 30, 123456000, time.UTC)
-	older := domain.PerfSample{Database: "GraniteLive", CapturedAt: at.Add(-time.Hour), Seconds: 30, Verdict: "old",
+	older := domain.PerfSample{Database: "WarehouseLive", CapturedAt: at.Add(-time.Hour), Seconds: 30, Verdict: "old",
 		Lines: []domain.SampleLine{}, Waits: []domain.SampleWait{}}
-	newer := domain.PerfSample{Database: "GraniteLive", CapturedAt: at, Seconds: 15, ElapsedSeconds: 15.2, Verdict: "Session 83 has blocked 14 sessions.",
+	newer := domain.PerfSample{Database: "WarehouseLive", CapturedAt: at, Seconds: 15, ElapsedSeconds: 15.2, Verdict: "Session 83 has blocked 14 sessions.",
 		Lines:    []domain.SampleLine{{Area: domain.SampleAreaBlocking, Text: "Session 83 has blocked 14 sessions."}, {Area: domain.SampleAreaQueries, Text: "q", QueryHash: "0xAA"}},
 		Waits:    []domain.SampleWait{{Type: "LCK_M_X", Group: "LOCK", Words: "blocking", WaitMs: 60000, Tasks: 30}},
 		CPU:      &domain.SampleCPU{SQL: 70, Other: 25, Records: 1, InWindow: true, Schedulers: 8},
@@ -95,17 +95,17 @@ func TestPerfSampleRoundTrip(t *testing.T) {
 		Blocking: domain.SampleBlocking{HeadBlockers: []domain.SampleBlocker{{Session: 83, Blocked: 14, LongestSec: 390}}, Blocked: 14, LongestSec: 390},
 		Memory:   &domain.SampleMemory{PLEStart: 4000, PLEEnd: 120}, FilesError: "denied"}
 	for _, p := range []domain.PerfSample{newer, older} {
-		if err := st.InsertPerfSample(ctx, 1, "GraniteLive", p); err != nil {
+		if err := st.InsertPerfSample(ctx, 1, "WarehouseLive", p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := st.InsertPerfSample(ctx, 2, "GraniteLive", domain.PerfSample{CapturedAt: at.Add(time.Hour), Verdict: "other server"}); err != nil {
+	if err := st.InsertPerfSample(ctx, 2, "WarehouseLive", domain.PerfSample{CapturedAt: at.Add(time.Hour), Verdict: "other server"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.InsertPerfSample(ctx, 1, "Other", domain.PerfSample{CapturedAt: at.Add(time.Hour), Verdict: "other db"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := st.LastPerfSample(ctx, 1, "GraniteLive")
+	got, err := st.LastPerfSample(ctx, 1, "WarehouseLive")
 	if err != nil || got == nil {
 		t.Fatalf("last: %+v %v", got, err)
 	}

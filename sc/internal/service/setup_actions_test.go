@@ -27,7 +27,7 @@ func TestSetupAndUpkeepActionsRegistered(t *testing.T) {
 }
 
 func suTestFix() *genericFix {
-	return &genericFix{srv: domain.Server{Name: "local"}, database: domain.DatabaseStatus{Name: "GraniteLive", State: "ONLINE"}}
+	return &genericFix{srv: domain.Server{Name: "local"}, database: domain.DatabaseStatus{Name: "WarehouseLive", State: "ONLINE"}}
 }
 
 // A preview with a bad option returns no changes, so Apply is disabled, and the apply refuses it
@@ -46,14 +46,14 @@ func TestActionPreviewWithABadOption(t *testing.T) {
 			return traceFlagPreview(g, domain.TraceFlagFacts{ServerName: "S", Flags: []int{1117}}, map[string]string{domain.OptionTraceFlag: "1; SHUTDOWN"})
 		}},
 		{domain.FixScopedConfigReset, func(g *genericFix) error {
-			return scopedConfigPreview(g, domain.ScopedConfigFacts{Database: "GraniteLive", ProductVersion: "16.0.4255.3", Configs: []domain.ScopedConfig{{Name: "MAXDOP", Value: "4"}}},
+			return scopedConfigPreview(g, domain.ScopedConfigFacts{Database: "WarehouseLive", ProductVersion: "16.0.4255.3", Configs: []domain.ScopedConfig{{Name: "MAXDOP", Value: "4"}}},
 				map[string]string{domain.OptionScopedName: "MAXDOP = 1; DROP"})
 		}},
 		{domain.FixOperatorAlerts, func(g *genericFix) error {
 			return operatorAlertsPreview(g, domain.AlertFacts{ServerName: "S", EngineEdition: 2}, map[string]string{domain.OptionOperatorEmail: "not an address"})
 		}},
 		{domain.FixMaintenanceJob, func(g *genericFix) error {
-			return maintenanceJobPreview(g, domain.MaintenanceJobFacts{ServerName: "S", EngineEdition: 2, Database: "GraniteLive", ServerNow: time.Now()},
+			return maintenanceJobPreview(g, domain.MaintenanceJobFacts{ServerName: "S", EngineEdition: 2, Database: "WarehouseLive", ServerNow: time.Now()},
 				map[string]string{domain.OptionMaintTime: "25:00"})
 		}},
 		{domain.FixRemoveShrinkStep, func(g *genericFix) error {
@@ -82,7 +82,7 @@ func TestActionPreviewWithABadOption(t *testing.T) {
 func TestActionBlockedWithoutInputs(t *testing.T) {
 	var se *Error
 	g := suTestFix()
-	err := multiUserPreview(g, domain.UserAccessFacts{Database: "GraniteLive", UserAccess: "SINGLE_USER",
+	err := multiUserPreview(g, domain.UserAccessFacts{Database: "WarehouseLive", UserAccess: "SINGLE_USER",
 		Sessions: []domain.UserAccessSession{{Session: 61, Login: "sa", Host: "SQL01", Command: "RESTORE DATABASE"}}})
 	if !errors.As(err, &se) || se.Kind != KindConflict || !strings.HasPrefix(se.Msg, "Session 61 (sa on SQL01) is running RESTORE DATABASE") {
 		t.Errorf("busy database: %v", err)
@@ -106,7 +106,7 @@ func TestActionBlockedWithoutInputs(t *testing.T) {
 	}
 	// An Express maintenance job is a script: never applied.
 	g = suTestFix()
-	if err := maintenanceJobPreview(g, domain.MaintenanceJobFacts{EngineEdition: 4, Database: "GraniteLive", ServerNow: time.Now()}, nil); err != nil || !g.preview.Express {
+	if err := maintenanceJobPreview(g, domain.MaintenanceJobFacts{EngineEdition: 4, Database: "WarehouseLive", ServerNow: time.Now()}, nil); err != nil || !g.preview.Express {
 		t.Fatalf("express preview %v %+v", err, g.preview)
 	}
 	if err := suApplyRefusal(g); !errors.As(err, &se) || se.Kind != KindConflict || !strings.Contains(se.Msg, "Express has no Agent") {
@@ -119,11 +119,11 @@ func TestActionPreviewKeepsForTheApply(t *testing.T) {
 	g := suTestFix()
 	opts := map[string]string{domain.OptionMaintTime: "02:00"}
 	g.options = opts
-	if err := maintenanceJobPreview(g, domain.MaintenanceJobFacts{ServerName: "S", EngineEdition: 2, Database: "GraniteLive", Ola: true, ServerNow: time.Now()},
+	if err := maintenanceJobPreview(g, domain.MaintenanceJobFacts{ServerName: "S", EngineEdition: 2, Database: "WarehouseLive", Ola: true, ServerNow: time.Now()},
 		map[string]string{domain.OptionMaintTime: "02:00", domain.OptionStatsOnly: "false"}); err != nil {
 		t.Fatal(err)
 	}
-	if g.options[suJobsKey] != "kakapo: statistics (GraniteLive)\nkakapo: indexes (GraniteLive)" || !strings.HasPrefix(g.options[suDescriptionKey], "Created the maintenance job(s) ") ||
+	if g.options[suJobsKey] != "kakapo: statistics (WarehouseLive)\nkakapo: indexes (WarehouseLive)" || !strings.HasPrefix(g.options[suDescriptionKey], "Created the maintenance job(s) ") ||
 		len(opts) != 1 || suApplyRefusal(g) != nil {
 		t.Errorf("kept %+v caller %+v", g.options, opts)
 	}

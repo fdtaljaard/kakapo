@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// pickFacts is dbo.Pick in GraniteLive on a Standard Edition SQL Server 2022: 2 million rows, ten
+// pickFacts is dbo.Pick in WarehouseLive on a Standard Edition SQL Server 2022: 2 million rows, ten
 // columns, a clustered primary key on ID and one index on Location.
 func pickFacts() IndexFacts {
 	return IndexFacts{
-		ProductVersion: "16.0.4135.4", EngineEdition: 2, Database: "GraniteLive", Schema: "dbo", Table: "Pick",
+		ProductVersion: "16.0.4135.4", EngineEdition: 2, Database: "WarehouseLive", Schema: "dbo", Table: "Pick",
 		Found: true, Rows: 2000000, DataMB: 400,
 		Columns: []TableColumn{
 			{"ID", "int", 4}, {"Status", "int", 4}, {"Date", "datetime", 8}, {"Qty", "decimal", 9},
@@ -35,17 +35,17 @@ func pickSpec(t *testing.T, opts map[string]string) CreateIndexSpec {
 
 var pickOptions = map[string]string{
 	OptionTable: "[dbo].[Pick]", OptionEquality: "[Status]", OptionInequality: "[Date]", OptionIncluded: "[Qty]",
-	OptionObject: "[GraniteLive].[dbo].[Pick]",
+	OptionObject: "[WarehouseLive].[dbo].[Pick]",
 }
 
 func TestCreateIndexPreview(t *testing.T) {
 	f := pickFacts()
 	p, fix := BuildCreateIndexFix(f, pickSpec(t, pickOptions), pickOptions)
-	wantStmt := "CREATE NONCLUSTERED INDEX [IX_Pick_Status_Date_kakapo] ON [GraniteLive].[dbo].[Pick] ([Status], [Date]) INCLUDE ([Qty]) WITH (ONLINE = OFF, SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);"
+	wantStmt := "CREATE NONCLUSTERED INDEX [IX_Pick_Status_Date_kakapo] ON [WarehouseLive].[dbo].[Pick] ([Status], [Date]) INCLUDE ([Qty]) WITH (ONLINE = OFF, SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);"
 	if p.Statement != wantStmt {
 		t.Errorf("statement\n%s\nwant\n%s", p.Statement, wantStmt)
 	}
-	if p.Rollback != "DROP INDEX [IX_Pick_Status_Date_kakapo] ON [GraniteLive].[dbo].[Pick];" {
+	if p.Rollback != "DROP INDEX [IX_Pick_Status_Date_kakapo] ON [WarehouseLive].[dbo].[Pick];" {
 		t.Errorf("rollback %s", p.Rollback)
 	}
 	target := "IX_Pick_Status_Date_kakapo on dbo.Pick (Status, Date) include (Qty), about 66 MB, offline"
@@ -64,7 +64,7 @@ func TestCreateIndexPreview(t *testing.T) {
 	if len(p.Inputs) != 2 || p.Inputs[0].Name != OptionIndexName || p.Inputs[1].Name != OptionIncluded || p.Inputs[1].Value != "[Qty]" {
 		t.Errorf("inputs %+v", p.Inputs)
 	}
-	if p.Options[OptionIndexName] != "IX_Pick_Status_Date_kakapo" || p.Options[OptionObject] != "[GraniteLive].[dbo].[Pick]" ||
+	if p.Options[OptionIndexName] != "IX_Pick_Status_Date_kakapo" || p.Options[OptionObject] != "[WarehouseLive].[dbo].[Pick]" ||
 		p.Options[OptionTable] != "[dbo].[Pick]" || p.Options[OptionIncluded] != "[Qty]" {
 		t.Errorf("options %+v", p.Options)
 	}
@@ -227,9 +227,9 @@ func TestCreateIndexGuards(t *testing.T) {
 }
 
 func TestParseCreateIndexOptions(t *testing.T) {
-	s := pickSpec(t, map[string]string{OptionTable: "[Granite Live].[dbo].[Pick]]s]", OptionEquality: "[Status], [Date]",
+	s := pickSpec(t, map[string]string{OptionTable: "[Warehouse Live].[dbo].[Pick]]s]", OptionEquality: "[Status], [Date]",
 		OptionIncluded: "Qty , [Status]", OptionIndexName: " IX_Mine ", OptionOnline: "false"})
-	if s.Database != "Granite Live" || s.Schema != "dbo" || s.Table != "Pick]s" || !reflect.DeepEqual(s.Equality, []string{"Status", "Date"}) ||
+	if s.Database != "Warehouse Live" || s.Schema != "dbo" || s.Table != "Pick]s" || !reflect.DeepEqual(s.Equality, []string{"Status", "Date"}) ||
 		len(s.Inequality) != 0 || !reflect.DeepEqual(s.Included, []string{"Qty", "Status"}) || s.Name != "IX_Mine" || s.Online == nil || *s.Online {
 		t.Errorf("spec %+v", s)
 	}
@@ -278,7 +278,7 @@ func TestCreateIndexReadBack(t *testing.T) {
 		t.Errorf("gone %v %s", ok, after)
 	}
 	_, fix := BuildCreateIndexFix(f, s, pickOptions)
-	if d := CreateIndexChangeDescription(fix, "GraniteLive"); d != "Created index IX_Pick_Status_Date_kakapo on dbo.Pick (Status, Date) include (Qty), about 66 MB, offline in GraniteLive" {
+	if d := CreateIndexChangeDescription(fix, "WarehouseLive"); d != "Created index IX_Pick_Status_Date_kakapo on dbo.Pick (Status, Date) include (Qty), about 66 MB, offline in WarehouseLive" {
 		t.Errorf("description %s", d)
 	}
 	if o := IndexObject("dbo", "Pick", "IX_Pick_Status_Date_kakapo"); o != "dbo.Pick.IX_Pick_Status_Date_kakapo" {
@@ -294,8 +294,8 @@ func TestDropIndexFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "DROP INDEX [IX_Status_kakapo] ON [GraniteLive].[dbo].[Pick];" ||
-		p.Rollback != "CREATE UNIQUE NONCLUSTERED INDEX [IX_Status_kakapo] ON [GraniteLive].[dbo].[Pick] ([Status], [Date] DESC) INCLUDE ([Qty], [Code]) WHERE ([Status]=(1));" {
+	if p.Statement != "DROP INDEX [IX_Status_kakapo] ON [WarehouseLive].[dbo].[Pick];" ||
+		p.Rollback != "CREATE UNIQUE NONCLUSTERED INDEX [IX_Status_kakapo] ON [WarehouseLive].[dbo].[Pick] ([Status], [Date] DESC) INCLUDE ([Qty], [Code]) WHERE ([Status]=(1));" {
 		t.Errorf("statements\n%s\n%s", p.Statement, p.Rollback)
 	}
 	cur := "IX_Status_kakapo on dbo.Pick (Status, Date) include (Qty, Code), 12.0 MB"

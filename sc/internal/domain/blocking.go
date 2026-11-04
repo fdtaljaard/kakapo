@@ -51,7 +51,7 @@ type BlockingSession struct {
 	WaitType        string  `json:"waitType,omitempty"`
 	WaitMs          int64   `json:"waitMs"`
 	WaitResource    string  `json:"waitResource,omitempty"` // as SQL Server writes it: "KEY: 7:72057594043236352 (8194443284a0)"
-	Resource        string  `json:"resource,omitempty"`     // the table (and index) of the lock it waits on: "dbo.MasterItem (PK_MasterItem)"
+	Resource        string  `json:"resource,omitempty"`     // the table (and index) of the lock it waits on: "dbo.Item (PK_Item)"
 	ResourceTable   string  `json:"resourceTable,omitempty"`
 	LockMode        string  `json:"lockMode,omitempty"` // "wants U, held X"
 	Isolation       string  `json:"isolation"`          // "READ COMMITTED"
@@ -342,7 +342,7 @@ func BlockDuration(sec int64) string {
 	return h + " hours"
 }
 
-// blkWho is "(GraniteScheduler on WMS-APP01)": the program or SQL Agent job, and the host.
+// blkWho is "(AppScheduler on WMS-APP01)": the program or SQL Agent job, and the host.
 func blkWho(s BlockingSession) string {
 	what := s.Program
 	switch {
@@ -359,7 +359,7 @@ func blkWho(s BlockingSession) string {
 	return "(" + what + " on " + s.Host + ")"
 }
 
-// blkOwner is who to ask: "granite on WMS-APP01".
+// blkOwner is who to ask: "appsvc on WMS-APP01".
 func blkOwner(s BlockingSession) string {
 	if s.Host == "" {
 		return orQ(s.Login)
@@ -452,7 +452,7 @@ func blkReaders(n BlockingNode, database string) int {
 	return c
 }
 
-// blkHeadSentence: "Session 83 (GraniteScheduler on WMS-APP01) has held a lock on dbo.MasterItem for 6
+// blkHeadSentence: "Session 83 (AppScheduler on WMS-APP01) has held a lock on dbo.Item for 6
 // minutes in a transaction that is still open and is doing nothing (sleeping); 14 sessions wait behind it."
 func blkHeadSentence(h BlockingNode) string {
 	who := fmt.Sprintf("Session %d %s", h.Session, blkWho(h.BlockingSession))

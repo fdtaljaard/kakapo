@@ -36,17 +36,17 @@ func TestOperatorAlertsCreatesEverything(t *testing.T) {
 	if err != nil || len(p.Changes) != 11 {
 		t.Fatalf("%+v %v", p, err)
 	}
-	if !reflect.DeepEqual(p.Changes[0], Drift{"Operator", "none with an email address", "Granite support (dba@client.co.za)"}) ||
-		!reflect.DeepEqual(p.Changes[1], Drift{"Alert severity 19", "none", "kakapo: severity 19, mails Granite support"}) ||
-		!reflect.DeepEqual(p.Changes[10], Drift{"Alert error 825", "none", "kakapo: error 825, mails Granite support"}) {
+	if !reflect.DeepEqual(p.Changes[0], Drift{"Operator", "none with an email address", "Database support (dba@client.co.za)"}) ||
+		!reflect.DeepEqual(p.Changes[1], Drift{"Alert severity 19", "none", "kakapo: severity 19, mails Database support"}) ||
+		!reflect.DeepEqual(p.Changes[10], Drift{"Alert error 825", "none", "kakapo: error 825, mails Database support"}) {
 		t.Errorf("changes %+v", p.Changes)
 	}
 	for _, want := range []string{
 		"BEGIN TRY\n    BEGIN TRANSACTION;\n",
-		"EXEC msdb.dbo.sp_add_operator @name = N'Granite support', @enabled = 1, @email_address = N'dba@client.co.za';",
+		"EXEC msdb.dbo.sp_add_operator @name = N'Database support', @enabled = 1, @email_address = N'dba@client.co.za';",
 		"EXEC msdb.dbo.sp_add_alert @name = N'kakapo: severity 19', @message_id = 0, @severity = 19, @enabled = 1,\n        @delay_between_responses = 60, @include_event_description_in = 1;",
 		"EXEC msdb.dbo.sp_add_alert @name = N'kakapo: error 824', @message_id = 824, @severity = 0, @enabled = 1,",
-		"EXEC msdb.dbo.sp_add_notification @alert_name = N'kakapo: error 825', @operator_name = N'Granite support', @notification_method = 1;",
+		"EXEC msdb.dbo.sp_add_notification @alert_name = N'kakapo: error 825', @operator_name = N'Database support', @notification_method = 1;",
 		"COMMIT TRANSACTION;", "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\n    THROW;",
 	} {
 		if !strings.Contains(p.Statement, want) {
@@ -58,14 +58,14 @@ func TestOperatorAlertsCreatesEverything(t *testing.T) {
 	}
 	// The rollback deletes what was created, by name: the alerts, then the operator (and with it its notifications).
 	if !strings.HasPrefix(p.Rollback, "EXEC msdb.dbo.sp_delete_alert @name = N'kakapo: severity 19';") ||
-		!strings.HasSuffix(p.Rollback, "EXEC msdb.dbo.sp_delete_operator @name = N'Granite support';") ||
+		!strings.HasSuffix(p.Rollback, "EXEC msdb.dbo.sp_delete_operator @name = N'Database support';") ||
 		strings.Count(p.Rollback, "sp_delete_alert") != 10 || strings.Contains(p.Rollback, "sp_delete_notification") {
 		t.Errorf("rollback:\n%s", p.Rollback)
 	}
 	if p.Warnings[len(p.Warnings)-1] != AlertsPermission(`SQL01\WMS`) || p.Options[OptionOperatorEmail] != "dba@client.co.za" || p.Options[OptionCreateAlerts] != "true" {
 		t.Errorf("warnings %q options %+v", p.Warnings, p.Options)
 	}
-	if d := OperatorAlertsDescription(`SQL01\WMS`, p.Changes); d != `Created the operator Granite support (dba@client.co.za) on SQL01\WMS; 10 alert(s) created, 0 enabled again, 0 more now mail it` {
+	if d := OperatorAlertsDescription(`SQL01\WMS`, p.Changes); d != `Created the operator Database support (dba@client.co.za) on SQL01\WMS; 10 alert(s) created, 0 enabled again, 0 more now mail it` {
 		t.Errorf("description %q", d)
 	}
 
@@ -83,15 +83,15 @@ func TestOperatorAlertsCreatesEverything(t *testing.T) {
 
 	// Only the operator.
 	p, _, _ = BuildOperatorAlertsFix(suAlertFacts(), map[string]string{OptionOperatorEmail: "dba@client.co.za", OptionCreateAlerts: "false"})
-	if len(p.Changes) != 1 || strings.Contains(p.Statement, "sp_add_alert") || p.Rollback != "EXEC msdb.dbo.sp_delete_operator @name = N'Granite support';" {
+	if len(p.Changes) != 1 || strings.Contains(p.Statement, "sp_add_alert") || p.Rollback != "EXEC msdb.dbo.sp_delete_operator @name = N'Database support';" {
 		t.Errorf("operator only %+v", p)
 	}
 
 	// An operator of that name without an email: choose another name.
 	f = suAlertFacts()
-	f.Operators = []AgentOperator{{Name: "Granite support", Enabled: true}}
+	f.Operators = []AgentOperator{{Name: "Database support", Enabled: true}}
 	if p, _, _ := BuildOperatorAlertsFix(f, map[string]string{OptionOperatorEmail: "dba@client.co.za"}); len(p.Changes) != 0 ||
-		!strings.HasPrefix(p.Inputs[0].Warning, "An operator named Granite support already exists without an email address") {
+		!strings.HasPrefix(p.Inputs[0].Warning, "An operator named Database support already exists without an email address") {
 		t.Errorf("name taken %+v", p)
 	}
 }
@@ -206,7 +206,7 @@ func suSettings(ds []Drift) []string {
 }
 
 func TestValidEmail(t *testing.T) {
-	for s, want := range map[string]bool{"dba@client.co.za": true, "it.support@granite.io": true, "": false, "a@b": false,
+	for s, want := range map[string]bool{"dba@client.co.za": true, "it.support@example.com": true, "": false, "a@b": false,
 		"a b@c.com": false, "a@b.com,c@d.com": false, "o'neil@x.com": false, "@x.com": false, "a@.com": false, strings.Repeat("a", 95) + "@x.com": false} {
 		if ValidEmail(s) != want {
 			t.Errorf("%q: %v", s, !want)
@@ -215,7 +215,7 @@ func TestValidEmail(t *testing.T) {
 }
 
 func suMaintFacts() MaintenanceJobFacts {
-	return MaintenanceJobFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", EngineEdition: 2, Database: "GraniteLive", Ola: true,
+	return MaintenanceJobFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", EngineEdition: 2, Database: "WarehouseLive", Ola: true,
 		Operator: "IT", AgentStatus: "Running", ServerNow: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)}
 }
 
@@ -227,28 +227,28 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 	}
 	for _, want := range []string{
 		"DECLARE @owner sysname = SUSER_SNAME(0x01);",
-		"IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: statistics (GraniteLive)')",
-		"EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: statistics (GraniteLive)', @enabled = 1,\n        @description = N'Created by kakapo on 2026-11-03 for GraniteLive: statistics daily 01:00 (IndexOptimize, statistics only)',",
+		"IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: statistics (WarehouseLive)')",
+		"EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: statistics (WarehouseLive)', @enabled = 1,\n        @description = N'Created by kakapo on 2026-11-03 for WarehouseLive: statistics daily 01:00 (IndexOptimize, statistics only)',",
 		"@category_name = N'Database Maintenance', @owner_login_name = @owner,\n        @notify_level_email = 2, @notify_email_operator_name = N'IT';",
-		"@command = N'/* kakapo */\nEXECUTE master.dbo.IndexOptimize @Databases = N''GraniteLive'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5;';",
+		"@command = N'/* kakapo */\nEXECUTE master.dbo.IndexOptimize @Databases = N''WarehouseLive'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5;';",
 		"@freq_type = 4, @freq_interval = 1, @active_start_time = 10000;",
 	} {
 		if !strings.Contains(p.Statement, want) {
 			t.Errorf("statement lacks %q:\n%s", want, p.Statement)
 		}
 	}
-	if strings.Contains(p.Statement, "kakapo: indexes") || p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: statistics (GraniteLive)';" {
+	if strings.Contains(p.Statement, "kakapo: indexes") || p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: statistics (WarehouseLive)';" {
 		t.Errorf("statistics only:\n%s\n%s", p.Statement, p.Rollback)
 	}
 	if len(p.Inputs) != 2 || p.Inputs[0].Value != "01:00" || p.Inputs[1].Name != OptionStatsOnly || p.Inputs[1].Value != "true" ||
 		!suContains(p.Warnings, maintOla) || p.Warnings[len(p.Warnings)-1] != BackupFixPermission(`SQL01\WMS`) {
 		t.Errorf("inputs %+v warnings %q", p.Inputs, p.Warnings)
 	}
-	if !reflect.DeepEqual(p.Changes, []Drift{{"Statistics job", "none", "kakapo: statistics (GraniteLive), daily 01:00"}, {"Tell on failure", "", "IT"}}) {
+	if !reflect.DeepEqual(p.Changes, []Drift{{"Statistics job", "none", "kakapo: statistics (WarehouseLive), daily 01:00"}, {"Tell on failure", "", "IT"}}) {
 		t.Errorf("changes %+v", p.Changes)
 	}
-	if fix.ID != FixMaintenanceJob || fix.CheckID != "MNT03" || fix.Target != "kakapo: statistics (GraniteLive) (daily 01:00)" ||
-		MaintenanceJobDescription(fix) != "Created the maintenance job(s) kakapo: statistics (GraniteLive) (daily 01:00)" {
+	if fix.ID != FixMaintenanceJob || fix.CheckID != "MNT03" || fix.Target != "kakapo: statistics (WarehouseLive) (daily 01:00)" ||
+		MaintenanceJobDescription(fix) != "Created the maintenance job(s) kakapo: statistics (WarehouseLive) (daily 01:00)" {
 		t.Errorf("fix %+v", fix)
 	}
 
@@ -259,14 +259,14 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 		"@freq_type = 8, @freq_interval = 126, @freq_recurrence_factor = 1, @active_start_time = 23000;",
 		"@freq_type = 8, @freq_interval = 1, @freq_recurrence_factor = 1, @active_start_time = 23000;",
 		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE'', @FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000",
-		"N'kakapo: indexes (GraniteLive), Sunday 02:30'",
+		"N'kakapo: indexes (WarehouseLive), Sunday 02:30'",
 	} {
 		if !strings.Contains(p.Statement, want) {
 			t.Errorf("index job lacks %q:\n%s", want, p.Statement)
 		}
 	}
-	if !reflect.DeepEqual(MaintenanceJobNames(f, opts), []string{"kakapo: statistics (GraniteLive)", "kakapo: indexes (GraniteLive)"}) ||
-		!strings.Contains(p.Rollback, "N'kakapo: indexes (GraniteLive)'") || len(p.Changes) != 3 ||
+	if !reflect.DeepEqual(MaintenanceJobNames(f, opts), []string{"kakapo: statistics (WarehouseLive)", "kakapo: indexes (WarehouseLive)"}) ||
+		!strings.Contains(p.Rollback, "N'kakapo: indexes (WarehouseLive)'") || len(p.Changes) != 3 ||
 		!suContains(p.Warnings, "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that Sunday 02:30 is a quiet hour and that the log has room.") {
 		t.Errorf("index job %+v", p)
 	}
@@ -277,11 +277,11 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 		t.Errorf("bad time %+v", p)
 	}
 	// Both jobs exist: nothing to offer. The statistics job exists: only the index job, on request.
-	f.ExistingJobs = []string{StatisticsJobName("GraniteLive"), IndexJobName("GraniteLive")}
+	f.ExistingJobs = []string{StatisticsJobName("WarehouseLive"), IndexJobName("WarehouseLive")}
 	if _, _, err := BuildMaintenanceJobFix(f, nil); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("both exist: %v", err)
 	}
-	f.ExistingJobs = []string{StatisticsJobName("GraniteLive")}
+	f.ExistingJobs = []string{StatisticsJobName("WarehouseLive")}
 	if p, _, _ := BuildMaintenanceJobFix(f, nil); len(p.Changes) != 0 || !strings.HasPrefix(p.Warnings[0], "kakapo's statistics job exists already") {
 		t.Errorf("stats exists %+v", p)
 	}
@@ -298,7 +298,7 @@ func TestMaintenanceJobWithoutOla(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(p.Statement, "@command = N'/* kakapo */\nEXEC [GraniteLive].sys.sp_updatestats;';") || strings.Contains(p.Statement, "IndexOptimize") ||
+	if !strings.Contains(p.Statement, "@command = N'/* kakapo */\nEXEC [WarehouseLive].sys.sp_updatestats;';") || strings.Contains(p.Statement, "IndexOptimize") ||
 		strings.Contains(p.Statement, "kakapo: indexes") || strings.Contains(p.Statement, "@notify_level_email") {
 		t.Errorf("statement:\n%s", p.Statement)
 	}
@@ -316,8 +316,8 @@ func TestMaintenanceJobWithoutOla(t *testing.T) {
 	f = suMaintFacts()
 	f.EngineEdition = 4
 	p, _, _ = BuildMaintenanceJobFix(f, nil)
-	if !p.Express || p.Rollback != "" || !strings.HasPrefix(p.Statement, "-- kakapo: maintenance of GraniteLive on SQL01\\WMS. SQL Server Express has no SQL Server Agent") ||
-		!strings.Contains(p.Statement, "/* kakapo */\nEXECUTE master.dbo.IndexOptimize @Databases = N'GraniteLive'") || !suContains(p.Warnings, maintExpress) {
+	if !p.Express || p.Rollback != "" || !strings.HasPrefix(p.Statement, "-- kakapo: maintenance of WarehouseLive on SQL01\\WMS. SQL Server Express has no SQL Server Agent") ||
+		!strings.Contains(p.Statement, "/* kakapo */\nEXECUTE master.dbo.IndexOptimize @Databases = N'WarehouseLive'") || !suContains(p.Warnings, maintExpress) {
 		t.Errorf("express %+v", p)
 	}
 }
@@ -326,7 +326,7 @@ func suShrinkFacts() ShrinkStepFacts {
 	return ShrinkStepFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", Job: "Nightly", Found: true, Enabled: true, StartStep: 2,
 		Steps: []AgentJobStep{
 			{ID: 1, Name: "Backup", Subsystem: "TSQL", Command: "BACKUP DATABASE x TO DISK = 'x'", Database: "master", OnSuccessAction: 4, OnSuccessStep: 2, OnFailAction: 2},
-			{ID: 2, Name: "Shrink", Subsystem: "TSQL", Command: "DBCC SHRINKFILE (2, 0)", Database: "GraniteLive", DatabaseUser: "dbo",
+			{ID: 2, Name: "Shrink", Subsystem: "TSQL", Command: "DBCC SHRINKFILE (2, 0)", Database: "WarehouseLive", DatabaseUser: "dbo",
 				OutputFile: `C:\logs\o.txt`, OnSuccessAction: 3, OnFailAction: 4, OnFailStep: 3, RetryAttempts: 1, RetryInterval: 5, Flags: 2},
 			{ID: 3, Name: "Report", Subsystem: "TSQL", Command: "SELECT 1", OnSuccessAction: 1, OnFailAction: 2},
 		}}
@@ -344,7 +344,7 @@ func TestRemoveShrinkStepFix(t *testing.T) {
 	}
 	wantRollback := "EXEC msdb.dbo.sp_add_jobstep @job_name = N'Nightly', @step_id = 2, @step_name = N'Shrink', @subsystem = N'TSQL',\n" +
 		"    @on_success_action = 3, @on_success_step_id = 0, @on_fail_action = 4, @on_fail_step_id = 3,\n" +
-		"    @retry_attempts = 1, @retry_interval = 5, @flags = 2, @database_name = N'GraniteLive', @database_user_name = N'dbo', @output_file_name = N'C:\\logs\\o.txt',\n" +
+		"    @retry_attempts = 1, @retry_interval = 5, @flags = 2, @database_name = N'WarehouseLive', @database_user_name = N'dbo', @output_file_name = N'C:\\logs\\o.txt',\n" +
 		"    @command = N'DBCC SHRINKFILE (2, 0)';\n" +
 		"EXEC msdb.dbo.sp_update_job @job_name = N'Nightly', @start_step_id = 2;"
 	if p.Rollback != wantRollback {
@@ -423,7 +423,7 @@ func TestAvailableUpkeepActionFixes(t *testing.T) {
 		t.Errorf("fixable %d", c.Fixable)
 	}
 	for _, x := range fixes {
-		if x.ID == FixMaintenanceJob && (x.Target != "kakapo: statistics (GraniteLive) (daily 01:00)" || x.CheckID != "MNT03") {
+		if x.ID == FixMaintenanceJob && (x.Target != "kakapo: statistics (WarehouseLive) (daily 01:00)" || x.CheckID != "MNT03") {
 			t.Errorf("maintenance fix %+v", x)
 		}
 		if x.ID == FixOperatorAlerts && x.Current != "0 operator(s) with email" {

@@ -3,7 +3,7 @@ import type { BlockingNode, BlockingTree } from "./api-blocking"
 import type { FeatureMock } from "./api.mock"
 
 // Phase 4c (blocking): fixture answers for this part's routes; undefined means "not mine".
-// Two chains: session 83 (GraniteScheduler, sleeping with a transaction open 6 minutes) blocks 91 and 95,
+// Two chains: session 83 (AppScheduler, sleeping with a transaction open 6 minutes) blocks 91 and 95,
 // and 91 blocks 102; session 64, a SQL Agent job under SERIALIZABLE, has run one INSERT for 4 minutes and
 // blocks 70. The job's chain clears after the fourth read, so the watch shows "Cleared at"; killing 83
 // clears the other; turning READ COMMITTED SNAPSHOT on hides its button. Session 12 (a system session)
@@ -51,13 +51,13 @@ function tree(database: string): BlockingTree {
     heads.push(
       node({
         session: 83,
-        login: "granite",
+        login: "appsvc",
         host: "WMS-APP01",
-        program: "GraniteScheduler",
+        program: "AppScheduler",
         status: "sleeping",
         database,
-        statement: "UPDATE dbo.MasterItem SET LastCounted = GETDATE() WHERE MasterItemID = @id",
-        objectName: "dbo.Prescript_Packing_MasterItem",
+        statement: "UPDATE dbo.Item SET LastCounted = GETDATE() WHERE ItemID = @id",
+        objectName: "dbo.usp_Packing_Item",
         statementIsLast: true,
         openTran: 1,
         tranName: "user_transaction",
@@ -73,15 +73,15 @@ function tree(database: string): BlockingTree {
             blockedBy: 83,
             login: "scanner",
             host: "HH12",
-            program: "Granite Scanner",
+            program: "Scanner App",
             command: "UPDATE",
             database,
-            statement: "UPDATE dbo.MasterItem SET Qty = @q WHERE MasterItemID = @id",
+            statement: "UPDATE dbo.Item SET Qty = @q WHERE ItemID = @id",
             waitType: "LCK_M_U",
             waitMs: (300 + tick) * 1000,
             waitResource: "KEY: 7:72057594043236352 (8194443284a0)",
-            resource: "dbo.MasterItem (PK_MasterItem)",
-            resourceTable: "dbo.MasterItem",
+            resource: "dbo.Item (PK_Item)",
+            resourceTable: "dbo.Item",
             lockMode: "wants U, held X",
             openTran: 1,
             logBytes: 8192,
@@ -95,15 +95,15 @@ function tree(database: string): BlockingTree {
                 blockedBy: 91,
                 login: "scanner",
                 host: "HH07",
-                program: "Granite Scanner",
+                program: "Scanner App",
                 command: "SELECT",
                 database,
-                statement: "SELECT Qty FROM dbo.MasterItem WHERE MasterItemID = @id",
+                statement: "SELECT Qty FROM dbo.Item WHERE ItemID = @id",
                 waitType: "LCK_M_S",
                 waitMs: (120 + tick) * 1000,
                 waitResource: "KEY: 7:72057594043236352 (8194443284a0)",
-                resource: "dbo.MasterItem (PK_MasterItem)",
-                resourceTable: "dbo.MasterItem",
+                resource: "dbo.Item (PK_Item)",
+                resourceTable: "dbo.Item",
                 lockMode: "wants S, held U",
                 requestSeconds: 120 + tick,
               }),
@@ -117,12 +117,12 @@ function tree(database: string): BlockingTree {
             program: "Report Server",
             command: "SELECT",
             database,
-            statement: "SELECT * FROM dbo.MasterItem",
+            statement: "SELECT * FROM dbo.Item",
             waitType: "LCK_M_S",
             waitMs: (240 + tick) * 1000,
             waitResource: "KEY: 7:72057594043236352 (8194443284a0)",
-            resource: "dbo.MasterItem (PK_MasterItem)",
-            resourceTable: "dbo.MasterItem",
+            resource: "dbo.Item (PK_Item)",
+            resourceTable: "dbo.Item",
             lockMode: "wants S, held X",
             requestSeconds: 240 + tick,
           }),
@@ -156,9 +156,9 @@ function tree(database: string): BlockingTree {
           node({
             session: 70,
             blockedBy: 64,
-            login: "granite",
+            login: "appsvc",
             host: "WMS-APP02",
-            program: "Granite Integration",
+            program: "Integration Service",
             command: "UPDATE",
             database,
             statement: "UPDATE dbo.Stock SET Qty = Qty - 1 WHERE ItemID = @id",
@@ -189,8 +189,8 @@ function tree(database: string): BlockingTree {
   if (!killed83) {
     const h = heads[0]
     explain.push(
-      `Session 83 (GraniteScheduler on WMS-APP01) has held a lock on dbo.MasterItem for ${minutes(h.tranSeconds)} in a transaction that is still open and is doing nothing (sleeping); 3 sessions wait behind it, the longest for ${minutes(h.longestWaitSec)}.`,
-      `A sleeping session with an open transaction is usually an application that did not commit, or an SSMS window left open. Ask granite on WMS-APP01 to commit or close it; Kill session 83 ends it and undoes its work (the rollback can take up to ${minutes(h.tranSeconds)}).`,
+      `Session 83 (AppScheduler on WMS-APP01) has held a lock on dbo.Item for ${minutes(h.tranSeconds)} in a transaction that is still open and is doing nothing (sleeping); 3 sessions wait behind it, the longest for ${minutes(h.longestWaitSec)}.`,
+      `A sleeping session with an open transaction is usually an application that did not commit, or an SSMS window left open. Ask appsvc on WMS-APP01 to commit or close it; Kill session 83 ends it and undoes its work (the rollback can take up to ${minutes(h.tranSeconds)}).`,
     )
   }
   if (jobRunning) {
@@ -280,18 +280,18 @@ function killPreview(database: string, sessionId: string): FixPreview {
       {
         setting: `Session ${sessionId}`,
         current:
-          "sleeping; last ran dbo.Prescript_Packing_MasterItem: UPDATE dbo.MasterItem SET LastCounted = GETDATE() WHERE MasterItemID = @id",
+          "sleeping; last ran dbo.usp_Packing_Item: UPDATE dbo.Item SET LastCounted = GETDATE() WHERE ItemID = @id",
         target: "killed",
       },
     ],
     statement: `KILL ${sessionId};`,
     rollback: "",
     warnings: [
-      `Session ${sessionId}: login granite on WMS-APP01, program GraniteScheduler, database ${database}, sleeping. 3 sessions wait behind it.`,
+      `Session ${sessionId}: login appsvc on WMS-APP01, program AppScheduler, database ${database}, sleeping. 3 sessions wait behind it.`,
       "Its transaction has been open for 6 minutes and has written 120.0 MB of log.",
       "Its work is rolled back: everything that transaction changed is undone.",
       "The rollback takes about as long as the work did: up to about 6 minutes here, and the sessions behind it keep waiting until it ends.",
-      "Tell whoever owns it (granite on WMS-APP01) before you kill it.",
+      "Tell whoever owns it (appsvc on WMS-APP01) before you kill it.",
       "Needs the ALTER ANY CONNECTION permission (sysadmin or processadmin).",
     ],
     options: { sessionId, loginTime: "2026-11-03T08:14:00.000" },

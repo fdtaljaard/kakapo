@@ -10,7 +10,7 @@ import (
 func planForceFacts() PlanForceFacts {
 	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	return PlanForceFacts{
-		Database: "GraniteLive", ProductVersion: "16.0.4255.2", QueryStoreState: "READ_WRITE", PlanID: 12, Found: true, QueryID: 345,
+		Database: "WarehouseLive", ProductVersion: "16.0.4255.2", QueryStoreState: "READ_WRITE", PlanID: 12, Found: true, QueryID: 345,
 		QueryHash: "0x9F3A00112233AABB",
 		Plans: []QueryStorePlanFact{
 			{PlanID: 12, QueryID: 345, Runs: 10000, Duration: 10000 * 120000, LastRun: qPtime(now.Add(-26 * time.Hour))},
@@ -32,8 +32,8 @@ func TestForcePlanPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "EXEC [GraniteLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
-		p.Rollback != "EXEC [GraniteLive].sys.sp_query_store_unforce_plan @query_id = 345, @plan_id = 12;" {
+	if p.Statement != "EXEC [WarehouseLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
+		p.Rollback != "EXEC [WarehouseLive].sys.sp_query_store_unforce_plan @query_id = 345, @plan_id = 12;" {
 		t.Errorf("statements %q / %q", p.Statement, p.Rollback)
 	}
 	if len(p.Changes) != 1 || p.Changes[0].Setting != "Plan for query 345" || p.Changes[0].Current != "plan 15 in use, not forced, avg 840 ms" ||
@@ -42,7 +42,7 @@ func TestForcePlanPreview(t *testing.T) {
 	}
 	w := strings.Join(p.Warnings, "\n")
 	for _, s := range []string{"Force plan 12 for this query: avg 120 ms against 840 ms for the plan now in use (plan 15).",
-		"Forcing hides regressions", "Stop forcing it when the code", "need ALTER on the database GraniteLive"} {
+		"Forcing hides regressions", "Stop forcing it when the code", "need ALTER on the database WarehouseLive"} {
 		if !strings.Contains(w, s) {
 			t.Errorf("warnings lack %q:\n%s", s, w)
 		}
@@ -62,7 +62,7 @@ func TestForcePlanPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	w = strings.Join(p.Warnings, "\n")
-	if p.Rollback != "EXEC [GraniteLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
+	if p.Rollback != "EXEC [WarehouseLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
 		p.Changes[0].Current != "plan 12 forced, avg 120 ms" ||
 		!strings.Contains(w, "Plan 15 is not faster than plan 12") || !strings.Contains(w, "ran only 4 times") ||
 		!strings.Contains(w, "Forcing plan 15 has failed before (2 times, no_plan)") {
@@ -81,7 +81,7 @@ func TestForcePlanPreview(t *testing.T) {
 	f = planForceFacts()
 	f.QueryStoreState = "OFF"
 	_, _, err = BuildPlanForceFix(FixForcePlan, f)
-	refusal(t, err, false, "Query Store is off on GraniteLive")
+	refusal(t, err, false, "Query Store is off on WarehouseLive")
 
 	// Read-only Query Store: allowed, with its warning.
 	f = planForceFacts()
@@ -101,8 +101,8 @@ func TestUnforcePlanPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "EXEC [GraniteLive].sys.sp_query_store_unforce_plan @query_id = 345, @plan_id = 12;" ||
-		p.Rollback != "EXEC [GraniteLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
+	if p.Statement != "EXEC [WarehouseLive].sys.sp_query_store_unforce_plan @query_id = 345, @plan_id = 12;" ||
+		p.Rollback != "EXEC [WarehouseLive].sys.sp_query_store_force_plan @query_id = 345, @plan_id = 12;" ||
 		fix.Current != "plan 12 forced, avg 120 ms" || fix.Target != "no plan forced" ||
 		!strings.Contains(strings.Join(p.Warnings, " "), "SQL Server goes back to choosing the plan itself") {
 		t.Errorf("unforce %+v %+v", p, fix)
@@ -116,7 +116,7 @@ func TestUnforcePlanPreview(t *testing.T) {
 	if after, ok := PlanForceReadBack(FixForcePlan, planForceFacts()); ok || after != "plan 12 not forced" {
 		t.Errorf("force read back %q %v", after, ok)
 	}
-	if d := PlanForceDescription(FixUnforcePlan, f, fix); d != "Stopped forcing plan 12 for query 345 (0x9F3A00112233AABB) in GraniteLive: plan 12 forced, avg 120 ms -> no plan forced" {
+	if d := PlanForceDescription(FixUnforcePlan, f, fix); d != "Stopped forcing plan 12 for query 345 (0x9F3A00112233AABB) in WarehouseLive: plan 12 forced, avg 120 ms -> no plan forced" {
 		t.Errorf("description %q", d)
 	}
 }
@@ -125,7 +125,7 @@ func TestEvictPlanPreview(t *testing.T) {
 	created := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
 	f := CachedPlanFacts{Handle: "0x06000500AABBCCDDEEFF00112233445566778899", Found: true, ObjectType: "Proc", ObjectName: "dbo.PickList",
 		UseCount: 300, Created: &created}
-	p, fix, err := BuildEvictPlanFix(f, "GraniteLive", "16.0.4255.2")
+	p, fix, err := BuildEvictPlanFix(f, "WarehouseLive", "16.0.4255.2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestEvictPlanPreview(t *testing.T) {
 			t.Errorf("warnings lack %q:\n%s", s, w)
 		}
 	}
-	_, _, err = BuildEvictPlanFix(CachedPlanFacts{Handle: f.Handle}, "GraniteLive", "")
+	_, _, err = BuildEvictPlanFix(CachedPlanFacts{Handle: f.Handle}, "WarehouseLive", "")
 	refusal(t, err, false, "no longer in the plan cache")
 	if after, ok := EvictPlanReadBack(CachedPlanFacts{}); !ok || after != "removed from the plan cache" {
 		t.Errorf("read back %q", after)
@@ -152,16 +152,16 @@ func TestEvictPlanPreview(t *testing.T) {
 
 func TestUpdateTableStatisticsPreview(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	f := TableStatsFacts{Database: "GraniteLive", Schema: "dbo", Table: "TrackingEntity", Found: true, Rows: 4200000, Stats: 5,
+	f := TableStatsFacts{Database: "WarehouseLive", Schema: "dbo", Table: "StockUnit", Found: true, Rows: 4200000, Stats: 5,
 		OldestUpdate: qPtime(now.Add(-31 * 24 * time.Hour)), MaxModPct: 48, ServerNow: now}
 	p, fix, err := BuildTableStatsFix(f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "UPDATE STATISTICS [dbo].[TrackingEntity] WITH FULLSCAN;" || p.Rollback != "" ||
-		p.Changes[0].Setting != "Statistics on dbo.TrackingEntity" ||
+	if p.Statement != "UPDATE STATISTICS [dbo].[StockUnit] WITH FULLSCAN;" || p.Rollback != "" ||
+		p.Changes[0].Setting != "Statistics on dbo.StockUnit" ||
 		p.Changes[0].Current != "5 statistics, 4.2 M rows, oldest updated 2026-10-03 (31 days ago), 48% of rows changed" ||
-		p.Changes[0].Target != "updated now, full scan" || fix.Options["table"] != "[dbo].[TrackingEntity]" {
+		p.Changes[0].Target != "updated now, full scan" || fix.Options["table"] != "[dbo].[StockUnit]" {
 		t.Errorf("preview %+v", p)
 	}
 	w := strings.Join(p.Warnings, "\n")
@@ -177,7 +177,7 @@ func TestUpdateTableStatisticsPreview(t *testing.T) {
 	big := f
 	big.Rows = 25_000_000
 	p, fix, _ = BuildTableStatsFix(big)
-	if p.Statement != "UPDATE STATISTICS [dbo].[TrackingEntity] WITH SAMPLE 25 PERCENT;" || fix.Target != "updated now, 25% sample" ||
+	if p.Statement != "UPDATE STATISTICS [dbo].[StockUnit] WITH SAMPLE 25 PERCENT;" || fix.Target != "updated now, 25% sample" ||
 		!strings.Contains(strings.Join(p.Warnings, " "), "25% sample") || TableStatsTimeout(big.Rows) != 30*time.Minute {
 		t.Errorf("big %+v", p)
 	}
@@ -189,9 +189,9 @@ func TestUpdateTableStatisticsPreview(t *testing.T) {
 		t.Errorf("small %+v", p)
 	}
 
-	_, _, err = BuildTableStatsFix(TableStatsFacts{Database: "GraniteLive", Schema: "dbo", Table: "Nope"})
-	refusal(t, err, false, "there is no table dbo.Nope in GraniteLive")
-	_, _, err = BuildTableStatsFix(TableStatsFacts{Database: "GraniteLive", Schema: "dbo", Table: "Empty", Found: true})
+	_, _, err = BuildTableStatsFix(TableStatsFacts{Database: "WarehouseLive", Schema: "dbo", Table: "Nope"})
+	refusal(t, err, false, "there is no table dbo.Nope in WarehouseLive")
+	_, _, err = BuildTableStatsFix(TableStatsFacts{Database: "WarehouseLive", Schema: "dbo", Table: "Empty", Found: true})
 	refusal(t, err, false, "has no statistics yet")
 
 	// Read back: every statistic updated after the update started.
@@ -203,7 +203,7 @@ func TestUpdateTableStatisticsPreview(t *testing.T) {
 	if _, ok := TableStatsReadBack(f, now); ok {
 		t.Error("stale statistics read back as verified")
 	}
-	if d := TableStatsDescription(f, p.Statement); !strings.HasPrefix(d, "Updated statistics on dbo.TrackingEntity (5 statistics, 4.2 M rows") || !strings.HasSuffix(d, "full scan") {
+	if d := TableStatsDescription(f, p.Statement); !strings.HasPrefix(d, "Updated statistics on dbo.StockUnit (5 statistics, 4.2 M rows") || !strings.HasSuffix(d, "full scan") {
 		t.Errorf("description %q", d)
 	}
 }
@@ -224,7 +224,7 @@ func TestQueryFixOptions(t *testing.T) {
 		refusal(t, err, true, "planHandle")
 	}
 	for in, want := range map[string][2]string{
-		"[dbo].[TrackingEntity]": {"dbo", "TrackingEntity"}, "dbo.Pick": {"dbo", "Pick"}, "Pick": {"dbo", "Pick"},
+		"[dbo].[StockUnit]": {"dbo", "StockUnit"}, "dbo.Pick": {"dbo", "Pick"}, "Pick": {"dbo", "Pick"},
 		"[we.ird].[a]]b]": {"we.ird", "a]b"}, " sales . Order ": {"sales", "Order"},
 	} {
 		s, tb, err := ParseTableOption(in)

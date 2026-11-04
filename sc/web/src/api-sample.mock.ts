@@ -19,11 +19,11 @@ function busySample(database: string, seconds: number): PerfSample {
     elapsedSeconds: seconds,
     serverName: "WMS-SQL01",
     verdict:
-      "Session 83 (GraniteScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.Prescript_Packing_MasterItem @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it.",
+      "Session 83 (AppScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.usp_Packing_Item @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it.",
     lines: [
       {
         area: "blocking",
-        text: "Session 83 (GraniteScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.Prescript_Packing_MasterItem @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it.",
+        text: "Session 83 (AppScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.usp_Packing_Item @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it.",
       },
       {
         area: "waits",
@@ -74,11 +74,11 @@ function busySample(database: string, seconds: number): PerfSample {
           blocked: 14,
           longestSec: 390,
           database,
-          login: "granite",
+          login: "appsvc",
           host: "WMS-APP01",
-          program: "GraniteScheduler",
+          program: "AppScheduler",
           status: "sleeping",
-          statement: "EXEC dbo.Prescript_Packing_MasterItem @id = 5",
+          statement: "EXEC dbo.usp_Packing_Item @id = 5",
           bothEnds: true,
         },
       ],

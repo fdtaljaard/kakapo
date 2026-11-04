@@ -24,8 +24,8 @@ func TestServerAndDatabaseDecodesName(t *testing.T) {
 		}
 	})
 	cases := map[string]string{
-		"/api/servers/3/databases/GraniteLive/query-store/preview":      "GraniteLive",
-		"/api/servers/3/databases/Granite%20Live/query-store/preview":   "Granite Live",
+		"/api/servers/3/databases/WarehouseLive/query-store/preview":    "WarehouseLive",
+		"/api/servers/3/databases/Warehouse%20Live/query-store/preview": "Warehouse Live",
 		"/api/servers/3/databases/a%2Fb%5D%25c/query-store/preview":     "a/b]%c",
 		"/api/servers/3/databases/%5BWMS%5D%20Test/query-store/preview": "[WMS] Test",
 		"/api/servers/3/databases/caf%C3%A9%2520x/query-store/preview":  "café%20x",

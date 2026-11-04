@@ -55,11 +55,11 @@ func TestCheckdbRoomRoute(t *testing.T) {
 		path string
 		code int
 	}{
-		{path(99, "GraniteLive"), 404}, // unknown server
-		{path(id, "%20"), 400},         // empty database name
+		{path(99, "WarehouseLive"), 404}, // unknown server
+		{path(id, "%20"), 400},           // empty database name
 		{"/api/servers/abc/databases/x/cards/storage/checkdb-room", 400},
-		{path(id, "GraniteLive"), 502}, // a SQL login with no stored password cannot connect
-		{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/cards/backups/checkdb-room", id), 404}, // only storage has it
+		{path(id, "WarehouseLive"), 502}, // a SQL login with no stored password cannot connect
+		{fmt.Sprintf("/api/servers/%d/databases/WarehouseLive/cards/backups/checkdb-room", id), 404}, // only storage has it
 	} {
 		rec := postPath(h, c.path)
 		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
@@ -67,7 +67,7 @@ func TestCheckdbRoomRoute(t *testing.T) {
 		}
 	}
 	// GET is not the route: it reads as an unknown card.
-	if rec := getPath(h, path(id, "GraniteLive")); rec.Code != 404 && rec.Code != 405 {
+	if rec := getPath(h, path(id, "WarehouseLive")); rec.Code != 404 && rec.Code != 405 {
 		t.Errorf("GET checkdb-room: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -82,11 +82,11 @@ func TestDeadlocksRoute(t *testing.T) {
 		path string
 		code int
 	}{
-		{path(99, "GraniteLive"), 404}, // unknown server
-		{path(id, "%20"), 400},         // empty database name
+		{path(99, "WarehouseLive"), 404}, // unknown server
+		{path(id, "%20"), 400},           // empty database name
 		{"/api/servers/abc/databases/x/cards/performance/deadlocks", 400},
-		{path(id, "GraniteLive"), 502},                                                          // a SQL login with no stored password cannot connect
-		{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/cards/storage/deadlocks", id), 404}, // only performance has it
+		{path(id, "WarehouseLive"), 502}, // a SQL login with no stored password cannot connect
+		{fmt.Sprintf("/api/servers/%d/databases/WarehouseLive/cards/storage/deadlocks", id), 404}, // only performance has it
 	} {
 		rec := postPath(h, c.path)
 		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
@@ -94,7 +94,7 @@ func TestDeadlocksRoute(t *testing.T) {
 		}
 	}
 	// GET is not the route: it reads as an unknown card.
-	if rec := getPath(h, path(id, "GraniteLive")); rec.Code != 404 && rec.Code != 405 {
+	if rec := getPath(h, path(id, "WarehouseLive")); rec.Code != 404 && rec.Code != 405 {
 		t.Errorf("GET deadlocks: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -110,25 +110,25 @@ func TestCardDetailRoute(t *testing.T) {
 		path string
 		code int
 	}{
-		{path(id, "GraniteLive", "nothing"), 404},   // unknown card id, before any dialling
-		{path(id, "GraniteLive", "Backups"), 404},   // ids are lower case
-		{path(99, "GraniteLive", "backups"), 404},   // unknown server
-		{path(id, "GraniteLive", ""), 404},          // no card: not a route
-		{path(id, "GraniteLive", "backups/x"), 404}, // not a route
-		{path(id, "%20", "backups"), 400},           // empty database name
+		{path(id, "WarehouseLive", "nothing"), 404},   // unknown card id, before any dialling
+		{path(id, "WarehouseLive", "Backups"), 404},   // ids are lower case
+		{path(99, "WarehouseLive", "backups"), 404},   // unknown server
+		{path(id, "WarehouseLive", ""), 404},          // no card: not a route
+		{path(id, "WarehouseLive", "backups/x"), 404}, // not a route
+		{path(id, "%20", "backups"), 400},             // empty database name
 		{"/api/servers/abc/databases/x/cards/backups", 400},
-		{path(id, "GraniteLive", "backups"), 502}, // a SQL login with no stored password cannot connect
-		{path(id, "GraniteLive", "setup"), 502},
-		{path(id, "GraniteLive", "storage"), 502},
-		{path(id, "GraniteLive", "upkeep"), 502},
-		{path(id, "GraniteLive", "performance"), 502},
+		{path(id, "WarehouseLive", "backups"), 502}, // a SQL login with no stored password cannot connect
+		{path(id, "WarehouseLive", "setup"), 502},
+		{path(id, "WarehouseLive", "storage"), 502},
+		{path(id, "WarehouseLive", "upkeep"), 502},
+		{path(id, "WarehouseLive", "performance"), 502},
 	} {
 		rec := getPath(h, c.path)
 		if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
 			t.Errorf("GET %s: %d %s, want %d", c.path, rec.Code, rec.Body.String(), c.code)
 		}
 	}
-	if rec := getPath(h, path(id, "GraniteLive", "nothing")); !strings.Contains(rec.Body.String(), `there is no card named \"nothing\"`) {
+	if rec := getPath(h, path(id, "WarehouseLive", "nothing")); !strings.Contains(rec.Body.String(), `there is no card named \"nothing\"`) {
 		t.Errorf("unknown card message: %s", rec.Body.String())
 	}
 }
@@ -241,17 +241,17 @@ func TestFixRoutes(t *testing.T) {
 			path string
 			code int
 		}{
-			{path(id, "GraniteLive", "drop-everything", action), 404}, // unknown fix id, before any dialling
-			{path(id, "GraniteLive", "Auto-Close", action), 404},      // ids are lower case
-			{path(99, "GraniteLive", "auto-close", action), 404},      // unknown server
-			{path(99, "GraniteLive", "query-store", action), 404},
+			{path(id, "WarehouseLive", "drop-everything", action), 404}, // unknown fix id, before any dialling
+			{path(id, "WarehouseLive", "Auto-Close", action), 404},      // ids are lower case
+			{path(99, "WarehouseLive", "auto-close", action), 404},      // unknown server
+			{path(99, "WarehouseLive", "query-store", action), 404},
 			{path(id, "%20", "auto-close", action), 400}, // empty database name
 			{fmt.Sprintf("/api/servers/abc/databases/x/fixes/auto-close/%s", action), 400},
-			{path(id, "GraniteLive", "auto-close", action), 502}, // a SQL login with no stored password cannot connect
-			{path(id, "GraniteLive", "max-server-memory", action), 502},
-			{path(id, "GraniteLive", "query-store", action), 502},
-			{path(99, "GraniteLive", "update-statistics", action), 404},
-			{path(id, "GraniteLive", "update-statistics", action), 502},
+			{path(id, "WarehouseLive", "auto-close", action), 502}, // a SQL login with no stored password cannot connect
+			{path(id, "WarehouseLive", "max-server-memory", action), 502},
+			{path(id, "WarehouseLive", "query-store", action), 502},
+			{path(99, "WarehouseLive", "update-statistics", action), 404},
+			{path(id, "WarehouseLive", "update-statistics", action), 502},
 		} {
 			rec := postPath(h, c.path)
 			if rec.Code != c.code || !strings.Contains(rec.Body.String(), `"error"`) {
@@ -259,16 +259,16 @@ func TestFixRoutes(t *testing.T) {
 			}
 		}
 	}
-	if rec := postPath(h, path(id, "GraniteLive", "nothing", "preview")); !strings.Contains(rec.Body.String(), `there is no fix named \"nothing\"`) {
+	if rec := postPath(h, path(id, "WarehouseLive", "nothing", "preview")); !strings.Contains(rec.Body.String(), `there is no fix named \"nothing\"`) {
 		t.Errorf("unknown fix message: %s", rec.Body.String())
 	}
 	// Not routes: GET, no action, an unknown action.
-	for _, p := range []string{path(id, "GraniteLive", "auto-close", "preview"), path(id, "GraniteLive", "auto-close", "run")} {
+	for _, p := range []string{path(id, "WarehouseLive", "auto-close", "preview"), path(id, "WarehouseLive", "auto-close", "run")} {
 		if rec := getPath(h, p); rec.Code != 404 && rec.Code != 405 {
 			t.Errorf("GET %s: %d %s", p, rec.Code, rec.Body.String())
 		}
 	}
-	for _, p := range []string{fmt.Sprintf("/api/servers/%d/databases/GraniteLive/fixes/auto-close", id), path(id, "GraniteLive", "auto-close", "run")} {
+	for _, p := range []string{fmt.Sprintf("/api/servers/%d/databases/WarehouseLive/fixes/auto-close", id), path(id, "WarehouseLive", "auto-close", "run")} {
 		if rec := postPath(h, p); rec.Code != 404 {
 			t.Errorf("POST %s: %d %s", p, rec.Code, rec.Body.String())
 		}

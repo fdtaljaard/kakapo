@@ -31,7 +31,7 @@ func TestListChangesAndUpdateServerTested(t *testing.T) {
 	rows := []struct {
 		server int64
 		db     string
-	}{{a.ID, "GraniteLive"}, {a.ID, "GraniteLive"}, {b.ID, "GraniteLive"}, {a.ID, "Other"}, {a.ID, "GraniteLive"}}
+	}{{a.ID, "WarehouseLive"}, {a.ID, "WarehouseLive"}, {b.ID, "WarehouseLive"}, {a.ID, "Other"}, {a.ID, "WarehouseLive"}}
 	for i, r := range rows {
 		c := domain.Change{ServerID: r.server, Database: r.db, ChangedAt: base.Add(time.Duration(i) * time.Hour), Object: "Query Store",
 			ChangeType: "SETTING", Description: "d", Statement: "s"}
@@ -43,21 +43,21 @@ func TestListChangesAndUpdateServerTested(t *testing.T) {
 		}
 	}
 
-	// Only server a, only GraniteLive, newest first.
-	got, err := st.ListChanges(ctx, a.ID, "GraniteLive", 10)
+	// Only server a, only WarehouseLive, newest first.
+	got, err := st.ListChanges(ctx, a.ID, "WarehouseLive", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 3 || got[0].ID != 5 || got[1].ID != 2 || got[2].ID != 1 {
-		t.Fatalf("newest first for server a, GraniteLive: %+v", got)
+		t.Fatalf("newest first for server a, WarehouseLive: %+v", got)
 	}
-	if got[2].Database != "GraniteLive" || got[2].Result != "On" || !got[2].ChangedAt.Equal(base) || got[2].ChangedAt.Location() != time.UTC {
+	if got[2].Database != "WarehouseLive" || got[2].Result != "On" || !got[2].ChangedAt.Equal(base) || got[2].ChangedAt.Location() != time.UTC {
 		t.Errorf("row 1: %+v", got[2])
 	}
 	if got[0].Result != "" {
 		t.Errorf("null result comes back empty: %+v", got[0])
 	}
-	if got, _ := st.ListChanges(ctx, a.ID, "GraniteLive", 2); len(got) != 2 {
+	if got, _ := st.ListChanges(ctx, a.ID, "WarehouseLive", 2); len(got) != 2 {
 		t.Errorf("limit 2: %d rows", len(got))
 	}
 	if got, _ := st.ListChanges(ctx, a.ID, "Other", 10); len(got) != 1 || got[0].ID != 4 {
@@ -66,7 +66,7 @@ func TestListChangesAndUpdateServerTested(t *testing.T) {
 	for _, c := range []struct {
 		server int64
 		db     string
-	}{{99, "GraniteLive"}, {a.ID, "Nope"}, {a.ID, "granitelive"}} {
+	}{{99, "WarehouseLive"}, {a.ID, "Nope"}, {a.ID, "warehouselive"}} {
 		if got, _ := st.ListChanges(ctx, c.server, c.db, 10); got == nil || len(got) != 0 {
 			t.Errorf("server %d database %q: %v", c.server, c.db, got)
 		}
@@ -100,14 +100,14 @@ func TestUpdateServerDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := st.UpdateServerDatabase(ctx, a.ID, "GraniteLive")
+	srv, err := st.UpdateServerDatabase(ctx, a.ID, "WarehouseLive")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if srv.ID != a.ID || srv.Database != "GraniteLive" || srv.Name != "a" || srv.LastVersion != "16.0" {
+	if srv.ID != a.ID || srv.Database != "WarehouseLive" || srv.Name != "a" || srv.LastVersion != "16.0" {
 		t.Errorf("returned server: %+v", srv)
 	}
-	if got, _ := st.GetServer(ctx, a.ID); got.Database != "GraniteLive" {
+	if got, _ := st.GetServer(ctx, a.ID); got.Database != "WarehouseLive" {
 		t.Errorf("stored server: %+v", got)
 	}
 	if srv, _ = st.UpdateServerDatabase(ctx, a.ID, "Other DB"); srv.Database != "Other DB" {
@@ -126,7 +126,7 @@ func TestUpdateServer(t *testing.T) {
 	}
 	defer st.Close()
 
-	a, err := st.InsertServer(ctx, domain.ServerInput{Name: "a", Host: "a", Auth: domain.AuthSQL, Username: "sa", Database: "GraniteLive"},
+	a, err := st.InsertServer(ctx, domain.ServerInput{Name: "a", Host: "a", Auth: domain.AuthSQL, Username: "sa", Database: "WarehouseLive"},
 		domain.ConnectionInfo{ProductVersion: "15.0", Edition: "Express"})
 	if err != nil {
 		t.Fatal(err)

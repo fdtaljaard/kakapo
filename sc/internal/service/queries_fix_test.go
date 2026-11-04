@@ -29,8 +29,8 @@ func TestQueryFixErrorKinds(t *testing.T) {
 	if err := qFixError(err); !errors.As(err, &se) || se.Kind != KindInvalid {
 		t.Errorf("invalid option: %v", err)
 	}
-	_, _, err = domain.BuildPlanForceFix(domain.FixForcePlan, domain.PlanForceFacts{Database: "GraniteLive", QueryStoreState: "OFF"})
-	if err := qFixError(err); !errors.As(err, &se) || se.Kind != KindNotFound || se.Msg != "nothing to apply: Query Store is off on GraniteLive: plans can only be forced while it is on. Turn it on first (the Setup card)." {
+	_, _, err = domain.BuildPlanForceFix(domain.FixForcePlan, domain.PlanForceFacts{Database: "WarehouseLive", QueryStoreState: "OFF"})
+	if err := qFixError(err); !errors.As(err, &se) || se.Kind != KindNotFound || se.Msg != "nothing to apply: Query Store is off on WarehouseLive: plans can only be forced while it is on. Turn it on first (the Setup card)." {
 		t.Errorf("refusal: %v", err)
 	}
 	other := errors.New("boom")
@@ -49,7 +49,7 @@ func TestQueryDetailRefusesBeforeReading(t *testing.T) {
 	defer st.Close()
 	svc := New(st, fakeCreds{})
 	var se *Error
-	if _, err := svc.QueryDetail(ctx, 42, "GraniteLive", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindNotFound {
+	if _, err := svc.QueryDetail(ctx, 42, "WarehouseLive", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("unknown server: want KindNotFound, got %v", err)
 	}
 	srv, err := st.InsertServer(ctx, domain.ServerInput{Name: "client", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"},
@@ -57,18 +57,18 @@ func TestQueryDetailRefusesBeforeReading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.QueryDetail(ctx, srv.ID, "GraniteLive", "0x9F3A"); !errors.As(err, &se) || se.Kind != KindInvalid {
+	if _, err := svc.QueryDetail(ctx, srv.ID, "WarehouseLive", "0x9F3A"); !errors.As(err, &se) || se.Kind != KindInvalid {
 		t.Errorf("bad hash: want KindInvalid, got %v", err)
 	}
 	if _, err := svc.QueryDetail(ctx, srv.ID, " ", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("no database: want KindNotFound, got %v", err)
 	}
-	if _, err := svc.QueryDetail(ctx, srv.ID, "GraniteLive", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindUnreachable {
+	if _, err := svc.QueryDetail(ctx, srv.ID, "WarehouseLive", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindUnreachable {
 		t.Errorf("no stored password: want KindUnreachable, got %v", err)
 	}
 	// The fixes refuse at the dial too, before anything is read.
 	for _, id := range []string{domain.FixForcePlan, domain.FixEvictPlan, domain.FixUpdateStatisticsTable} {
-		if _, err := svc.PreviewFixWithOptions(ctx, srv.ID, "GraniteLive", id, map[string]string{"planId": "12"}); !errors.As(err, &se) || se.Kind != KindUnreachable {
+		if _, err := svc.PreviewFixWithOptions(ctx, srv.ID, "WarehouseLive", id, map[string]string{"planId": "12"}); !errors.As(err, &se) || se.Kind != KindUnreachable {
 			t.Errorf("%s: want KindUnreachable, got %v", id, err)
 		}
 	}

@@ -46,8 +46,8 @@ func TestProgressRow(t *testing.T) {
 	sast := time.FixedZone("SAST", 2*3600)
 	started := sql.NullTime{Valid: true, Time: time.Date(2026, 11, 4, 10, 0, 0, 0, sast)}
 	p := progressRow(Progress{SessionID: 71, Command: "DBCC TABLE CHECK   ", Percent: 42.5, RemainingSeconds: -1},
-		"GraniteLive", "", domain.BlockingAppName, started)
-	if p.Command != "DBCC TABLE CHECK" || p.Database != "GraniteLive" || !p.Mine || p.RemainingSeconds != 0 ||
+		"WarehouseLive", "", domain.BlockingAppName, started)
+	if p.Command != "DBCC TABLE CHECK" || p.Database != "WarehouseLive" || !p.Mine || p.RemainingSeconds != 0 ||
 		!p.StartedAt.Equal(started.Time) || p.StartedAt.Location() != time.UTC {
 		t.Errorf("row %+v", p)
 	}

@@ -34,9 +34,9 @@ func TestBuildFixOffOn2016(t *testing.T) {
 	o := QueryStoreOptions{ActualState: "OFF", DesiredState: "OFF", MaxStorageMb: 100, CaptureMode: "ALL",
 		IntervalLengthMinutes: 60, StaleQueryThresholdDays: 30, FlushIntervalSeconds: 900, MaxPlansPerQuery: 200,
 		SizeBasedCleanupMode: "OFF"}
-	p := BuildQueryStoreFix(o, 13, "GraniteLive")
+	p := BuildQueryStoreFix(o, 13, "WarehouseLive")
 
-	want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE = ON (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = AUTO, " +
+	want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE = ON (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = AUTO, " +
 		"MAX_STORAGE_SIZE_MB = 2048, SIZE_BASED_CLEANUP_MODE = AUTO, INTERVAL_LENGTH_MINUTES = 15, " +
 		"CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30), DATA_FLUSH_INTERVAL_SECONDS = 900, MAX_PLANS_PER_QUERY = 200);"
 	if p.Statement != want {
@@ -48,8 +48,8 @@ func TestBuildFixOffOn2016(t *testing.T) {
 	if len(p.Changes) != 8 {
 		t.Errorf("off lists every target setting but wait stats: got %v", settings(p.Changes))
 	}
-	wantRollback := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (QUERY_CAPTURE_MODE = ALL, MAX_STORAGE_SIZE_MB = 100, " +
-		"SIZE_BASED_CLEANUP_MODE = OFF, INTERVAL_LENGTH_MINUTES = 60);\nALTER DATABASE [GraniteLive] SET QUERY_STORE = OFF;"
+	wantRollback := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (QUERY_CAPTURE_MODE = ALL, MAX_STORAGE_SIZE_MB = 100, " +
+		"SIZE_BASED_CLEANUP_MODE = OFF, INTERVAL_LENGTH_MINUTES = 60);\nALTER DATABASE [WarehouseLive] SET QUERY_STORE = OFF;"
 	if p.Rollback != wantRollback {
 		t.Errorf("rollback\n got %s\nwant %s", p.Rollback, wantRollback)
 	}
@@ -61,9 +61,9 @@ func TestBuildFixOffOn2016(t *testing.T) {
 func TestBuildFixOffOn2022(t *testing.T) {
 	o := defaults2022()
 	o.ActualState, o.DesiredState = "OFF", "OFF"
-	p := BuildQueryStoreFix(o, 16, "GraniteLive")
+	p := BuildQueryStoreFix(o, 16, "WarehouseLive")
 
-	want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE = ON (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = AUTO, " +
+	want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE = ON (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = AUTO, " +
 		"MAX_STORAGE_SIZE_MB = 2048, SIZE_BASED_CLEANUP_MODE = AUTO, INTERVAL_LENGTH_MINUTES = 15, " +
 		"CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30), DATA_FLUSH_INTERVAL_SECONDS = 900, MAX_PLANS_PER_QUERY = 200, " +
 		"WAIT_STATS_CAPTURE_MODE = ON);"
@@ -84,12 +84,12 @@ func TestBuildFixOffOn2022(t *testing.T) {
 func TestBuildFixOnWithDefaultInterval(t *testing.T) {
 	o := onTarget()
 	o.IntervalLengthMinutes = 60
-	p := BuildQueryStoreFix(o, 16, "GraniteLive")
+	p := BuildQueryStoreFix(o, 16, "WarehouseLive")
 
-	if want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (INTERVAL_LENGTH_MINUTES = 15);"; p.Statement != want {
+	if want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (INTERVAL_LENGTH_MINUTES = 15);"; p.Statement != want {
 		t.Errorf("statement\n got %s\nwant %s", p.Statement, want)
 	}
-	if want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (INTERVAL_LENGTH_MINUTES = 60);"; p.Rollback != want {
+	if want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (INTERVAL_LENGTH_MINUTES = 60);"; p.Rollback != want {
 		t.Errorf("rollback\n got %s\nwant %s", p.Rollback, want)
 	}
 	if len(p.Changes) != 1 || p.Changes[0] != (Drift{"INTERVAL_LENGTH_MINUTES", "60", "15"}) {
@@ -100,8 +100,8 @@ func TestBuildFixOnWithDefaultInterval(t *testing.T) {
 	}
 
 	// The 2022 defaults drift in two places: the storage limit and the interval.
-	p = BuildQueryStoreFix(defaults2022(), 16, "GraniteLive")
-	if want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (MAX_STORAGE_SIZE_MB = 2048, INTERVAL_LENGTH_MINUTES = 15);"; p.Statement != want {
+	p = BuildQueryStoreFix(defaults2022(), 16, "WarehouseLive")
+	if want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (MAX_STORAGE_SIZE_MB = 2048, INTERVAL_LENGTH_MINUTES = 15);"; p.Statement != want {
 		t.Errorf("statement\n got %s\nwant %s", p.Statement, want)
 	}
 	if !hasWarning(p, "2 GB") {
@@ -113,7 +113,7 @@ func TestBuildFixOnWithDefaultInterval(t *testing.T) {
 }
 
 func TestBuildFixOnAndMatching(t *testing.T) {
-	p := BuildQueryStoreFix(onTarget(), 16, "GraniteLive")
+	p := BuildQueryStoreFix(onTarget(), 16, "WarehouseLive")
 	if p.Statement != "" || p.Rollback != "" || len(p.Changes) != 0 || p.Changes == nil {
 		t.Errorf("want nothing to do, got %+v", p)
 	}
@@ -129,12 +129,12 @@ func TestBuildFixOnAndMatching(t *testing.T) {
 func TestBuildFixReadOnlyStorageFull(t *testing.T) {
 	o := onTarget()
 	o.ActualState, o.ReadonlyReason, o.MaxStorageMb, o.CurrentStorageMb = "READ_ONLY", 65536, 100, 100
-	p := BuildQueryStoreFix(o, 16, "GraniteLive")
+	p := BuildQueryStoreFix(o, 16, "WarehouseLive")
 
-	if want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (OPERATION_MODE = READ_WRITE, MAX_STORAGE_SIZE_MB = 2048);"; p.Statement != want {
+	if want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (OPERATION_MODE = READ_WRITE, MAX_STORAGE_SIZE_MB = 2048);"; p.Statement != want {
 		t.Errorf("statement\n got %s\nwant %s", p.Statement, want)
 	}
-	if want := "ALTER DATABASE [GraniteLive] SET QUERY_STORE (OPERATION_MODE = READ_ONLY, MAX_STORAGE_SIZE_MB = 100);"; p.Rollback != want {
+	if want := "ALTER DATABASE [WarehouseLive] SET QUERY_STORE (OPERATION_MODE = READ_ONLY, MAX_STORAGE_SIZE_MB = 100);"; p.Rollback != want {
 		t.Errorf("rollback\n got %s\nwant %s", p.Rollback, want)
 	}
 	c := Compare(o, 16)
@@ -150,7 +150,7 @@ func TestBiggerStorageLimitIsKept(t *testing.T) {
 		t.Errorf("a limit above the target should count as matching: %+v", c)
 	}
 	o.ActualState = "OFF"
-	p := BuildQueryStoreFix(o, 16, "GraniteLive")
+	p := BuildQueryStoreFix(o, 16, "WarehouseLive")
 	if strings.Contains(p.Statement, "MAX_STORAGE_SIZE_MB") {
 		t.Errorf("turning on must not shrink a bigger limit: %s", p.Statement)
 	}
@@ -218,8 +218,8 @@ func TestNewQueryStoreStatus(t *testing.T) {
 }
 
 func TestChangeDescription(t *testing.T) {
-	got := ChangeDescription("GraniteLive", []Drift{{"INTERVAL_LENGTH_MINUTES", "60", "15"}, {"MAX_PLANS_PER_QUERY", "200", "200"}})
-	if want := "Query Store on GraniteLive: INTERVAL_LENGTH_MINUTES 60 -> 15"; got != want {
+	got := ChangeDescription("WarehouseLive", []Drift{{"INTERVAL_LENGTH_MINUTES", "60", "15"}, {"MAX_PLANS_PER_QUERY", "200", "200"}})
+	if want := "Query Store on WarehouseLive: INTERVAL_LENGTH_MINUTES 60 -> 15"; got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
 }

@@ -17,7 +17,7 @@ const deadlockEventXML = `<event name="xml_deadlock_report" package="sqlserver" 
 <data name="xml_report"><type name="xml" package="package0"></type><value><deadlock>
  <victim-list><victimProcess id="process2"/></victim-list>
  <process-list>
-  <process id="process1" taskpriority="0" lockMode="U" currentdb="7" currentdbname="Laylax" loginname="granite" hostname="APP01" clientapp="Granite">
+  <process id="process1" taskpriority="0" lockMode="U" currentdb="7" currentdbname="Laylax" loginname="appsvc" hostname="APP01" clientapp="AppScheduler">
    <executionStack>
     <frame procname="Laylax.dbo.IntegrationPost" line="12" sqlhandle="0x01">UPDATE dbo.Stock SET Qty = Qty - 1 WHERE ID = @id</frame>
    </executionStack>
@@ -26,9 +26,9 @@ const deadlockEventXML = `<event name="xml_deadlock_report" package="sqlserver" 
   <process id="process2" taskpriority="0" lockMode="X" currentdb="7" currentdbname="Laylax" loginname="scanner" hostname="HH12" clientapp="Scanner">
    <executionStack>
     <frame procname="adhoc" line="1" sqlhandle="0x02">UPDATE dbo.Pick SET Done = 1</frame>
-    <frame procname="Laylax.dbo.PRESCRIPT_PICKING" line="40" sqlhandle="0x03">EXEC sp_executesql @s</frame>
+    <frame procname="Laylax.dbo.USP_PICKING" line="40" sqlhandle="0x03">EXEC sp_executesql @s</frame>
    </executionStack>
-   <inputbuf>EXEC dbo.PRESCRIPT_PICKING 5</inputbuf>
+   <inputbuf>EXEC dbo.USP_PICKING 5</inputbuf>
   </process>
  </process-list>
  <resource-list>
@@ -52,7 +52,7 @@ func TestParseDeadlockEvent(t *testing.T) {
 		t.Errorf("event %+v", e)
 	}
 	v, w := e.Victim, e.Winner
-	if v.ID != "process2" || v.Procedure != "dbo.PRESCRIPT_PICKING" || v.Statement != "UPDATE dbo.Pick SET Done = 1" || v.LockMode != "X" ||
+	if v.ID != "process2" || v.Procedure != "dbo.USP_PICKING" || v.Statement != "UPDATE dbo.Pick SET Done = 1" || v.LockMode != "X" ||
 		v.Database != "Laylax" || v.Login != "scanner" || v.Host != "HH12" {
 		t.Errorf("victim %+v", v)
 	}
@@ -68,7 +68,7 @@ func TestParseDeadlockEvent(t *testing.T) {
 
 	// Ad hoc on both sides, no object names: the statement and the hobt.
 	adhoc := strings.NewReplacer(`procname="Laylax.dbo.IntegrationPost"`, `procname="adhoc"`,
-		`<frame procname="Laylax.dbo.PRESCRIPT_PICKING" line="40" sqlhandle="0x03">EXEC sp_executesql @s</frame>`, ``,
+		`<frame procname="Laylax.dbo.USP_PICKING" line="40" sqlhandle="0x03">EXEC sp_executesql @s</frame>`, ``,
 		`objectname="Laylax.dbo.Stock" `, ``).Replace(deadlockEventXML)
 	e, err = ParseDeadlockEvent(adhoc)
 	if err != nil {

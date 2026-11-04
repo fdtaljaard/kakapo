@@ -37,17 +37,17 @@ func stoHasWarning(p FixPreview, prefix string) bool {
 // builds the statement with the default 256 MB and the rollback with the percentage.
 func TestAutogrowthPercentDataFile(t *testing.T) {
 	f := sfacts()
-	g := file(&f, "GraniteLive")
+	g := file(&f, "WarehouseLive")
 	g.IsPercentGrowth, g.Growth = true, 10
 	c, fs, _ := sbuild(f)
 	x := findingOf(t, fs, "STO02")
-	if x.FixID != FixAutogrowth || x.Object != "GraniteLive" || c.Fixable != 1 {
+	if x.FixID != FixAutogrowth || x.Object != "WarehouseLive" || c.Fixable != 1 {
 		t.Fatalf("STO02 %+v fixable %d", x, c.Fixable)
 	}
 	fixes := AvailableStorageFixes(f, fs)
 	// The TempDB row's entry is always last (docs/phase4e-contract.md).
 	if len(fixes) != 2 || fixes[1].ID != FixTempdbFiles || fixes[0].ID != FixAutogrowth || fixes[0].CheckID != "STO02" || fixes[0].Current != "10%" || fixes[0].Target != "256 MB" ||
-		fixes[0].Options[OptionGrowthFile] != "GraniteLive" || len(fixes[0].Options) != 1 {
+		fixes[0].Options[OptionGrowthFile] != "WarehouseLive" || len(fixes[0].Options) != 1 {
 		t.Errorf("fixes %+v", fixes)
 	}
 
@@ -56,18 +56,18 @@ func TestAutogrowthPercentDataFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', FILEGROWTH = 256MB);" ||
-		p.Rollback != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', FILEGROWTH = 10%);" {
+	if p.Statement != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', FILEGROWTH = 256MB);" ||
+		p.Rollback != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', FILEGROWTH = 10%);" {
 		t.Errorf("statement %q rollback %q", p.Statement, p.Rollback)
 	}
-	if len(p.Changes) != 1 || p.Changes[0] != (Drift{"Autogrowth of GraniteLive", "10%", "256 MB"}) || fix.CheckID != "STO02" || fix.Target != "256 MB" {
+	if len(p.Changes) != 1 || p.Changes[0] != (Drift{"Autogrowth of WarehouseLive", "10%", "256 MB"}) || fix.CheckID != "STO02" || fix.Target != "256 MB" {
 		t.Errorf("changes %+v fix %+v", p.Changes, fix)
 	}
 	if len(p.Inputs) != 1 || p.Inputs[0].Name != OptionGrowthMB || p.Inputs[0].Value != "256" || p.Options[OptionGrowthMB] != "256" ||
-		p.Options[OptionGrowthFile] != "GraniteLive" {
+		p.Options[OptionGrowthFile] != "WarehouseLive" {
 		t.Errorf("inputs %+v options %+v", p.Inputs, p.Options)
 	}
-	if !stoHasWarning(p, "Instant file initialization is on") || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database GraniteLive." {
+	if !stoHasWarning(p, "Instant file initialization is on") || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database WarehouseLive." {
 		t.Errorf("warnings %q", p.Warnings)
 	}
 	// IFI off and unknown say so.
@@ -80,7 +80,7 @@ func TestAutogrowthPercentDataFile(t *testing.T) {
 		t.Errorf("IFI unknown %q", p.Warnings)
 	}
 	// A growth the user typed.
-	p, fix, _ = BuildAutogrowthFix(f, st, map[string]string{OptionGrowthFile: "GraniteLive", OptionGrowthDatabase: "GraniteLive", OptionGrowthMB: " 512 "})
+	p, fix, _ = BuildAutogrowthFix(f, st, map[string]string{OptionGrowthFile: "WarehouseLive", OptionGrowthDatabase: "WarehouseLive", OptionGrowthMB: " 512 "})
 	if !strings.Contains(p.Statement, "FILEGROWTH = 512MB") || fix.Target != "512 MB" || p.Options[OptionGrowthMB] != "512" {
 		t.Errorf("512: %q %+v", p.Statement, fix)
 	}
@@ -89,9 +89,9 @@ func TestAutogrowthPercentDataFile(t *testing.T) {
 // A bad growth, a missing or unknown file: the warning and no changes, so Apply is disabled.
 func TestAutogrowthBadOptions(t *testing.T) {
 	f := sfacts()
-	file(&f, "GraniteLive").IsPercentGrowth, file(&f, "GraniteLive").Growth = true, 10
+	file(&f, "WarehouseLive").IsPercentGrowth, file(&f, "WarehouseLive").Growth = true, 10
 	for _, bad := range []string{"0", "4097", "12.5", "abc", "-1", ""} {
-		p, _, err := BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "GraniteLive", OptionGrowthMB: bad})
+		p, _, err := BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "WarehouseLive", OptionGrowthMB: bad})
 		if err != nil || len(p.Changes) != 0 || p.Statement != "" || p.Warnings[0] != growthMBWarn || p.Inputs[0].Warning != growthMBWarn || p.Inputs[0].Value != bad {
 			t.Errorf("%q: %v %+v", bad, err, p)
 		}
@@ -101,11 +101,11 @@ func TestAutogrowthBadOptions(t *testing.T) {
 		t.Errorf("no file: %v %+v", err, p)
 	}
 	p, _, err = BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "Nope"})
-	if err != nil || len(p.Changes) != 0 || p.Warnings[0] != "There is no file named Nope in GraniteLive." {
+	if err != nil || len(p.Changes) != 0 || p.Warnings[0] != "There is no file named Nope in WarehouseLive." {
 		t.Errorf("unknown file: %v %+v", err, p)
 	}
 	// A file STO02/STO03 did not find: nothing to apply.
-	if _, _, err := BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "GraniteLive_log"}); !errors.Is(err, ErrFixNotApplicable) {
+	if _, _, err := BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "WarehouseLive_log"}); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("healthy file: %v", err)
 	}
 }
@@ -115,24 +115,24 @@ func TestAutogrowthBadOptions(t *testing.T) {
 // up to 64 MB.
 func TestAutogrowthOffAndCapped(t *testing.T) {
 	f := sfacts()
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.Growth, l.MaxSizePages = 0, 262144 // 2 GB
 	_, fs, _ := sbuild(f)
 	x := findingOf(t, fs, "STO03")
 	if x.FixID != FixAutogrowth {
 		t.Fatalf("STO03 %+v", x)
 	}
-	opts := map[string]string{OptionGrowthFile: "GraniteLive_log", OptionGrowthDatabase: "GraniteLive"}
+	opts := map[string]string{OptionGrowthFile: "WarehouseLive_log", OptionGrowthDatabase: "WarehouseLive"}
 	p, fix, err := BuildAutogrowthFix(f, StorageFileState{}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive_log', FILEGROWTH = 64MB, MAXSIZE = UNLIMITED);" ||
-		p.Rollback != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive_log', FILEGROWTH = 0, MAXSIZE = 2048MB);" {
+	if p.Statement != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive_log', FILEGROWTH = 64MB, MAXSIZE = UNLIMITED);" ||
+		p.Rollback != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive_log', FILEGROWTH = 0, MAXSIZE = 2048MB);" {
 		t.Errorf("statement %q\nrollback %q", p.Statement, p.Rollback)
 	}
 	if len(p.Inputs) != 2 || p.Inputs[1].Name != OptionGrowthUnlimited || p.Inputs[1].Value != "true" || fix.Current != "off" ||
-		fix.Target != "64 MB, no size limit" || len(p.Changes) != 2 || p.Changes[1] != (Drift{"Size limit of GraniteLive_log", "2048 MB", "none"}) {
+		fix.Target != "64 MB, no size limit" || len(p.Changes) != 2 || p.Changes[1] != (Drift{"Size limit of WarehouseLive_log", "2048 MB", "none"}) {
 		t.Errorf("inputs %+v changes %+v fix %+v", p.Inputs, p.Changes, fix)
 	}
 	if !stoHasWarning(p, "On SQL Server 2022 and later a log growth of 64 MB or less is instant") {
@@ -141,7 +141,7 @@ func TestAutogrowthOffAndCapped(t *testing.T) {
 	opts[OptionGrowthUnlimited] = "false"
 	opts[OptionGrowthMB] = "128"
 	p, _, _ = BuildAutogrowthFix(f, StorageFileState{}, opts)
-	if p.Statement != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive_log', FILEGROWTH = 128MB);" || len(p.Changes) != 1 ||
+	if p.Statement != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive_log', FILEGROWTH = 128MB);" || len(p.Changes) != 1 ||
 		!stoHasWarning(p, "On SQL Server 2022 and later only log growth up to 64 MB is instant; a 128 MB growth") {
 		t.Errorf("capped kept: %q %q", p.Statement, p.Warnings)
 	}
@@ -152,7 +152,7 @@ func TestAutogrowthOffAndCapped(t *testing.T) {
 	}
 	// Growth off but no cap: no unlimited input.
 	l.MaxSizePages = -1
-	p, _, _ = BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "GraniteLive_log"})
+	p, _, _ = BuildAutogrowthFix(f, StorageFileState{}, map[string]string{OptionGrowthFile: "WarehouseLive_log"})
 	if len(p.Inputs) != 1 || strings.Contains(p.Statement, "MAXSIZE") {
 		t.Errorf("uncapped: %+v %q", p.Inputs, p.Statement)
 	}
@@ -181,8 +181,8 @@ func TestAutogrowthTempdbFile(t *testing.T) {
 
 // The read-back compares sys.master_files with the growth (and the cap) the preview set.
 func TestAutogrowthReadBack(t *testing.T) {
-	opts := map[string]string{OptionGrowthFile: "GraniteLive_log", OptionGrowthDatabase: "GraniteLive", OptionGrowthMB: "64", OptionGrowthUnlimited: "true"}
-	st := StorageFileState{Files: []StorageFile{{DatabaseID: 7, Database: "GraniteLive", Type: "LOG", LogicalName: "GraniteLive_log", Growth: 8192, MaxSizePages: 268435456}}}
+	opts := map[string]string{OptionGrowthFile: "WarehouseLive_log", OptionGrowthDatabase: "WarehouseLive", OptionGrowthMB: "64", OptionGrowthUnlimited: "true"}
+	st := StorageFileState{Files: []StorageFile{{DatabaseID: 7, Database: "WarehouseLive", Type: "LOG", LogicalName: "WarehouseLive_log", Growth: 8192, MaxSizePages: 268435456}}}
 	if after, ok := AutogrowthReadBack(st, opts); !ok || after != "growth 64 MB, no size limit" {
 		t.Errorf("verified: %q %v", after, ok)
 	}
@@ -191,11 +191,11 @@ func TestAutogrowthReadBack(t *testing.T) {
 	if after, ok := AutogrowthReadBack(st, opts); ok || after != "growth 10%, no size limit" {
 		t.Errorf("differs: %q %v", after, ok)
 	}
-	if after, ok := AutogrowthReadBack(StorageFileState{}, opts); ok || after != "the file GraniteLive_log was not found in GraniteLive" {
+	if after, ok := AutogrowthReadBack(StorageFileState{}, opts); ok || after != "the file WarehouseLive_log was not found in WarehouseLive" {
 		t.Errorf("missing: %q %v", after, ok)
 	}
-	fix := Fix{Current: "off", Target: "64 MB", Options: map[string]string{OptionGrowthFile: "GraniteLive_log", OptionGrowthDatabase: "GraniteLive"}}
-	if d := AutogrowthChangeDescription(fix); d != "Autogrowth of GraniteLive_log in GraniteLive: off -> 64 MB" {
+	fix := Fix{Current: "off", Target: "64 MB", Options: map[string]string{OptionGrowthFile: "WarehouseLive_log", OptionGrowthDatabase: "WarehouseLive"}}
+	if d := AutogrowthChangeDescription(fix); d != "Autogrowth of WarehouseLive_log in WarehouseLive: off -> 64 MB" {
 		t.Errorf("description %q", d)
 	}
 }
@@ -298,9 +298,9 @@ func TestTempdbFilesReadBack(t *testing.T) {
 // page cannot give the data file's finding the log file's options.
 func TestAutogrowthOptionsMatchOneFile(t *testing.T) {
 	f := sfacts()
-	g := file(&f, "GraniteLive")
+	g := file(&f, "WarehouseLive")
 	g.IsPercentGrowth, g.Growth = true, 10
-	file(&f, "GraniteLive_log").Growth = 0
+	file(&f, "WarehouseLive_log").Growth = 0
 	_, fs, _ := sbuild(f)
 	fixes := AvailableStorageFixes(f, fs)
 	if len(fixes) != 3 || fixes[2].ID != FixTempdbFiles {
@@ -309,13 +309,13 @@ func TestAutogrowthOptionsMatchOneFile(t *testing.T) {
 	named := 0
 	for _, x := range fixes {
 		for _, v := range x.Options {
-			if v == "GraniteLive" {
+			if v == "WarehouseLive" {
 				named++
 			}
 		}
 	}
 	if named != 1 {
-		t.Errorf("%d entries carry the name GraniteLive: %+v", named, fixes)
+		t.Errorf("%d entries carry the name WarehouseLive: %+v", named, fixes)
 	}
 }
 

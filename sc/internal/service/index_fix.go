@@ -13,7 +13,7 @@ import (
 
 // The create-index and drop-index fixes (docs/phase4c-contract.md, part 3), registered with the
 // fix registry: the preview reads the table's columns, indexes, sizes and use and runs the
-// triage's index guards (domain.BuildCreateIndexFix); Apply runs the statement with a 30-minute
+// PerformanceTriage.sql's index guards (domain.BuildCreateIndexFix); Apply runs the statement with a 30-minute
 // timeout, reads sys.indexes back and writes the change row (type INDEX) with the rollback.
 func init() {
 	// Long fixes (docs/phase4f-contract.md): they run in the background.

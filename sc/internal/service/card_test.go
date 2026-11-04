@@ -23,7 +23,7 @@ func TestCardDetailRefusesBeforeReading(t *testing.T) {
 	svc := New(st, fakeCreds{})
 
 	var se *Error
-	if _, err := svc.CardDetail(ctx, 42, "GraniteLive", "backups"); !errors.As(err, &se) || se.Kind != KindNotFound {
+	if _, err := svc.CardDetail(ctx, 42, "WarehouseLive", "backups"); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("unknown server: want KindNotFound, got %v", err)
 	}
 	srv, err := st.InsertServer(ctx, domain.ServerInput{Name: "client", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"},
@@ -32,7 +32,7 @@ func TestCardDetailRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, card := range []string{"nothing", "", "Backups"} {
-		if _, err := svc.CardDetail(ctx, srv.ID, "GraniteLive", card); !errors.As(err, &se) || se.Kind != KindNotFound {
+		if _, err := svc.CardDetail(ctx, srv.ID, "WarehouseLive", card); !errors.As(err, &se) || se.Kind != KindNotFound {
 			t.Errorf("card %q: want KindNotFound, got %v", card, err)
 		}
 	}
@@ -41,7 +41,7 @@ func TestCardDetailRefusesBeforeReading(t *testing.T) {
 	}
 	// A SQL login without a stored password: unreachable, for every real card.
 	for _, def := range domain.CardDefs {
-		if _, err := svc.CardDetail(ctx, srv.ID, "GraniteLive", string(def.ID)); !errors.As(err, &se) || se.Kind != KindUnreachable {
+		if _, err := svc.CardDetail(ctx, srv.ID, "WarehouseLive", string(def.ID)); !errors.As(err, &se) || se.Kind != KindUnreachable {
 			t.Errorf("card %s: want KindUnreachable, got %v", def.ID, err)
 		}
 	}
@@ -94,10 +94,10 @@ func TestFixesRefuseBeforeApplying(t *testing.T) {
 		{42, "update-statistics", KindNotFound},
 		{srv.ID, "update-statistics", KindUnreachable},
 	} {
-		if _, err := svc.PreviewFix(ctx, tc.server, "GraniteLive", tc.fix); !errors.As(err, &se) || se.Kind != tc.kind {
+		if _, err := svc.PreviewFix(ctx, tc.server, "WarehouseLive", tc.fix); !errors.As(err, &se) || se.Kind != tc.kind {
 			t.Errorf("preview %d %s: want kind %d, got %v", tc.server, tc.fix, tc.kind, err)
 		}
-		if _, err := svc.ApplyFix(ctx, tc.server, "GraniteLive", tc.fix); !errors.As(err, &se) || se.Kind != tc.kind {
+		if _, err := svc.ApplyFix(ctx, tc.server, "WarehouseLive", tc.fix); !errors.As(err, &se) || se.Kind != tc.kind {
 			t.Errorf("apply %d %s: want kind %d, got %v", tc.server, tc.fix, tc.kind, err)
 		}
 	}

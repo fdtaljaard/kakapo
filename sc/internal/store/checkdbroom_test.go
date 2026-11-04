@@ -17,31 +17,31 @@ func TestCheckdbRoom(t *testing.T) {
 	}
 	defer st.Close()
 
-	if r, err := st.LastCheckdbRoom(ctx, 1, "GraniteLive"); err != nil || r != nil {
+	if r, err := st.LastCheckdbRoom(ctx, 1, "WarehouseLive"); err != nil || r != nil {
 		t.Fatalf("never run: %+v %v", r, err)
 	}
 
 	first := time.Date(2026, 11, 2, 7, 0, 0, 0, time.UTC)
-	in := domain.CheckdbRoomInputs{Database: "GraniteLive", CapturedAt: first, Duration: 2500 * time.Millisecond,
+	in := domain.CheckdbRoomInputs{Database: "WarehouseLive", CapturedAt: first, Duration: 2500 * time.Millisecond,
 		EstimateKB: 4604522, TempdbFreeMB: 500, TempdbRoomMB: 200000, DataVolume: `D:\`, DataFreeMB: 51200, DataSizeMB: 40960}
 	older := domain.BuildCheckdbRoom(in)
-	if err := st.InsertCheckdbRoom(ctx, 1, "GraniteLive", older); err != nil {
+	if err := st.InsertCheckdbRoom(ctx, 1, "WarehouseLive", older); err != nil {
 		t.Fatal(err)
 	}
 	in.CapturedAt, in.TempdbFreeMB = first.Add(24*time.Hour), 10000
 	newer := domain.BuildCheckdbRoom(in)
-	if err := st.InsertCheckdbRoom(ctx, 1, "GraniteLive", newer); err != nil {
+	if err := st.InsertCheckdbRoom(ctx, 1, "WarehouseLive", newer); err != nil {
 		t.Fatal(err)
 	}
 	// Another database and another server keep their own.
 	if err := st.InsertCheckdbRoom(ctx, 1, "Other", older); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.InsertCheckdbRoom(ctx, 2, "GraniteLive", older); err != nil {
+	if err := st.InsertCheckdbRoom(ctx, 2, "WarehouseLive", older); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := st.LastCheckdbRoom(ctx, 1, "GraniteLive")
+	got, err := st.LastCheckdbRoom(ctx, 1, "WarehouseLive")
 	if err != nil || got == nil {
 		t.Fatalf("last: %+v %v", got, err)
 	}
@@ -55,7 +55,7 @@ func TestCheckdbRoom(t *testing.T) {
 	if got.Finding.Severity != domain.SeverityInfo {
 		t.Errorf("newer passed: %s", got.Finding.Severity)
 	}
-	if o, _ := st.LastCheckdbRoom(ctx, 2, "GraniteLive"); o == nil || o.Finding.Severity != domain.SeverityMedium || o.Finding.Finding != older.Finding.Finding {
+	if o, _ := st.LastCheckdbRoom(ctx, 2, "WarehouseLive"); o == nil || o.Finding.Severity != domain.SeverityMedium || o.Finding.Finding != older.Finding.Finding {
 		t.Errorf("server 2: %+v", o)
 	}
 

@@ -21,22 +21,22 @@ func TestKillSessionPreview(t *testing.T) {
 		t.Errorf("fix %+v", fix)
 	}
 	if p.Statement != "KILL 83;" || p.Rollback != "" || len(p.Changes) != 1 || p.Database != "WMS" ||
-		p.Changes[0].Current != "sleeping; last ran dbo.Prescript_Packing_MasterItem: UPDATE dbo.MasterItem SET LastCounted = GETDATE() WHERE MasterItemID = @id" ||
+		p.Changes[0].Current != "sleeping; last ran dbo.usp_Packing_Item: UPDATE dbo.Item SET LastCounted = GETDATE() WHERE ItemID = @id" ||
 		p.Options["sessionId"] != "83" || p.Options["loginTime"] != "2026-11-03T08:14:00.000" {
 		t.Errorf("preview %+v", p)
 	}
 	want := []string{
-		"Session 83: login granite on WMS-APP01, program GraniteScheduler, database WMS, sleeping. 2 sessions wait behind it.",
+		"Session 83: login appsvc on WMS-APP01, program AppScheduler, database WMS, sleeping. 2 sessions wait behind it.",
 		"Its transaction has been open for 6 minutes and has written 120.0 MB of log.",
 		"Its work is rolled back: everything that transaction changed is undone.",
 		"The rollback takes about as long as the work did: up to about 6 minutes here, and the sessions behind it keep waiting until it ends.",
-		"Tell whoever owns it (granite on WMS-APP01) before you kill it.",
+		"Tell whoever owns it (appsvc on WMS-APP01) before you kill it.",
 		KillPermission,
 	}
 	if strings.Join(p.Warnings, "\n") != strings.Join(want, "\n") {
 		t.Errorf("warnings:\n%s", strings.Join(p.Warnings, "\n"))
 	}
-	if d := KillChangeDescription(killTarget()); d != `Killed session 83 (granite, GraniteScheduler on WMS-APP01) on SQL01\WMS: transaction open 6 minutes, 120.0 MB of log rolled back; 2 sessions wait behind it` {
+	if d := KillChangeDescription(killTarget()); d != `Killed session 83 (appsvc, AppScheduler on WMS-APP01) on SQL01\WMS: transaction open 6 minutes, 120.0 MB of log rolled back; 2 sessions wait behind it` {
 		t.Errorf("description %q", d)
 	}
 

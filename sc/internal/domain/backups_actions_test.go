@@ -64,7 +64,7 @@ func TestBackupActionFindings(t *testing.T) {
 	if _, fs, _ = build(f); findingOf(t, fs, "BAK04").FixID != FixCheckdbNow {
 		t.Errorf("clean run before: %+v", findingOf(t, fs, "BAK04"))
 	}
-	f.LastCheckdbRun = &CheckdbRun{RanAt: serverNow, Clean: false, Outcome: "CHECKDB found 0 allocation errors and 1 consistency errors in database 'GraniteLive'."}
+	f.LastCheckdbRun = &CheckdbRun{RanAt: serverNow, Clean: false, Outcome: "CHECKDB found 0 allocation errors and 1 consistency errors in database 'WarehouseLive'."}
 	if _, fs, _ = build(f); findingOf(t, fs, "BAK04").FixID != FixCheckdbNow {
 		t.Errorf("run with errors: %+v", findingOf(t, fs, "BAK04"))
 	}
@@ -89,11 +89,11 @@ func TestRecoveryModelFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "ALTER DATABASE [GraniteLive] SET RECOVERY FULL;" || p.Rollback != "ALTER DATABASE [GraniteLive] SET RECOVERY SIMPLE;" ||
+	if p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY FULL;" || p.Rollback != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" ||
 		len(p.Changes) != 1 || p.Changes[0] != (Drift{"Recovery model", "SIMPLE", "FULL"}) || fix.CheckID != "DBC08" || fix.Target != "FULL" {
 		t.Errorf("to FULL: %+v %+v", p, fix)
 	}
-	if p.Warnings[0] != recoveryToFull || p.Warnings[1] != recoveryChain || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database GraniteLive." {
+	if p.Warnings[0] != recoveryToFull || p.Warnings[1] != recoveryChain || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database WarehouseLive." {
 		t.Errorf("to FULL warnings %q", p.Warnings)
 	}
 	if len(p.Inputs) != 1 || p.Inputs[0].Kind != "select" || p.Inputs[0].Value != "FULL" || p.Options[OptionRecoveryModel] != "FULL" {
@@ -105,9 +105,9 @@ func TestRecoveryModelFix(t *testing.T) {
 		readOnly bool
 		warn     string
 	}{
-		{map[string]string{OptionRecoveryModel: "simple"}, false, "GraniteLive already uses the SIMPLE recovery model: pick the other one."},
+		{map[string]string{OptionRecoveryModel: "simple"}, false, "WarehouseLive already uses the SIMPLE recovery model: pick the other one."},
 		{map[string]string{OptionRecoveryModel: "BULK_LOGGED"}, false, "Pick FULL or SIMPLE."},
-		{nil, true, "GraniteLive is read-only, so its recovery model cannot be changed."},
+		{nil, true, "WarehouseLive is read-only, so its recovery model cannot be changed."},
 	} {
 		p, _, err := BuildRecoveryModelFix(f, c.readOnly, c.opts)
 		if err != nil || len(p.Changes) != 0 || p.Statement != "" || p.Warnings[0] != c.warn {
@@ -119,11 +119,11 @@ func TestRecoveryModelFix(t *testing.T) {
 	f = scheduleFacts("FULL")
 	nightlyFulls(&f)
 	p, fix, err = BuildRecoveryModelFix(f, false, nil)
-	if err != nil || p.Statement != "ALTER DATABASE [GraniteLive] SET RECOVERY SIMPLE;" || fix.CheckID != "BAK02" || p.Warnings[0] != recoveryToSimple {
+	if err != nil || p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" || fix.CheckID != "BAK02" || p.Warnings[0] != recoveryToSimple {
 		t.Errorf("to SIMPLE: %v %+v %+v", err, p, fix)
 	}
 	f.IsAgMember = true
-	if p, _, _ = BuildRecoveryModelFix(f, false, nil); len(p.Changes) != 0 || p.Warnings[0] != "GraniteLive is in an availability group, which needs FULL recovery: it stays in FULL." {
+	if p, _, _ = BuildRecoveryModelFix(f, false, nil); len(p.Changes) != 0 || p.Warnings[0] != "WarehouseLive is in an availability group, which needs FULL recovery: it stays in FULL." {
 		t.Errorf("AG: %+v", p)
 	}
 	// A log job that takes log backups fails in SIMPLE: say so.
@@ -149,21 +149,21 @@ func TestRecoveryModelFix(t *testing.T) {
 
 const wantCheckdbJobBatch = `DECLARE @owner sysname = SUSER_SNAME(0x01);
 BEGIN TRY
-    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: GraniteLive integrity check')
-        THROW 50000, N'A job named kakapo: GraniteLive integrity check already exists', 1;
+    IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'kakapo: WarehouseLive integrity check')
+        THROW 50000, N'A job named kakapo: WarehouseLive integrity check already exists', 1;
     BEGIN TRANSACTION;
     IF NOT EXISTS (SELECT 1 FROM msdb.dbo.syscategories WHERE name = N'Database Maintenance' AND category_class = 1)
         EXEC msdb.dbo.sp_add_category @class = N'JOB', @type = N'LOCAL', @name = N'Database Maintenance';
-    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: GraniteLive integrity check', @enabled = 1,
-        @description = N'Created by kakapo on 2026-11-03 for GraniteLive: integrity check weekly on Sunday at 01:00, full check',
+    EXEC msdb.dbo.sp_add_job @job_name = N'kakapo: WarehouseLive integrity check', @enabled = 1,
+        @description = N'Created by kakapo on 2026-11-03 for WarehouseLive: integrity check weekly on Sunday at 01:00, full check',
         @category_name = N'Database Maintenance', @owner_login_name = @owner;
-    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: GraniteLive integrity check', @step_id = 1, @step_name = N'Check integrity',
+    EXEC msdb.dbo.sp_add_jobstep @job_name = N'kakapo: WarehouseLive integrity check', @step_id = 1, @step_name = N'Check integrity',
         @subsystem = N'TSQL', @database_name = N'master', @on_success_action = 1, @on_fail_action = 2,
         @command = N'/* kakapo */
-DBCC CHECKDB ([GraniteLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS;';
-    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: GraniteLive integrity check', @name = N'kakapo: GraniteLive integrity check, weekly on Sunday at 01:00', @enabled = 1,
+DBCC CHECKDB ([WarehouseLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS;';
+    EXEC msdb.dbo.sp_add_jobschedule @job_name = N'kakapo: WarehouseLive integrity check', @name = N'kakapo: WarehouseLive integrity check, weekly on Sunday at 01:00', @enabled = 1,
         @freq_type = 8, @freq_interval = 1, @freq_recurrence_factor = 1, @active_start_time = 10000;
-    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: GraniteLive integrity check', @server_name = N'(local)';
+    EXEC msdb.dbo.sp_add_jobserver @job_name = N'kakapo: WarehouseLive integrity check', @server_name = N'(local)';
     COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
@@ -180,11 +180,11 @@ func TestCheckdbJobFix(t *testing.T) {
 	if p.Statement != wantCheckdbJobBatch {
 		t.Errorf("batch\n%s", p.Statement)
 	}
-	if p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: GraniteLive integrity check';" || p.Express ||
-		fix.Target != "kakapo: GraniteLive integrity check (weekly on Sunday at 01:00, full check)" || fix.CheckID != "BAK03" {
+	if p.Rollback != "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: WarehouseLive integrity check';" || p.Express ||
+		fix.Target != "kakapo: WarehouseLive integrity check (weekly on Sunday at 01:00, full check)" || fix.CheckID != "BAK03" {
 		t.Errorf("rollback %q fix %+v", p.Rollback, fix)
 	}
-	if len(p.Changes) != 3 || p.Changes[0] != (Drift{"Integrity check job", "none", "kakapo: GraniteLive integrity check, weekly on Sunday at 01:00"}) ||
+	if len(p.Changes) != 3 || p.Changes[0] != (Drift{"Integrity check job", "none", "kakapo: WarehouseLive integrity check, weekly on Sunday at 01:00"}) ||
 		p.Changes[2] != (Drift{"Tell on failure", "", noOperator}) {
 		t.Errorf("changes %+v", p.Changes)
 	}
@@ -197,21 +197,21 @@ func TestCheckdbJobFix(t *testing.T) {
 	}
 
 	// Options: another day and time, physical only, an operator, and the room estimate.
-	f.Operator = "Granite support"
-	room := BuildCheckdbRoom(CheckdbRoomInputs{Database: "GraniteLive", CapturedAt: serverNow, EstimateKB: 4 << 20, TempdbFreeMB: 100, TempdbRoomMB: 100, DataFreeMB: 50000, DataSizeMB: 4096})
+	f.Operator = "Database support"
+	room := BuildCheckdbRoom(CheckdbRoomInputs{Database: "WarehouseLive", CapturedAt: serverNow, EstimateKB: 4 << 20, TempdbFreeMB: 100, TempdbRoomMB: 100, DataFreeMB: 50000, DataSizeMB: 4096})
 	p, fix, _ = BuildCheckdbJobFix(f, CheckdbJobFacts{DataMB: i64(4096)}, &room,
 		map[string]string{OptionCheckdbDay: "saturday", OptionCheckdbTime: "2:30", OptionPhysicalOnly: "true"})
 	if !strings.Contains(p.Statement, "@freq_type = 8, @freq_interval = 64, @freq_recurrence_factor = 1, @active_start_time = 23000;") ||
-		!strings.Contains(p.Statement, "DBCC CHECKDB ([GraniteLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS, PHYSICAL_ONLY;") {
+		!strings.Contains(p.Statement, "DBCC CHECKDB ([WarehouseLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS, PHYSICAL_ONLY;") {
 		t.Errorf("options batch\n%s", p.Statement)
 	}
-	if !strings.Contains(p.Statement, "@notify_level_email = 2, @notify_email_operator_name = N'Granite support'") {
+	if !strings.Contains(p.Statement, "@notify_level_email = 2, @notify_email_operator_name = N'Database support'") {
 		t.Errorf("operator\n%s", p.Statement)
 	}
-	if fix.Target != "kakapo: GraniteLive integrity check (weekly on Saturday at 02:30, physical only)" || p.Options[OptionCheckdbDay] != "Saturday" {
+	if fix.Target != "kakapo: WarehouseLive integrity check (weekly on Saturday at 02:30, physical only)" || p.Options[OptionCheckdbDay] != "Saturday" {
 		t.Errorf("fix %+v options %+v", fix, p.Options)
 	}
-	if !bakHasWarning(p, "Room for CHECKDB (STO10, 2026-11-03 09:21 UTC): CHECKDB on GraniteLive needs about 8.0 GB of tempdb, but tempdb can only reach 100 MB. WITH PHYSICAL_ONLY needs far less.") ||
+	if !bakHasWarning(p, "Room for CHECKDB (STO10, 2026-11-03 09:21 UTC): CHECKDB on WarehouseLive needs about 8.0 GB of tempdb, but tempdb can only reach 100 MB. WITH PHYSICAL_ONLY needs far less.") ||
 		!bakHasWarning(p, physicalOnlyNote) || bakHasWarning(p, checkdbNoOperator) {
 		t.Errorf("warnings %q", p.Warnings)
 	}
@@ -227,7 +227,7 @@ func TestCheckdbJobFix(t *testing.T) {
 	}{
 		{map[string]string{OptionCheckdbDay: "Someday"}, CheckdbJobFacts{}, checkdbDayWarn},
 		{map[string]string{OptionCheckdbTime: "25:00"}, CheckdbJobFacts{}, checkdbTimeWarn},
-		{nil, CheckdbJobFacts{Jobs: []IntegrityJob{{Name: "kakapo: GraniteLive integrity check", Enabled: true}}}, "The job kakapo: GraniteLive integrity check already exists"},
+		{nil, CheckdbJobFacts{Jobs: []IntegrityJob{{Name: "kakapo: WarehouseLive integrity check", Enabled: true}}}, "The job kakapo: WarehouseLive integrity check already exists"},
 	} {
 		p, _, err := BuildCheckdbJobFix(f, c.jf, nil, c.opts)
 		if err != nil || len(p.Changes) != 0 || p.Statement != "" || !strings.HasPrefix(p.Warnings[0], c.warn) {
@@ -241,8 +241,8 @@ func TestCheckdbJobFix(t *testing.T) {
 	// Express: a script, nothing applied.
 	f.HasAgent = false
 	p, _, _ = BuildCheckdbJobFix(f, CheckdbJobFacts{}, nil, nil)
-	if !p.Express || p.Rollback != "" || !strings.HasPrefix(p.Statement, "-- kakapo: integrity check of GraniteLive on SQL01\\WMS. SQL Server Express has no SQL Server Agent") ||
-		!strings.Contains(p.Statement, "sqlcmd -S SQL01\\WMS -E -b -i checkdb-GraniteLive.sql") || strings.Contains(p.Statement, "sp_add_job") {
+	if !p.Express || p.Rollback != "" || !strings.HasPrefix(p.Statement, "-- kakapo: integrity check of WarehouseLive on SQL01\\WMS. SQL Server Express has no SQL Server Agent") ||
+		!strings.Contains(p.Statement, "sqlcmd -S SQL01\\WMS -E -b -i checkdb-WarehouseLive.sql") || strings.Contains(p.Statement, "sp_add_job") {
 		t.Errorf("express: %+v", p)
 	}
 	// BAK03 did not fire: nothing to apply.
@@ -254,14 +254,14 @@ func TestCheckdbJobFix(t *testing.T) {
 func TestCheckdbJobReadBack(t *testing.T) {
 	j := CheckdbJobFromOptions(neverChecked("FULL"), map[string]string{OptionCheckdbDay: "Sunday", OptionCheckdbTime: "01:00"})
 	// serverNow is Tuesday 3 November 09:21: the next Sunday is the 8th.
-	after, ok := j.ReadBack([]BackupJobState{{Name: "kakapo: GraniteLive integrity check", Enabled: true, ScheduleEnabled: true}}, serverNow)
-	if !ok || after != "kakapo: GraniteLive integrity check: enabled, next run 2026-11-08 01:00 (expected; Agent has not set it yet)." {
+	after, ok := j.ReadBack([]BackupJobState{{Name: "kakapo: WarehouseLive integrity check", Enabled: true, ScheduleEnabled: true}}, serverNow)
+	if !ok || after != "kakapo: WarehouseLive integrity check: enabled, next run 2026-11-08 01:00 (expected; Agent has not set it yet)." {
 		t.Errorf("read back %q", after)
 	}
-	if after, ok := j.ReadBack(nil, serverNow); ok || after != "kakapo: GraniteLive integrity check: not found." {
+	if after, ok := j.ReadBack(nil, serverNow); ok || after != "kakapo: WarehouseLive integrity check: not found." {
 		t.Errorf("missing %q", after)
 	}
-	if d := j.Description(); d != "Created the job kakapo: GraniteLive integrity check (weekly on Sunday at 01:00, full check)" {
+	if d := j.Description(); d != "Created the job kakapo: WarehouseLive integrity check (weekly on Sunday at 01:00, full check)" {
 		t.Errorf("description %q", d)
 	}
 }
@@ -269,16 +269,16 @@ func TestCheckdbJobReadBack(t *testing.T) {
 func TestCheckdbNowFix(t *testing.T) {
 	f := neverChecked("FULL")
 	p, fix := BuildCheckdbNowFix(f, i64(4096), nil, nil)
-	if p.Statement != "DBCC CHECKDB ([GraniteLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS;" || p.Rollback != "" || len(p.Changes) != 1 ||
-		p.Changes[0] != (Drift{"Integrity check of GraniteLive", "last good: never", "run now, full check"}) || fix.CheckID != "BAK03" {
+	if p.Statement != "DBCC CHECKDB ([WarehouseLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS;" || p.Rollback != "" || len(p.Changes) != 1 ||
+		p.Changes[0] != (Drift{"Integrity check of WarehouseLive", "last good: never", "run now, full check"}) || fix.CheckID != "BAK03" {
 		t.Errorf("preview %+v fix %+v", p, fix)
 	}
 	if !bakHasWarning(p, "kakapo does not know yet") || !bakHasWarning(p, checkdbLoad) || !bakHasWarning(p, checkdbWait) ||
-		p.Warnings[len(p.Warnings)-1] != "Needs db_owner of GraniteLive or sysadmin." {
+		p.Warnings[len(p.Warnings)-1] != "Needs db_owner of WarehouseLive or sysadmin." {
 		t.Errorf("warnings %q", p.Warnings)
 	}
 	p, _ = BuildCheckdbNowFix(f, i64(4096), nil, map[string]string{OptionPhysicalOnly: "true"})
-	if p.Statement != "DBCC CHECKDB ([GraniteLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS, PHYSICAL_ONLY;" || !PhysicalOnlyOption(p.Options) || !bakHasWarning(p, physicalOnlyNote) {
+	if p.Statement != "DBCC CHECKDB ([WarehouseLive]) WITH NO_INFOMSGS, ALL_ERRORMSGS, PHYSICAL_ONLY;" || !PhysicalOnlyOption(p.Options) || !bakHasWarning(p, physicalOnlyNote) {
 		t.Errorf("physical only %+v", p)
 	}
 	// A physicalOnly that is not a bool: the warning, no changes.
@@ -303,20 +303,20 @@ func TestBuildCheckdbRun(t *testing.T) {
 	if !ok || !r.Clean || r.Outcome != CheckdbOutcomeClean || r.DurationSeconds != 95 || len(r.Messages) != 0 {
 		t.Errorf("clean %+v", r)
 	}
-	if d := CheckdbRunChangeDescription("GraniteLive", r); d != "DBCC CHECKDB on GraniteLive (full check, 95 s): No errors found" {
+	if d := CheckdbRunChangeDescription("WarehouseLive", r); d != "DBCC CHECKDB on WarehouseLive (full check, 95 s): No errors found" {
 		t.Errorf("description %q", d)
 	}
 	damage := []CheckdbMessage{
 		{Number: 8928, Class: 16, Text: "Object ID 581577110, index ID 1: Page (1:153) could not be processed.", Error: true},
-		{Number: 8989, Class: 16, Text: "CHECKDB found 0 allocation errors and 2 consistency errors in database 'GraniteLive'.", Error: true},
-		{Number: 8958, Class: 16, Text: "repair_allow_data_loss is the minimum repair level for the errors found by DBCC CHECKDB (GraniteLive).", Error: true},
+		{Number: 8989, Class: 16, Text: "CHECKDB found 0 allocation errors and 2 consistency errors in database 'WarehouseLive'.", Error: true},
+		{Number: 8958, Class: 16, Text: "repair_allow_data_loss is the minimum repair level for the errors found by DBCC CHECKDB (WarehouseLive).", Error: true},
 	}
 	r, ok = BuildCheckdbRun(start, time.Hour+5*time.Minute, true, damage, "mssql: CHECKDB found 0 allocation errors")
-	if !ok || r.Clean || r.Outcome != "CHECKDB found 0 allocation errors and 2 consistency errors in database 'GraniteLive'." || len(r.Messages) != 3 ||
+	if !ok || r.Clean || r.Outcome != "CHECKDB found 0 allocation errors and 2 consistency errors in database 'WarehouseLive'." || len(r.Messages) != 3 ||
 		r.Messages[0] != "Msg 8928, Level 16: Object ID 581577110, index ID 1: Page (1:153) could not be processed." || !r.PhysicalOnly {
 		t.Errorf("damage %+v", r)
 	}
-	if d := CheckdbRunChangeDescription("GraniteLive", r); !strings.HasPrefix(d, "DBCC CHECKDB on GraniteLive (physical only, 1 h 05 min): CHECKDB found") {
+	if d := CheckdbRunChangeDescription("WarehouseLive", r); !strings.HasPrefix(d, "DBCC CHECKDB on WarehouseLive (physical only, 1 h 05 min): CHECKDB found") {
 		t.Errorf("description %q", d)
 	}
 	// Refused or cut off: not completed, not stored.
@@ -345,8 +345,8 @@ func TestSuspectPagesClearFix(t *testing.T) {
 		run  *CheckdbRun
 		warn string
 	}{
-		{nil, "Run DBCC CHECKDB on GraniteLive first (Run CHECKDB now)"},
-		{&CheckdbRun{RanAt: serverNow, Outcome: "CHECKDB found 0 allocation errors and 1 consistency errors in database 'GraniteLive'."}, "The last CHECKDB on GraniteLive (2026-11-03 09:21 UTC) did not come back clean"},
+		{nil, "Run DBCC CHECKDB on WarehouseLive first (Run CHECKDB now)"},
+		{&CheckdbRun{RanAt: serverNow, Outcome: "CHECKDB found 0 allocation errors and 1 consistency errors in database 'WarehouseLive'."}, "The last CHECKDB on WarehouseLive (2026-11-03 09:21 UTC) did not come back clean"},
 		{&CheckdbRun{RanAt: time.Date(2026, 10, 30, 11, 0, 0, 0, time.UTC), Clean: true}, "The last clean CHECKDB (2026-10-30 11:00 UTC) ran before the latest record (2026-10-30 14:05 server time)"},
 	} {
 		f.LastCheckdbRun = c.run
@@ -357,7 +357,7 @@ func TestSuspectPagesClearFix(t *testing.T) {
 	}
 	f.LastCheckdbRun = &CheckdbRun{RanAt: time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC), Clean: true}
 	p, fix, err := BuildSuspectPagesClearFix(f, pages)
-	if err != nil || p.Statement != "DELETE msdb.dbo.suspect_pages WHERE database_id = DB_ID(N'GraniteLive');" || p.Rollback != "" || len(p.Changes) != 2 ||
+	if err != nil || p.Statement != "DELETE msdb.dbo.suspect_pages WHERE database_id = DB_ID(N'WarehouseLive');" || p.Rollback != "" || len(p.Changes) != 2 ||
 		p.Changes[1] != (Drift{"File 1, page 7701", "823/824 error, 3 error(s), last 2026-10-30 14:05", "cleared"}) || fix.Current != "2 record(s)" || p.Database != "" {
 		t.Errorf("clear: %v %+v %+v", err, p, fix)
 	}

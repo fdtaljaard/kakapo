@@ -19,7 +19,7 @@ func mustFix(t *testing.T, id string, f SetupFacts) (FixPreview, Fix) {
 const (
 	wantServer     = `This is a server setting: it changes every database on SQL01\WMS.`
 	wantServerPerm = "Needs the ALTER SETTINGS permission on the server (sysadmin or serveradmin)."
-	wantDbPerm     = "Needs the ALTER permission on the database GraniteLive."
+	wantDbPerm     = "Needs the ALTER permission on the database WarehouseLive."
 )
 
 func TestServerFixes(t *testing.T) {
@@ -82,7 +82,7 @@ func TestServerFixes(t *testing.T) {
 			p.Changes[0] != (Drift{tc.setting, tc.cur, tc.tgt}) {
 			t.Errorf("%s preview %+v", tc.id, p)
 		}
-		if d := FixChangeDescription(fix, f.ServerName, "GraniteLive"); d != tc.setting+` on SQL01\WMS: `+tc.cur+" -> "+tc.tgt {
+		if d := FixChangeDescription(fix, f.ServerName, "WarehouseLive"); d != tc.setting+` on SQL01\WMS: `+tc.cur+" -> "+tc.tgt {
 			t.Errorf("%s description %q", tc.id, d)
 		}
 	}
@@ -99,26 +99,26 @@ func TestDatabaseFixes(t *testing.T) {
 		warnings []string
 	}{
 		{"auto-close", func(f *SetupFacts) { f.AutoClose = true }, "AUTO_CLOSE", "ON", "OFF",
-			"ALTER DATABASE [GraniteLive] SET AUTO_CLOSE OFF;", "ALTER DATABASE [GraniteLive] SET AUTO_CLOSE ON;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_CLOSE OFF;", "ALTER DATABASE [WarehouseLive] SET AUTO_CLOSE ON;",
 			[]string{wantDbPerm}},
 		{"auto-shrink", func(f *SetupFacts) { f.AutoShrink = true }, "AUTO_SHRINK", "ON", "OFF",
-			"ALTER DATABASE [GraniteLive] SET AUTO_SHRINK OFF;", "ALTER DATABASE [GraniteLive] SET AUTO_SHRINK ON;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_SHRINK OFF;", "ALTER DATABASE [WarehouseLive] SET AUTO_SHRINK ON;",
 			[]string{wantDbPerm}},
 		{"page-verify", func(f *SetupFacts) { f.PageVerify = "TORN_PAGE_DETECTION" }, "PAGE_VERIFY", "TORN_PAGE_DETECTION", "CHECKSUM",
-			"ALTER DATABASE [GraniteLive] SET PAGE_VERIFY CHECKSUM;", "ALTER DATABASE [GraniteLive] SET PAGE_VERIFY TORN_PAGE_DETECTION;",
+			"ALTER DATABASE [WarehouseLive] SET PAGE_VERIFY CHECKSUM;", "ALTER DATABASE [WarehouseLive] SET PAGE_VERIFY TORN_PAGE_DETECTION;",
 			[]string{"Pages are protected as they are next written; an index rebuild protects them all.", wantDbPerm}},
 		{"auto-statistics", func(f *SetupFacts) { f.AutoCreateStats, f.AutoUpdateStats = false, false },
 			"AUTO_CREATE_STATISTICS, AUTO_UPDATE_STATISTICS", "create OFF, update OFF", "create ON, update ON",
-			"ALTER DATABASE [GraniteLive] SET AUTO_CREATE_STATISTICS ON; ALTER DATABASE [GraniteLive] SET AUTO_UPDATE_STATISTICS ON;",
-			"ALTER DATABASE [GraniteLive] SET AUTO_CREATE_STATISTICS OFF; ALTER DATABASE [GraniteLive] SET AUTO_UPDATE_STATISTICS OFF;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_CREATE_STATISTICS ON; ALTER DATABASE [WarehouseLive] SET AUTO_UPDATE_STATISTICS ON;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_CREATE_STATISTICS OFF; ALTER DATABASE [WarehouseLive] SET AUTO_UPDATE_STATISTICS OFF;",
 			[]string{"Check first that the application vendor does not require this (rare).", wantDbPerm}},
 		{"auto-statistics", func(f *SetupFacts) { f.AutoUpdateStats = false },
 			"AUTO_UPDATE_STATISTICS", "create ON, update OFF", "create ON, update ON",
-			"ALTER DATABASE [GraniteLive] SET AUTO_UPDATE_STATISTICS ON;",
-			"ALTER DATABASE [GraniteLive] SET AUTO_UPDATE_STATISTICS OFF;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_UPDATE_STATISTICS ON;",
+			"ALTER DATABASE [WarehouseLive] SET AUTO_UPDATE_STATISTICS OFF;",
 			[]string{"Check first that the application vendor does not require this (rare).", wantDbPerm}},
 		{"indirect-checkpoints", func(f *SetupFacts) { f.TargetRecoverySec = 0 }, "TARGET_RECOVERY_TIME", "0 SECONDS", "60 SECONDS",
-			"ALTER DATABASE [GraniteLive] SET TARGET_RECOVERY_TIME = 60 SECONDS;", "ALTER DATABASE [GraniteLive] SET TARGET_RECOVERY_TIME = 0 SECONDS;",
+			"ALTER DATABASE [WarehouseLive] SET TARGET_RECOVERY_TIME = 60 SECONDS;", "ALTER DATABASE [WarehouseLive] SET TARGET_RECOVERY_TIME = 0 SECONDS;",
 			[]string{wantDbPerm}},
 	} {
 		f := goodFacts()
@@ -133,7 +133,7 @@ func TestDatabaseFixes(t *testing.T) {
 		if !reflect.DeepEqual(p.Warnings, tc.warnings) {
 			t.Errorf("%s warnings %q", tc.id, p.Warnings)
 		}
-		if p.Database != "GraniteLive" || len(p.Changes) == 0 {
+		if p.Database != "WarehouseLive" || len(p.Changes) == 0 {
 			t.Errorf("%s preview %+v", tc.id, p)
 		}
 		// The value as the read-back shows it after the change is the target.
@@ -153,7 +153,7 @@ func TestDatabaseFixes(t *testing.T) {
 		if DatabaseValue(tc.id, o) != fix.Target {
 			t.Errorf("%s read back %q, target %q", tc.id, DatabaseValue(tc.id, o), fix.Target)
 		}
-		if d := FixChangeDescription(fix, f.ServerName, "GraniteLive"); d != tc.setting+" on GraniteLive: "+tc.cur+" -> "+tc.tgt {
+		if d := FixChangeDescription(fix, f.ServerName, "WarehouseLive"); d != tc.setting+" on WarehouseLive: "+tc.cur+" -> "+tc.tgt {
 			t.Errorf("%s description %q", tc.id, d)
 		}
 	}
@@ -219,8 +219,8 @@ func TestQueryStoreFixThroughGenericPath(t *testing.T) {
 		driftQS(true, Drift{"INTERVAL_LENGTH_MINUTES", "60", "15"}, Drift{"MAX_STORAGE_SIZE_MB", "1000", "2048"}),
 	} {
 		f := goodFacts()
-		phase1 := BuildQueryStoreFix(q.Options(), 16, "GraniteLive")
-		p, fix, err := BuildFix(FixQueryStore, f, "GraniteLive", &q)
+		phase1 := BuildQueryStoreFix(q.Options(), 16, "WarehouseLive")
+		p, fix, err := BuildFix(FixQueryStore, f, "WarehouseLive", &q)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,11 +236,11 @@ func TestQueryStoreFixThroughGenericPath(t *testing.T) {
 		}
 	}
 	q := okQS()
-	if _, _, err := BuildFix(FixQueryStore, goodFacts(), "GraniteLive", &q); !errors.Is(err, ErrFixNotApplicable) {
+	if _, _, err := BuildFix(FixQueryStore, goodFacts(), "WarehouseLive", &q); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("ok Query Store: %v", err)
 	}
 	q = offQS(false)
-	if _, _, err := BuildFix(FixQueryStore, goodFacts(), "GraniteLive", &q); !errors.Is(err, ErrFixNotApplicable) {
+	if _, _, err := BuildFix(FixQueryStore, goodFacts(), "WarehouseLive", &q); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("Query Store that cannot be fixed: %v", err)
 	}
 }
@@ -279,7 +279,7 @@ func TestServerFixPendingReconfigure(t *testing.T) {
 	if !reflect.DeepEqual(p.Warnings, want) {
 		t.Errorf("warnings %q", p.Warnings)
 	}
-	d := FixChangeDescription(fix, f.ServerName, "GraniteLive", f.PendingOtherThan(fix.Setting)...)
+	d := FixChangeDescription(fix, f.ServerName, "WarehouseLive", f.PendingOtherThan(fix.Setting)...)
 	if d != `cost threshold for parallelism on SQL01\WMS: 5 -> 50; RECONFIGURE also activated: blocked process threshold (s) 0 -> 5, max degree of parallelism 8 -> 4` {
 		t.Errorf("description %q", d)
 	}
@@ -304,7 +304,7 @@ func TestServerFixPendingReconfigure(t *testing.T) {
 	f.PendingConfig = []PendingConfig{{Name: "blocked process threshold (s)", Value: 5, ValueInUse: 0}}
 	p, fix = mustFix(t, "auto-close", f)
 	if !reflect.DeepEqual(p.Warnings, []string{wantDbPerm}) ||
-		FixChangeDescription(fix, f.ServerName, "GraniteLive", f.PendingOtherThan(fix.Setting)...) != "AUTO_CLOSE on GraniteLive: ON -> OFF" {
+		FixChangeDescription(fix, f.ServerName, "WarehouseLive", f.PendingOtherThan(fix.Setting)...) != "AUTO_CLOSE on WarehouseLive: ON -> OFF" {
 		t.Errorf("database fix: %q", p.Warnings)
 	}
 }

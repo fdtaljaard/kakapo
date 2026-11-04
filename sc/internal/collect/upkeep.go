@@ -231,7 +231,7 @@ SELECT cnt, secs, log_grows, last_at, slowest_ms, slowest_file, slowest_at FROM 
 SELECT database_name, cnt, last_at, sample FROM @errors ORDER BY database_name;
 SELECT name FROM @silent ORDER BY name;`
 
-// staleStatsPredicate is the scan's MNT04 rule (and the triage's STA01, Apply-DoNow step 5):
+// staleStatsPredicate is the scan's MNT04 rule (and PerformanceTriage.sql's STA01, Apply-DoNow step 5):
 // statistics on user tables with 10,000 rows or more, at least 20% of them modified, not updated
 // for 7 days.
 const staleStatsPredicate = `FROM sys.stats AS s

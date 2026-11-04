@@ -33,7 +33,7 @@ func TestQueryStoreSnapshotAndChange(t *testing.T) {
 
 	captured := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	q := domain.NewQueryStoreStatus(domain.QueryStoreOptions{ActualState: "OFF", DesiredState: "OFF"}, "13.0.5026.0", captured, true)
-	if err := st.InsertQueryStoreSnapshot(ctx, srv.ID, "GraniteLive", q); err != nil {
+	if err := st.InsertQueryStoreSnapshot(ctx, srv.ID, "WarehouseLive", q); err != nil {
 		t.Fatal(err)
 	}
 	var verdict string
@@ -47,9 +47,9 @@ func TestQueryStoreSnapshotAndChange(t *testing.T) {
 	}
 
 	for want := int64(1); want <= 2; want++ {
-		id, err := st.InsertChange(ctx, domain.Change{ServerID: srv.ID, Database: "GraniteLive", Object: "Query Store",
-			ChangeType: "SETTING", Description: "d", Statement: "ALTER DATABASE [GraniteLive] SET QUERY_STORE = ON;",
-			Rollback: "ALTER DATABASE [GraniteLive] SET QUERY_STORE = OFF;", Result: "On"})
+		id, err := st.InsertChange(ctx, domain.Change{ServerID: srv.ID, Database: "WarehouseLive", Object: "Query Store",
+			ChangeType: "SETTING", Description: "d", Statement: "ALTER DATABASE [WarehouseLive] SET QUERY_STORE = ON;",
+			Rollback: "ALTER DATABASE [WarehouseLive] SET QUERY_STORE = OFF;", Result: "On"})
 		if err != nil {
 			t.Fatal(err)
 		}

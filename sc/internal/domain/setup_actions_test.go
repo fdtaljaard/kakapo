@@ -8,50 +8,50 @@ import (
 )
 
 func TestMultiUserFix(t *testing.T) {
-	f := UserAccessFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", Database: "GraniteLive", UserAccess: "SINGLE_USER",
+	f := UserAccessFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", Database: "WarehouseLive", UserAccess: "SINGLE_USER",
 		Sessions: []UserAccessSession{{Session: 57, Login: `CORP\dba`, Host: "WS01", Program: "SSMS"}}}
 	p, fix, err := BuildMultiUserFix(f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "ALTER DATABASE [GraniteLive] SET MULTI_USER WITH ROLLBACK IMMEDIATE;" ||
-		p.Rollback != "ALTER DATABASE [GraniteLive] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;" ||
-		!reflect.DeepEqual(p.Changes, []Drift{{"user_access", "SINGLE_USER", "MULTI_USER"}}) || p.Database != "GraniteLive" {
+	if p.Statement != "ALTER DATABASE [WarehouseLive] SET MULTI_USER WITH ROLLBACK IMMEDIATE;" ||
+		p.Rollback != "ALTER DATABASE [WarehouseLive] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;" ||
+		!reflect.DeepEqual(p.Changes, []Drift{{"user_access", "SINGLE_USER", "MULTI_USER"}}) || p.Database != "WarehouseLive" {
 		t.Errorf("preview %+v", p)
 	}
 	want := []string{
 		"Whoever set SINGLE_USER mode may be in the middle of a restore or a repair: ask them first.",
-		`Connected to GraniteLive now: session 57 (CORP\dba on WS01, SSMS). WITH ROLLBACK IMMEDIATE disconnects them and undoes their unfinished work.`,
+		`Connected to WarehouseLive now: session 57 (CORP\dba on WS01, SSMS). WITH ROLLBACK IMMEDIATE disconnects them and undoes their unfinished work.`,
 		wantDbPerm,
 	}
 	if !reflect.DeepEqual(p.Warnings, want) {
 		t.Errorf("warnings %q", p.Warnings)
 	}
 	if fix.ID != FixMultiUser || fix.CheckID != "DBC13" || fix.Current != "SINGLE_USER" || fix.Target != "MULTI_USER" ||
-		FixChangeDescription(fix, f.ServerName, f.Database) != "user_access on GraniteLive: SINGLE_USER -> MULTI_USER" {
+		FixChangeDescription(fix, f.ServerName, f.Database) != "user_access on WarehouseLive: SINGLE_USER -> MULTI_USER" {
 		t.Errorf("fix %+v", fix)
 	}
 
 	f.UserAccess, f.Sessions = "restricted_user", nil
-	if p, _, _ := BuildMultiUserFix(f); p.Rollback != "ALTER DATABASE [GraniteLive] SET RESTRICTED_USER WITH ROLLBACK IMMEDIATE;" ||
-		p.Warnings[1] != "Nobody else is connected to GraniteLive now." {
+	if p, _, _ := BuildMultiUserFix(f); p.Rollback != "ALTER DATABASE [WarehouseLive] SET RESTRICTED_USER WITH ROLLBACK IMMEDIATE;" ||
+		p.Warnings[1] != "Nobody else is connected to WarehouseLive now." {
 		t.Errorf("restricted %+v", p)
 	}
 	f.SessionsError = "the login does not have VIEW SERVER STATE"
-	if p, _, _ := BuildMultiUserFix(f); !strings.HasPrefix(p.Warnings[1], "kakapo could not see who is connected to GraniteLive") {
+	if p, _, _ := BuildMultiUserFix(f); !strings.HasPrefix(p.Warnings[1], "kakapo could not see who is connected to WarehouseLive") {
 		t.Errorf("unread sessions %q", p.Warnings)
 	}
 
 	// Someone running DBCC or a restore in it: nothing to apply, the first warning says why.
-	f = UserAccessFacts{Database: "GraniteLive", UserAccess: "SINGLE_USER",
+	f = UserAccessFacts{Database: "WarehouseLive", UserAccess: "SINGLE_USER",
 		Sessions: []UserAccessSession{{Session: 61, Login: "sa", Host: "SQL01", Command: "DBCC"}}}
 	p, _, err = BuildMultiUserFix(f)
 	if err != nil || len(p.Changes) != 0 || p.Statement != "" ||
-		p.Warnings[0] != "Session 61 (sa on SQL01) is running DBCC in GraniteLive now: kakapo does not interrupt it. Wait until it finishes, then preview again." {
+		p.Warnings[0] != "Session 61 (sa on SQL01) is running DBCC in WarehouseLive now: kakapo does not interrupt it. Wait until it finishes, then preview again." {
 		t.Errorf("busy %+v %v", p, err)
 	}
 
-	if _, _, err := BuildMultiUserFix(UserAccessFacts{Database: "GraniteLive", UserAccess: "MULTI_USER"}); !errors.Is(err, ErrFixNotApplicable) {
+	if _, _, err := BuildMultiUserFix(UserAccessFacts{Database: "WarehouseLive", UserAccess: "MULTI_USER"}); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("multi user: %v", err)
 	}
 	if a, ok := MultiUserReadBack("MULTI_USER"); a != "MULTI_USER" || !ok {
@@ -243,7 +243,7 @@ func TestTraceFlagOffFix(t *testing.T) {
 }
 
 func suScopedFacts() ScopedConfigFacts {
-	return ScopedConfigFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", Database: "GraniteLive", ServerMaxDop: 8,
+	return ScopedConfigFacts{ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", Database: "WarehouseLive", ServerMaxDop: 8,
 		Configs: []ScopedConfig{{"MAXDOP", "4"}, {"LEGACY_CARDINALITY_ESTIMATION", "1"}, {"PARAMETER_SNIFFING", "1"}, {"ELEVATE_ONLINE", "OFF"}}}
 }
 
@@ -253,22 +253,22 @@ func TestScopedConfigResetFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "USE [GraniteLive];\nALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 0;" ||
-		p.Rollback != "USE [GraniteLive];\nALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 4;" ||
+	if p.Statement != "USE [WarehouseLive];\nALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 0;" ||
+		p.Rollback != "USE [WarehouseLive];\nALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 4;" ||
 		!reflect.DeepEqual(p.Changes, []Drift{{"MAXDOP", "4", "0"}}) ||
-		p.Warnings[0] != "Queries in GraniteLive follow the server's MAXDOP (8) again." ||
-		p.Warnings[len(p.Warnings)-1] != "Needs the ALTER ANY DATABASE SCOPED CONFIGURATION permission in GraniteLive (db_owner)." {
+		p.Warnings[0] != "Queries in WarehouseLive follow the server's MAXDOP (8) again." ||
+		p.Warnings[len(p.Warnings)-1] != "Needs the ALTER ANY DATABASE SCOPED CONFIGURATION permission in WarehouseLive (db_owner)." {
 		t.Errorf("maxdop %+v", p)
 	}
 	if !reflect.DeepEqual(p.Inputs[0].Options, []string{"LEGACY_CARDINALITY_ESTIMATION", "MAXDOP"}) || p.Options[OptionScopedName] != "MAXDOP" {
 		t.Errorf("inputs %+v", p.Inputs)
 	}
-	if fix.ID != FixScopedConfigReset || fix.CheckID != "DBC14" || FixChangeDescription(fix, f.ServerName, f.Database) != "MAXDOP on GraniteLive: 4 -> 0" {
+	if fix.ID != FixScopedConfigReset || fix.CheckID != "DBC14" || FixChangeDescription(fix, f.ServerName, f.Database) != "MAXDOP on WarehouseLive: 4 -> 0" {
 		t.Errorf("fix %+v", fix)
 	}
 	// The default name is the first that differs; a flag is written ON/OFF.
 	p, _, _ = BuildScopedConfigResetFix(f, nil)
-	if p.Statement != "USE [GraniteLive];\nALTER DATABASE SCOPED CONFIGURATION SET LEGACY_CARDINALITY_ESTIMATION = OFF;" ||
+	if p.Statement != "USE [WarehouseLive];\nALTER DATABASE SCOPED CONFIGURATION SET LEGACY_CARDINALITY_ESTIMATION = OFF;" ||
 		!strings.HasSuffix(p.Rollback, "LEGACY_CARDINALITY_ESTIMATION = ON;") || !strings.Contains(p.Warnings[0], "cardinality estimator") {
 		t.Errorf("legacy CE %+v", p)
 	}

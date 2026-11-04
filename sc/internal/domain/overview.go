@@ -49,13 +49,13 @@ var CardDefs = []CardDef{
 		"Full and log backups, CHECKDB, damaged pages and the worst-case data loss per database."},
 	{CardSetup, "Setup and configuration", "Is it set up the way it should be?", ""},
 	{CardStorage, "Storage and space", "Will it run out of room?",
-		"Free disk, file growth, log size, tempdb and the log tables that need cleanup."},
+		"Free disk, file growth, log size, tempdb and the tables that only grow."},
 	{CardUpkeep, "Upkeep", "Is someone looking after it?",
 		"SQL Agent, failed jobs, index and statistics maintenance, and who is told about errors."},
 	{CardPerformance, "Performance", "Is it slow, and why?",
 		"Waits in plain English, CPU pressure, blocking, deadlocks and the costliest queries."},
 	{CardDesign, "Database design", "Is the database built well?",
-		"Indexes, heaps, the tables everyone waits on, and Granite PreScripts, per database."},
+		"Indexes, heaps, the tables everyone waits on, and the application's stored procedures, per database."},
 }
 
 // Fact is one labelled value on a card.

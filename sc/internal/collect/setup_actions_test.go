@@ -28,7 +28,7 @@ func suReadOnly(t *testing.T, name, q string) {
 // needs a permission in its own TRY with an error column.
 func TestSetupActionReads(t *testing.T) {
 	for name, q := range map[string]string{"user access": Tag(userAccessQuery), "server config": Tag(serverConfigQuery),
-		"trace flags": Tag(traceFlagQuery), "scoped configurations": scopedConfigBatch("Granite]Live")} {
+		"trace flags": Tag(traceFlagQuery), "scoped configurations": scopedConfigBatch("Warehouse]Live")} {
 		suReadOnly(t, name, q)
 	}
 	if n := strings.Count(traceFlagQuery, "BEGIN TRY"); n != 2 || !strings.Contains(traceFlagQuery, "SELECT @tfError, @argsError") ||
@@ -43,7 +43,7 @@ func TestSetupActionReads(t *testing.T) {
 		!strings.Contains(serverConfigQuery, "is_advanced") {
 		t.Errorf("server config query\n%s", serverConfigQuery)
 	}
-	if b := scopedConfigBatch("Granite]Live"); !strings.Contains(b, "EXEC [Granite]]Live].sys.sp_executesql N'/* kakapo */ SELECT name, CONVERT(nvarchar(400), value) FROM sys.database_scoped_configurations ORDER BY name;';") {
+	if b := scopedConfigBatch("Warehouse]Live"); !strings.Contains(b, "EXEC [Warehouse]]Live].sys.sp_executesql N'/* kakapo */ SELECT name, CONVERT(nvarchar(400), value) FROM sys.database_scoped_configurations ORDER BY name;';") {
 		t.Errorf("scoped batch\n%s", b)
 	}
 }

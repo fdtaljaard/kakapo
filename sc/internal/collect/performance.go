@@ -747,7 +747,7 @@ func readQueryStoreTop(ctx context.Context, db *sql.DB, database string) (string
 	return state.String, total.Int64, top, nil
 }
 
-// readPlanCacheTop reads the plan cache's top 5 for the database, as the triage does.
+// readPlanCacheTop reads the plan cache's top 5 for the database, as PerformanceTriage.sql does.
 func readPlanCacheTop(ctx context.Context, db *sql.DB, database string) (int64, []domain.TopQuery, error) {
 	rows, err := db.QueryContext(ctx, planCacheTopQuery, sql.Named("db", database), sql.Named("limit", int64(planLimitChars)))
 	if err != nil {

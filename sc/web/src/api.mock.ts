@@ -9,7 +9,7 @@ import { mockSample } from "./api-sample.mock"
 // Storage green, amber (with a stored Room for CHECKDB), amber; Upkeep green, amber (a failed backup job,
 // stale statistics with a fix), amber (Agent stopped, no operator); Performance green, amber (with a stored
 // deadlock report), red (restarted 9 hours ago, so its overview says so too). The server
-// remembers GraniteLive, so Home opens straight into it; /instances/1 shows "Database: GraniteLive", and
+// remembers WarehouseLive, so Home opens straight into it; /instances/1 shows "Database: WarehouseLive", and
 // the picker only once the database is cleared in Edit.
 // A server added through the form gets the same databases; one whose host contains "down" is unreachable,
 // and an edit (PUT /api/servers/{id}) to such a host fails with 502 and changes nothing.
@@ -48,7 +48,7 @@ const server: Server = {
   name: "Client A production",
   host: "CLIENTSQL01\\WMS",
   auth: "windows",
-  database: "GraniteLive",
+  database: "WarehouseLive",
   encrypt: false,
   trustCert: false,
   createdAt: "2026-11-03T06:00:00Z",
@@ -119,9 +119,9 @@ const offStatus: QueryStoreStatus = {
 
 // Mutable so that apply turns the line green (and the Setup card with it) until the page is reloaded.
 const databases: DatabaseStatus[] = [
-  { name: "GraniteLive", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: okStatus(471) },
-  { name: "GraniteTest", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: okStatus(588) },
-  { name: "Granite_Archive", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: offStatus },
+  { name: "WarehouseLive", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: okStatus(471) },
+  { name: "WarehouseTest", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: okStatus(588) },
+  { name: "Warehouse_Archive", state: "ONLINE", readOnly: false, isSecondaryReplica: false, queryStore: offStatus },
 ]
 
 // Newest first. Apply adds a row at the top.
@@ -129,22 +129,22 @@ const changes: Change[] = [
   {
     id: 2,
     serverId: 1,
-    database: "GraniteLive",
+    database: "WarehouseLive",
     changedAt: hoursAgo(20),
     object: "Query Store",
     changeType: "SETTING",
     description:
-      "Query Store on GraniteLive: OPERATION_MODE OFF -> READ_WRITE, QUERY_CAPTURE_MODE ALL -> AUTO, MAX_STORAGE_SIZE_MB 100 -> 2048, INTERVAL_LENGTH_MINUTES 60 -> 15",
+      "Query Store on WarehouseLive: OPERATION_MODE OFF -> READ_WRITE, QUERY_CAPTURE_MODE ALL -> AUTO, MAX_STORAGE_SIZE_MB 100 -> 2048, INTERVAL_LENGTH_MINUTES 60 -> 15",
     result: "On, 0% full, 15-min intervals, 30 days",
   },
   {
     id: 1,
     serverId: 1,
-    database: "GraniteTest",
+    database: "WarehouseTest",
     changedAt: hoursAgo(24 * 6 + 3),
     object: "Query Store",
     changeType: "SETTING",
-    description: "Query Store on GraniteTest: MAX_PLANS_PER_QUERY 1000 -> 200",
+    description: "Query Store on WarehouseTest: MAX_PLANS_PER_QUERY 1000 -> 200",
     result: "On, 28% full, 60-min intervals, 30 days; still differs: INTERVAL_LENGTH_MINUTES 60 (target 15)",
   },
 ]
@@ -175,10 +175,10 @@ function buildPreview(db: DatabaseStatus): FixPreview {
   return { database: db.name, engineVersion: server.lastVersion!, changes, statement, rollback, warnings }
 }
 
-// Granite_Archive's instance restarted 9 hours ago (the Performance card's restart note); the others 5.2
+// Warehouse_Archive's instance restarted 9 hours ago (the Performance card's restart note); the others 5.2
 // days ago. Mock simplification: the instance is kept per database.
 function instanceInfo(srv: Server, db?: DatabaseStatus): InstanceInfo {
-  const hours = db?.name === "Granite_Archive" ? 9.4 : 24 * 5.2
+  const hours = db?.name === "Warehouse_Archive" ? 9.4 : 24 * 5.2
   return {
     serverId: srv.id,
     name: srv.name,
@@ -195,8 +195,8 @@ function instanceInfo(srv: Server, db?: DatabaseStatus): InstanceInfo {
 }
 
 // Phase 3c: the Setup and configuration card and its detail per database (phase3c-contract.md), with the
-// generic fixes. GraniteLive green (only the INS01 Info summary; Query Store ok); GraniteTest amber
-// (INS05 cost threshold 5, DBC02 AUTO_CLOSE on, CPY04 an orphaned user); Granite_Archive amber (DBC10
+// generic fixes. WarehouseLive green (only the INS01 Info summary; Query Store ok); WarehouseTest amber
+// (INS05 cost threshold 5, DBC02 AUTO_CLOSE on, CPY04 an orphaned user); Warehouse_Archive amber (DBC10
 // Query Store off, INS06 optimize for ad hoc off). Texts are the scan's (01-QuickScan.sql section 1 and
 // 2, PerformanceTriage.sql CPY04, Checks.csv). Mock simplification: the instance settings are kept per
 // database, so each database shows its own spread; on a real server an INS finding shows on every
@@ -224,12 +224,12 @@ const setupChecks: { checkId: string; title: string; owner: Finding["owner"]; th
   { checkId: "DBC07", title: "Database owner is a valid login", owner: "Us", thenCheck: "Re-run: DBC07 gone." },
   { checkId: "DBC09", title: "Indirect checkpoints (target recovery time)", owner: "Us", thenCheck: "Re-run: DBC09 gone." },
   { checkId: "DBC10", title: "Query Store is on and recording", owner: "Us", thenCheck: "Re-run: DBC10 gone. The Tuning Report can run after a few days." },
-  { checkId: "DBC11", title: "TRUSTWORTHY is off", owner: "Us", thenCheck: "Re-run: DBC11 gone and CLR code still runs (CPY06 in the triage)." },
+  { checkId: "DBC11", title: "TRUSTWORTHY is off", owner: "Us", thenCheck: "Re-run: DBC11 gone and CLR code still runs." },
   { checkId: "CFG01", title: "Legacy cardinality estimator forced", owner: "Us", thenCheck: "Re-run: CFG01 gone." },
   { checkId: "CPY01", title: "Where this database came from", owner: "Us", thenCheck: "Context only." },
   { checkId: "CPY02", title: "Collation matches the server", owner: "Us", thenCheck: "Decide first: collation is a project." },
   { checkId: "CPY04", title: "Users without a matching login (orphaned)", owner: "Us", thenCheck: "Re-run: CPY04 gone." },
-  { checkId: "CPY06", title: "CLR code can run", owner: "Us", thenCheck: "A clr_ procedure runs without error." },
+  { checkId: "CPY06", title: "CLR code can run", owner: "Us", thenCheck: "A procedure that uses the CLR code runs without error." },
 ]
 
 const INS13_SKIPPED = "The login is not sysadmin, so the power plan could not be read (xp_regread)."
@@ -243,9 +243,9 @@ interface SetupState {
 }
 
 const setupStates: Record<string, SetupState> = {
-  GraniteLive: { costThreshold: 50, optimizeAdhoc: true, autoClose: false, orphanedUsers: [] },
-  GraniteTest: { costThreshold: 5, optimizeAdhoc: true, autoClose: true, orphanedUsers: ["wms_report"] },
-  Granite_Archive: { costThreshold: 50, optimizeAdhoc: false, autoClose: false, orphanedUsers: [] },
+  WarehouseLive: { costThreshold: 50, optimizeAdhoc: true, autoClose: false, orphanedUsers: [] },
+  WarehouseTest: { costThreshold: 5, optimizeAdhoc: true, autoClose: true, orphanedUsers: ["wms_report"] },
+  Warehouse_Archive: { costThreshold: 50, optimizeAdhoc: false, autoClose: false, orphanedUsers: [] },
 }
 
 const setupStateOf = (db: string): SetupState =>
@@ -568,9 +568,9 @@ async function applyFix(srv: Server, info: InstanceInfo, db: DatabaseStatus, fix
 }
 
 // Phase 3d: the Upkeep card and its detail per database (phase3d-contract.md), as the backend builds them
-// from the scan. GraniteLive green (Agent running, a maintenance job, no failed job, operator and alerts);
-// GraniteTest amber (MNT02 High: the full backup job failed; MNT04 Medium: 6 stale statistics on 4
-// tables, with the update-statistics fix); Granite_Archive amber (MNT01 High: Agent stopped; MNT07 Low:
+// from the scan. WarehouseLive green (Agent running, a maintenance job, no failed job, operator and alerts);
+// WarehouseTest amber (MNT02 High: the full backup job failed; MNT04 Medium: 6 stale statistics on 4
+// tables, with the update-statistics fix); Warehouse_Archive amber (MNT01 High: Agent stopped; MNT07 Low:
 // no operator). Texts are the scan's (01-QuickScan.sql sections 6 and 8, Checks.csv). Mock
 // simplification, as Setup: the instance-level upkeep is kept per database. Apply updates the
 // statistics, so MNT04 goes until the page reloads.
@@ -618,20 +618,20 @@ interface UpkeepState {
 }
 
 const upkeepStates: Record<string, UpkeepState> = {
-  GraniteLive: { agent: "running", failedJob: null, operators: 1, alertsOn: 10, staleStats: [] },
-  GraniteTest: {
+  WarehouseLive: { agent: "running", failedJob: null, operators: 1, alertsOn: 10, staleStats: [] },
+  WarehouseTest: {
     agent: "running",
     failedJob: { name: "DatabaseBackup - FULL", fails: 2, step: "DatabaseBackup" },
     operators: 1,
     alertsOn: 10,
     staleStats: [
       ["dbo", "Transaction", 39_120_644, 11_804_377, 2],
-      ["dbo", "TrackingEntity", 10_012_377, 3_410_926, 2],
-      ["dbo", "DocumentDetail", 6_244_091, 1_733_502, 1],
-      ["dbo", "PickSlipLine", 1_941_006, 612_330, 1],
+      ["dbo", "StockUnit", 10_012_377, 3_410_926, 2],
+      ["dbo", "SalesOrderLine", 6_244_091, 1_733_502, 1],
+      ["dbo", "PickLine", 1_941_006, 612_330, 1],
     ],
   },
-  Granite_Archive: { agent: "stopped", failedJob: null, operators: 0, alertsOn: 0, staleStats: [] },
+  Warehouse_Archive: { agent: "stopped", failedJob: null, operators: 0, alertsOn: 0, staleStats: [] },
 }
 
 const upkeepStateOf = (db: string): UpkeepState =>
@@ -863,8 +863,8 @@ async function applyStatistics(srv: Server, info: InstanceInfo, db: DatabaseStat
 }
 
 // Phase 3a: the Backups card and its detail per database (phase3a-contract.md), as the backend builds
-// them from the scan: GraniteLive green (15-minute log backups, CHECKDB 3 days ago), GraniteTest amber
-// (FULL without log backups, CHECKDB 20 days ago), Granite_Archive red (SIMPLE, never backed up,
+// them from the scan: WarehouseLive green (15-minute log backups, CHECKDB 3 days ago), WarehouseTest amber
+// (FULL without log backups, CHECKDB 20 days ago), Warehouse_Archive red (SIMPLE, never backed up,
 // created a month ago). Texts are the scan's (01-QuickScan.sql section 5, Checks.csv).
 
 const backupChecks: { checkId: string; title: string; thenCheck: string }[] = [
@@ -952,7 +952,7 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
     note: "",
   }
 
-  if (db.name === "Granite_Archive") {
+  if (db.name === "Warehouse_Archive") {
     const checkDb = daysAgoAt(10, 3, 5)
     const findings: Finding[] = [
       backupFinding("BAK01", db.name, {
@@ -1003,7 +1003,7 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
     }
   }
 
-  if (db.name === "GraniteTest") {
+  if (db.name === "WarehouseTest") {
     const lastFull = lastAt(1, 0)
     const checkDb = daysAgoAt(20, 3, 12)
     const findings: Finding[] = [
@@ -1062,7 +1062,7 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
     }
   }
 
-  // GraniteLive: FULL recovery, a full every night at 02:00 and the log every 15 minutes.
+  // WarehouseLive: FULL recovery, a full every night at 02:00 and the log every 15 minutes.
   const lastFull = lastAt(2, 0)
   const lastLog = new Date()
   lastLog.setMinutes(lastLog.getMinutes() - (lastLog.getMinutes() % 15), 0, 0)
@@ -1093,8 +1093,8 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
   }
 }
 
-// Phase 3g: the backup schedule fix on the Backups card (phase3g-contract.md). Granite_Archive (SIMPLE,
-// never backed up: BAK01 offers the full job; Agent stopped, no operator) and GraniteTest (FULL without
+// Phase 3g: the backup schedule fix on the Backups card (phase3g-contract.md). Warehouse_Archive (SIMPLE,
+// never backed up: BAK01 offers the full job; Agent stopped, no operator) and WarehouseTest (FULL without
 // log backups: BAK02 offers the log job only, as the nightly "DatabaseBackup - FULL" job takes the fulls).
 // The folder defaults to the instance's B:\SQLBackup; X:\nowhere does not exist (no changes, Apply
 // disabled); a folder on the database's data drive warns. Applying creates the jobs (kept here); then the
@@ -1103,15 +1103,15 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
 
 const MOCK_BACKUP_DIR = "B:\\SQLBackup"
 const kakapoJobs: Record<string, string[]> = {}
-const dataDrive: Record<string, string> = { GraniteLive: "D:", GraniteTest: "E:", Granite_Archive: "F:" }
+const dataDrive: Record<string, string> = { WarehouseLive: "D:", WarehouseTest: "E:", Warehouse_Archive: "F:" }
 type JobKind = "full" | "log"
 const jobName = (db: string, kind: JobKind) => `kakapo: ${db} ${kind} backup`
 const nstr = (v: string) => `N'${v.replace(/'/g, "''")}'`
 
 // The jobs the fix creates on a database: none where backups are fine.
 function scheduleKinds(db: DatabaseStatus): JobKind[] {
-  if (db.name === "Granite_Archive") return ["full"]
-  if (db.name === "GraniteTest") return ["log"]
+  if (db.name === "Warehouse_Archive") return ["full"]
+  if (db.name === "WarehouseTest") return ["log"]
   return []
 }
 
@@ -1221,7 +1221,7 @@ function backupSchedulePreview(info: InstanceInfo, db: DatabaseStatus, options?:
   const runNow = full && (options?.runNow ?? "true") === "true"
   const dir = `${folder.replace(/\\+$/, "")}\\${db.name}`
   const server = info.serverName
-  const operator = db.name === "GraniteTest" ? "DBA Team" : ""
+  const operator = db.name === "WarehouseTest" ? "DBA Team" : ""
   let warning = ""
   if (!folder) warning = `Type the folder the backups go to, as the SQL Server service on ${server} sees it.`
   else if (!/^([A-Za-z]:\\|\\\\[^\\]+\\[^\\]+)/.test(folder))
@@ -1255,7 +1255,7 @@ function backupSchedulePreview(info: InstanceInfo, db: DatabaseStatus, options?:
   }
   const warnings = [
     ...(warning ? [warning] : []),
-    ...(db.name === "Granite_Archive"
+    ...(db.name === "Warehouse_Archive"
       ? ["SQL Server Agent is stopped (Stopped): the jobs will not run until it starts (MNT01)."]
       : []),
     "The backup job runs as the SQL Server service account; the folder must let it write.",
@@ -1351,7 +1351,7 @@ function removeSchedulePreview(info: InstanceInfo, db: DatabaseStatus): FixPrevi
       target: "deleted",
     })),
     statement: deleteJobs(names),
-    rollback: scheduleBatch(db.name, `${MOCK_BACKUP_DIR}\\${db.name}`, scheduleKinds(db), db.name === "GraniteTest" ? "DBA Team" : ""),
+    rollback: scheduleBatch(db.name, `${MOCK_BACKUP_DIR}\\${db.name}`, scheduleKinds(db), db.name === "WarehouseTest" ? "DBA Team" : ""),
     warnings: [
       `The backup files in ${MOCK_BACKUP_DIR}\\${db.name} are not deleted.`,
       `Needs sysadmin on ${info.serverName} (deleting Agent jobs owned by sa).`,
@@ -1387,10 +1387,12 @@ async function applyRemoveSchedule(srv: Server, info: InstanceInfo, db: Database
 
 // Phase 3b: the Storage and space card and its detail per database (phase3b-contract.md), as the backend
 // builds them from the scan. One SQL Server 2022 Standard instance: tempdb on T:\, logs on L:\.
-// GraniteLive green (data on D:\); GraniteTest amber (data on E:\ at 86% full: STO01 Medium, and an
-// IntegrationLog with no cleanup: IDX10 Medium) with a stored Room for CHECKDB result (Medium: tempdb
-// would have to grow); Granite_Archive amber (data on F:\, an int identity at 92%: IDX13 High).
-// Texts are the scan's (01-QuickScan.sql section 3, PerformanceTriage.sql IDX01/IDX10/IDX13, Checks.csv).
+// WarehouseLive green (data on D:\); WarehouseTest amber (data on E:\ at 86% full: STO01 Medium, and an
+// StockUnitAudit and an IntegrationLog that only grow: IDX10 Medium and Low) with a stored Room for
+// CHECKDB result (Medium: tempdb would have to grow); Warehouse_Archive amber (data on F:\, an int
+// identity at 92%: IDX13 High, and its StockUnitAudit only grows: IDX10 Medium). WarehouseLive's log
+// and history tables are cleaned up nightly: their oldest rows are recent, so no IDX10.
+// Texts are the scan's (01-QuickScan.sql section 3, PerformanceTriage.sql IDX01/IDX13, Checks.csv; IDX10 is kakapo's own).
 
 const storageChecks: { checkId: string; title: string; owner: Finding["owner"]; thenCheck: string }[] = [
   { checkId: "STO01", title: "Disk free space", owner: "Client IT", thenCheck: "Re-run: free space above the threshold in STO01." },
@@ -1434,9 +1436,9 @@ const storageChecks: { checkId: string; title: string; owner: Finding["owner"]; 
   { checkId: "IDX07", title: "Oversized or mostly empty files", owner: "Us", thenCheck: "Re-run: IDX07 gone." },
   {
     checkId: "IDX10",
-    title: "Granite log and history tables without a cleanup",
-    owner: "Us",
-    thenCheck: "After the cleanup runs: row counts in IDX10 stop growing.",
+    title: "Application tables that only grow",
+    owner: "Vendor",
+    thenCheck: "Re-run after the cleanup: the row count stopped growing.",
   },
   {
     checkId: "IDX13",
@@ -1452,6 +1454,12 @@ const STO10_NOT_RUN =
 
 const n0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 })
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`
+
+// monthsSince counts the whole months from d to now, as IDX10 does.
+function monthsSince(d: Date): number {
+  const now = new Date()
+  return (now.getFullYear() - d.getFullYear()) * 12 + now.getMonth() - d.getMonth() - (now.getDate() < d.getDate() ? 1 : 0)
+}
 
 function storageFinding(
   checkId: string,
@@ -1487,14 +1495,14 @@ function biggestTables(database: string, tables: TableSize[]): Finding {
 
 // The per-database inputs of STO10: the estimate and the data volume's free space and the data size.
 const checkdbInputs: Record<string, { estimateKB: number; dataVolume: string; dataFreeMB: number; dataSizeMB: number }> = {
-  GraniteLive: { estimateKB: 6_291_456, dataVolume: "D:\\", dataFreeMB: 217_088, dataSizeMB: 28_934 },
-  GraniteTest: { estimateKB: 9_175_040, dataVolume: "E:\\", dataFreeMB: 42_086, dataSizeMB: 46_212 },
-  Granite_Archive: { estimateKB: 13_107_200, dataVolume: "F:\\", dataFreeMB: 192_512, dataSizeMB: 109_322 },
+  WarehouseLive: { estimateKB: 6_291_456, dataVolume: "D:\\", dataFreeMB: 217_088, dataSizeMB: 28_934 },
+  WarehouseTest: { estimateKB: 9_175_040, dataVolume: "E:\\", dataFreeMB: 42_086, dataSizeMB: 46_212 },
+  Warehouse_Archive: { estimateKB: 13_107_200, dataVolume: "F:\\", dataFreeMB: 192_512, dataSizeMB: 109_322 },
 }
 
-// The stored STO10 results by database. GraniteTest was estimated two days ago, while tempdb was busy.
+// The stored STO10 results by database. WarehouseTest was estimated two days ago, while tempdb was busy.
 const checkdbRooms: Record<string, CheckdbRoom | null> = {
-  GraniteTest: checkdbRoomResult("GraniteTest", daysAgoAt(2, 22, 40).toISOString(), 38.4, 11_264, 98_304),
+  WarehouseTest: checkdbRoomResult("WarehouseTest", daysAgoAt(2, 22, 40).toISOString(), 38.4, 11_264, 98_304),
 }
 
 // The verdict of the contract's STO10 table, for the tempdb free and room given.
@@ -1592,9 +1600,9 @@ function storageDetail(db: DatabaseStatus): CardDetail {
   }
   const checkdbRoom = checkdbRooms[db.name] ?? null
 
-  if (db.name === "Granite_Archive") {
+  if (db.name === "Warehouse_Archive") {
     const findings: Finding[] = [
-      storageFinding("IDX13", "[dbo].[TrackingEntityAudit].ID", {
+      storageFinding("IDX13", "[dbo].[StockUnitAudit].ID", {
         severity: "High",
         when: "Decide first",
         effort: "Project",
@@ -1604,32 +1612,42 @@ function storageDetail(db: DatabaseStatus): CardDetail {
           "Plan the change to bigint now (the column, every foreign key that references it, and the code that holds the value). Deleting old rows (IDX10) does not reset the identity.",
         evidence: "Type int, seed 1, increment 1.",
       }),
+      storageFinding("IDX10", "[dbo].[StockUnitAudit]", {
+        severity: "Medium",
+        when: "Decide first",
+        effort: "Moderate",
+        finding: `dbo.StockUnitAudit has 412,906,118 rows (55,016 MB) and looks like a log or history table; its oldest row is from 2018-06-01 (${monthsSince(new Date(2018, 5, 1))} months ago), so nothing seems to remove old rows.`,
+        why: "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk.",
+        doThis:
+          "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so.",
+        evidence: `Rows: 412,906,118. Size: 55,016 MB. Oldest AuditDate: ${scanTime(new Date(2018, 5, 1, 6, 0))}.`,
+      }),
       biggestTables(db.name, [
-        ["[dbo].[TrackingEntityAudit]", 48_912, 6_104, 412_906_118],
+        ["[dbo].[StockUnitAudit]", 48_912, 6_104, 412_906_118],
         ["[dbo].[Transaction]", 31_440, 4_810, 160_212_885],
-        ["[dbo].[DocumentDetail]", 9_806, 2_114, 31_877_402],
-        ["[dbo].[Document]", 3_120, 990, 7_604_331],
-        ["[dbo].[TrackingEntity]", 2_904, 1_622, 8_940_110],
-        ["[dbo].[PickSlipLine]", 1_210, 402, 5_770_214],
-        ["[dbo].[StockTakeLine]", 980, 318, 4_812_660],
+        ["[dbo].[SalesOrderLine]", 9_806, 2_114, 31_877_402],
+        ["[dbo].[SalesOrder]", 3_120, 990, 7_604_331],
+        ["[dbo].[StockUnit]", 2_904, 1_622, 8_940_110],
+        ["[dbo].[PickLine]", 1_210, 402, 5_770_214],
+        ["[dbo].[CountLine]", 980, 318, 4_812_660],
         ["[dbo].[ReceiptLine]", 702, 210, 3_120_447],
         ["[dbo].[IntegrationLog]", 188, 31, 610_004],
-        ["[dbo].[EmailLog]", 41, 6, 120_331],
+        ["[dbo].[MailLog]", 41, 6, 120_331],
       ]),
     ]
     return {
       card: {
         ...base,
         status: "amber",
-        statusText: "1 thing to do",
+        statusText: "2 things to do",
         verdict: findings[0].finding,
         facts: [
           { label: "Tightest drive", value: "F:\\ 47% free (188 GB)", tone: "normal" },
           { label: "Database size", value: "142.7 GB, 22% indexes", tone: "normal" },
           { label: "Disk latency", value: "14 ms read, 2 ms write", tone: "normal" },
-          { label: "Identity range", value: "92% used (TrackingEntityAudit)", tone: "worse" },
+          { label: "Identity range", value: "92% used (StockUnitAudit)", tone: "worse" },
         ],
-        toDo: 1,
+        toDo: 2,
         forClientIT: 0,
       },
       findings,
@@ -1638,11 +1656,9 @@ function storageDetail(db: DatabaseStatus): CardDetail {
     }
   }
 
-  if (db.name === "GraniteTest") {
+  if (db.name === "WarehouseTest") {
     const oldest = new Date(2023, 1, 14, 8, 12)
-    const newest = new Date(Date.now() - 4 * 60_000)
     const rows = 7_412_880
-    const perDay = Math.floor(rows / Math.floor((newest.getTime() - oldest.getTime()) / 86_400_000))
     const findings: Finding[] = [
       storageFinding("STO01", "E:\\", {
         severity: "Medium",
@@ -1654,47 +1670,52 @@ function storageDetail(db: DatabaseStatus): CardDetail {
           "Free up or add space with the infrastructure team. Look for old backup files, oversized log files (STO07) and files that could move to another volume.",
         evidence: "Free: 41 GB of 300 GB.",
       }),
-      storageFinding("IDX10", "[dbo].[IntegrationLog]", {
+      storageFinding("IDX10", "[dbo].[StockUnitAudit]", {
         severity: "Medium",
         when: "Decide first",
         effort: "Moderate",
-        finding: `IntegrationLog holds ${n0.format(rows)} rows (2,318 MB) going back to 2023-02-14. It keeps integration messages and errors, and nothing in Granite removes old rows.`,
-        why: "The table grows for ever. It slows every query and screen that reads it, and costs disk, memory, backup and restore time. Copies of the database to another site carry it along.",
-        doThis: [
-          "Agree with the client how long to keep (suggested: 90 days), then schedule a cleanup outside busy hours that deletes in small batches, for example:",
-          "DECLARE @Cutoff bigint = (SELECT MIN([ID]) FROM dbo.[IntegrationLog] WHERE [Date] >= DATEADD(DAY, -90, GETDATE()));",
-          "WHILE 1 = 1 BEGIN DELETE TOP (20000) FROM dbo.[IntegrationLog] WHERE [ID] < @Cutoff; IF @@ROWCOUNT = 0 BREAK; END;",
-          "Small batches keep locks short and the log small (run log backups during the first big cleanup). Deleting frees space inside the file for new rows; it does not shrink the file. Do not delete everything in one statement.",
-          "Ready-made: GraniteLogCleanup\\Custom_CleanupLogTables.sql does this for all three tables, with a preview mode and a time limit.",
-        ].join("\n"),
-        evidence: `Rows: ${n0.format(rows)}. Size: 2,318 MB. Oldest: ${scanTime(oldest)}, newest: ${scanTime(newest)}. About ${n0.format(perDay)} new rows a day.`,
+        finding: "dbo.StockUnitAudit has 21,904,018 rows (4,152 MB) and looks like a log or history table.",
+        why: "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk.",
+        doThis:
+          "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so.",
+        evidence: "Rows: 21,904,018. Size: 4,152 MB. Its date column AuditDate is not indexed, so how far back its rows go was not read.",
+      }),
+      storageFinding("IDX10", "[dbo].[IntegrationLog]", {
+        severity: "Low",
+        when: "Decide first",
+        effort: "Moderate",
+        finding: `dbo.IntegrationLog has ${n0.format(rows)} rows (2,318 MB) and looks like a log or history table; its oldest row is from 2023-02-14 (${monthsSince(oldest)} months ago), so nothing seems to remove old rows.`,
+        why: "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk.",
+        doThis:
+          "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so.",
+        evidence: `Rows: ${n0.format(rows)}. Size: 2,318 MB. Oldest LoggedAt: ${scanTime(oldest)}.`,
       }),
       biggestTables(db.name, [
         ["[dbo].[Transaction]", 8_104, 5_742, 39_120_644],
         ["[dbo].[IntegrationLog]", 2_071, 247, rows],
-        ["[dbo].[TrackingEntity]", 3_488, 2_940, 10_012_377],
-        ["[dbo].[TrackingEntityAudit]", 3_021, 1_131, 21_904_018],
-        ["[dbo].[DocumentDetail]", 1_860, 1_418, 6_244_091],
-        ["[dbo].[Document]", 616, 522, 1_431_502],
-        ["[dbo].[StockTakeLine]", 506, 240, 2_349_870],
-        ["[dbo].[PickSlipLine]", 410, 294, 1_941_006],
-        ["[dbo].[ScheduledJobsHistory]", 141, 25, 671_233],
-        ["[dbo].[EmailLog]", 88, 12, 214_960],
+        ["[dbo].[StockUnit]", 3_488, 2_940, 10_012_377],
+        ["[dbo].[StockUnitAudit]", 3_021, 1_131, 21_904_018],
+        ["[dbo].[SalesOrderLine]", 1_860, 1_418, 6_244_091],
+        ["[dbo].[SalesOrder]", 616, 522, 1_431_502],
+        ["[dbo].[CountLine]", 506, 240, 2_349_870],
+        ["[dbo].[PickLine]", 410, 294, 1_941_006],
+        ["[dbo].[JobHistory]", 141, 25, 671_233],
+        ["[dbo].[MailLog]", 88, 12, 214_960],
       ]),
     ]
     return {
       card: {
         ...base,
         status: "amber",
-        statusText: "2 things to do",
+        statusText: "3 things to do",
         verdict: findings[0].finding,
         facts: [
           { label: "Tightest drive", value: "E:\\ 14% free (41 GB)", tone: "bad" },
           { label: "Database size", value: "61.2 GB, 37% indexes", tone: "normal" },
           { label: "Disk latency", value: "11 ms read, 3 ms write", tone: "normal" },
-          { label: "Log tables", value: "1 without cleanup, IntegrationLog 2,318 MB", tone: "bad" },
+          { label: "Tables that only grow", value: "2, biggest dbo.StockUnitAudit 4,152 MB", tone: "bad" },
         ],
-        toDo: 2,
+        toDo: 3,
         forClientIT: 1,
       },
       findings,
@@ -1703,25 +1724,26 @@ function storageDetail(db: DatabaseStatus): CardDetail {
     }
   }
 
-  // GraniteLive: data on D:\ with room to spare, the log on L:\, log tables cleaned up nightly.
+  // WarehouseLive: data on D:\ with room to spare, the log on L:\, log and history tables cleaned up
+  // nightly (their oldest rows are a few weeks old, so IDX10 finds nothing).
   const findings: Finding[] = [
     biggestTables(db.name, [
       ["[dbo].[Transaction]", 7_912, 5_604, 38_214_907],
-      ["[dbo].[TrackingEntity]", 3_410, 2_872, 9_804_112],
-      ["[dbo].[TrackingEntityAudit]", 2_966, 1_108, 21_470_355],
-      ["[dbo].[DocumentDetail]", 1_822, 1_390, 6_120_448],
-      ["[dbo].[Document]", 604, 512, 1_402_977],
-      ["[dbo].[StockTakeLine]", 498, 236, 2_311_064],
-      ["[dbo].[PickSlipLine]", 402, 288, 1_903_215],
+      ["[dbo].[StockUnit]", 3_410, 2_872, 9_804_112],
+      ["[dbo].[StockUnitAudit]", 2_966, 1_108, 21_470_355],
+      ["[dbo].[SalesOrderLine]", 1_822, 1_390, 6_120_448],
+      ["[dbo].[SalesOrder]", 604, 512, 1_402_977],
+      ["[dbo].[CountLine]", 498, 236, 2_311_064],
+      ["[dbo].[PickLine]", 402, 288, 1_903_215],
       ["[dbo].[IntegrationLog]", 212, 34, 288_410],
-      ["[dbo].[MasterItemAlias]", 96, 71, 402_118],
-      ["[dbo].[ScheduledJobsHistory]", 128, 22, 610_902],
+      ["[dbo].[ItemAlias]", 96, 71, 402_118],
+      ["[dbo].[JobHistory]", 128, 22, 610_902],
     ]),
   ]
   return {
     card: {
       ...base,
-      verdict: "GraniteLive is 38.4 GB on D:\\, which has 212 GB free.",
+      verdict: "WarehouseLive is 38.4 GB on D:\\, which has 212 GB free.",
       facts: [
         { label: "Tightest drive", value: "D:\\ 42% free (212 GB)", tone: "normal" },
         { label: "Database size", value: "38.4 GB, 41% indexes", tone: "normal" },
@@ -1736,9 +1758,9 @@ function storageDetail(db: DatabaseStatus): CardDetail {
 }
 
 // Phase 3e: the Performance card and its detail per database (phase3e-contract.md), as the backend builds
-// them. GraniteLive green (the top wait is disk reads at 22%, nothing else stands out); GraniteTest amber
+// them. WarehouseLive green (the top wait is disk reads at 22%, nothing else stands out); WarehouseTest amber
 // (ACT02 Medium right now, WRK01 CXPACKET 41% Medium, WRK02 Medium, QRY01 Low with an implicit conversion,
-// WRK06 Info, SRV04 Info, and a stored deadlock report with two pairs); Granite_Archive red (restarted 9
+// WRK06 Info, SRV04 Info, and a stored deadlock report with two pairs); Warehouse_Archive red (restarted 9
 // hours ago: PRS01 Critical, threads at 94%, and ACT01 High, a scheduler session blocking 14 others). Texts are the scan's and the
 // triage's (01-QuickScan.sql section 7 and WRK05 to WRK07, PerformanceTriage.sql SRV04, ACT01, ACT03,
 // Checks.csv). Mock simplification, as Setup: the instance-level figures are kept per database.
@@ -1777,14 +1799,14 @@ const performanceChecks: { checkId: string; title: string; owner: Finding["owner
     checkId: "SRV04",
     title: "Which databases use the server",
     owner: "Us",
-    thenCheck: "Context: if another database is busier run the triage there.",
+    thenCheck: "Context: if another database is busier, choose that database and check it too.",
   },
   { checkId: "QRY01", title: "Costliest queries", owner: "Us", thenCheck: "Re-run after a business day: the query's share is lower." },
   {
     checkId: "WRK03",
     title: "Missing index suggestions",
     owner: "Us",
-    thenCheck: "Never create them as-is: run the triage on that database (IDX02 IDX09) first.",
+    thenCheck: "Never create a suggested index as it is: check the table's existing indexes first.",
   },
   { checkId: "DLK01", title: "Deadlock report", owner: "Us", thenCheck: "Re-run after a week: fewer deadlocks for the top pair." },
 ]
@@ -1870,27 +1892,27 @@ function databaseLoad(database: string, myCpu: number, myReads: number, busiest:
 // A deadlock pair as the report reads it, with the lock types for the DLK01 evidence.
 type MockPair = DeadlockPair & { locks: string }
 
-// GraniteTest's two pairs: picking against the integration post (count and last vary), and a transfer
+// WarehouseTest's two pairs: picking against the integration post (count and last vary), and a transfer
 // against the replenishment job.
-function graniteTestPairs(topCount: number, topLast: string): MockPair[] {
+function warehouseTestPairs(topCount: number, topLast: string): MockPair[] {
   return [
     {
-      procedures: ["dbo.PRESCRIPT_PICKING_CONFIRM", "dbo.IntegrationPostPickSlip"],
+      procedures: ["dbo.USP_PICKING_CONFIRM", "dbo.IntegrationPostPickList"],
       count: topCount,
       last: topLast,
-      objects: ["dbo.TrackingEntity", "dbo.PickSlipLine"],
+      objects: ["dbo.StockUnit", "dbo.PickLine"],
       lastVictimStatement:
-        "UPDATE dbo.PickSlipLine SET QtyPicked = QtyPicked + @Qty, Status = 'PICKED', ModifiedDate = GETDATE() WHERE ID = @LineID AND DocumentID = @DocumentID",
-      locks: "KEY U on PK_PickSlipLine (victim), KEY X on IX_TrackingEntity_Barcode (winner)",
+        "UPDATE dbo.PickLine SET QtyPicked = QtyPicked + @Qty, Status = 'PICKED', ModifiedDate = GETDATE() WHERE ID = @LineID AND SalesOrderID = @SalesOrderID",
+      locks: "KEY U on PK_PickLine (victim), KEY X on IX_StockUnit_Barcode (winner)",
     },
     {
-      procedures: ["dbo.PRESCRIPT_TRANSFER_MOVE", "dbo.ScheduledJob_Replenishment"],
+      procedures: ["dbo.USP_TRANSFER_MOVE", "dbo.Job_Replenishment"],
       count: 1,
       last: daysAgoAt(4, 10, 5).toISOString(),
-      objects: ["dbo.TrackingEntity"],
+      objects: ["dbo.StockUnit"],
       lastVictimStatement:
-        "UPDATE dbo.TrackingEntity SET LocationID = @ToLocationID, ModifiedDate = GETDATE() WHERE ID = @TrackingEntityID",
-      locks: "KEY X on PK_TrackingEntity (victim), PAGE IX on PK_TrackingEntity (winner)",
+        "UPDATE dbo.StockUnit SET LocationID = @ToLocationID, ModifiedDate = GETDATE() WHERE ID = @StockUnitID",
+      locks: "KEY X on PK_StockUnit (victim), PAGE IX on PK_StockUnit (winner)",
     },
   ]
 }
@@ -1904,7 +1926,7 @@ function serverHealth(): HealthEvent[] {
       component: "IO_SUBSYSTEM",
       state: "warning",
       detail:
-        "7 long I/Os (over 15 s) since startup; the longest pending request has waited 16.2 s on D:\\Data\\GraniteTest.mdf.",
+        "7 long I/Os (over 15 s) since startup; the longest pending request has waited 16.2 s on D:\\Data\\WarehouseTest.mdf.",
     },
     {
       at: daysAgoAt(4, 10, 3).toISOString(),
@@ -1915,14 +1937,14 @@ function serverHealth(): HealthEvent[] {
   ]
 }
 
-// The stored DLK01 reports by database. GraniteTest was read yesterday afternoon.
+// The stored DLK01 reports by database. WarehouseTest was read yesterday afternoon.
 const deadlockReports: Record<string, DeadlockReport | null> = {
-  GraniteTest: deadlockReport(
-    "GraniteTest",
+  WarehouseTest: deadlockReport(
+    "WarehouseTest",
     daysAgoAt(1, 16, 40).toISOString(),
     41.7,
     "file",
-    graniteTestPairs(4, daysAgoAt(1, 14, 22).toISOString()),
+    warehouseTestPairs(4, daysAgoAt(1, 14, 22).toISOString()),
     serverHealth(),
   ),
 }
@@ -1966,7 +1988,7 @@ function deadlockReport(
   }
 }
 
-// POST .../cards/performance/deadlocks: GraniteTest has had one more deadlock on its top pair since the
+// POST .../cards/performance/deadlocks: WarehouseTest has had one more deadlock on its top pair since the
 // stored report; the other two databases have none.
 async function runDeadlockReport(info: InstanceInfo, db: DatabaseStatus): Promise<DeadlockReport> {
   const started = Date.now()
@@ -1978,14 +2000,14 @@ async function runDeadlockReport(info: InstanceInfo, db: DatabaseStatus): Promis
     )
   }
   const seconds = Math.round((Date.now() - started + 500) / 100) / 10
-  const pairs = db.name === "GraniteTest" ? graniteTestPairs(5, hoursAgo(2.3)) : []
+  const pairs = db.name === "WarehouseTest" ? warehouseTestPairs(5, hoursAgo(2.3)) : []
   const report = deadlockReport(
     db.name,
     now(),
     seconds,
-    db.name === "Granite_Archive" ? "ring-buffer" : "file",
+    db.name === "Warehouse_Archive" ? "ring-buffer" : "file",
     pairs,
-    db.name === "Granite_Archive" ? [] : serverHealth(),
+    db.name === "Warehouse_Archive" ? [] : serverHealth(),
   )
   deadlockReports[db.name] = report
   return report
@@ -2037,7 +2059,7 @@ function performanceCard(info: InstanceInfo, findings: Finding[], facts: Fact[],
 function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
   const deadlocks = deadlockReports[db.name] ?? null
 
-  if (db.name === "Granite_Archive") {
+  if (db.name === "Warehouse_Archive") {
     const findings = rankFindings([
       perfFinding("PRS01", info.serverName, "now", {
         severity: "Critical",
@@ -2055,30 +2077,30 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
         severity: "High",
         when: "None",
         effort: "None",
-        finding: "Session 83 (GraniteScheduler on WMS-APP01) is blocking 14 sessions; the longest has waited 361 s.",
+        finding: "Session 83 (AppScheduler on WMS-APP01) is blocking 14 sessions; the longest has waited 361 s.",
         why: 'Blocked users see the application hang. A blocker that is "sleeping" with an open transaction is usually a forgotten transaction in an application or an SSMS window.',
         doThis:
           "Find out what the blocking session is doing and who owns it before acting. Do not kill sessions without checking: rolling back can take as long again.",
         evidence:
-          "Program: Granite Scheduler Service. Status: sleeping. Open transactions: 1. Database: Granite_Archive. Last statement: UPDATE dbo.TrackingEntityAudit SET Archived = 1 WHERE AuditDate < @Cutoff",
+          "Program: App Scheduler Service. Status: sleeping. Open transactions: 1. Database: Warehouse_Archive. Last statement: UPDATE dbo.StockUnitAudit SET Archived = 1 WHERE AuditDate < @Cutoff",
       }),
       topWait(info, 1, "LCK_M_U", "LOCK", 38.2, "Medium", 2, 9_412),
       databaseLoad(
         db.name,
         11.4,
         23.9,
-        "GraniteLive 61.2% CPU, 48.1 GB read; GraniteTest 22.5% CPU, 19.7 GB read; Granite_Archive 11.4% CPU, 20.4 GB read; msdb 0.4% CPU, 0.2 GB read",
+        "WarehouseLive 61.2% CPU, 48.1 GB read; WarehouseTest 22.5% CPU, 19.7 GB read; Warehouse_Archive 11.4% CPU, 20.4 GB read; msdb 0.4% CPU, 0.2 GB read",
       ),
-      perfFinding("QRY01", "dbo.ArchiveTrackingEntityAudit", "since-restart", {
+      perfFinding("QRY01", "dbo.ArchiveStockUnitAudit", "since-restart", {
         severity: "Info",
         when: "None",
         effort: "None",
         finding:
           "Uses 6.8% of all query CPU on the server: 9 runs, 18,240 ms CPU and 2,904,118 page reads per run. From the plan cache since restart; turn Query Store on for history.",
         why: ACT03_WHY,
-        doThis: `${ACT03_DO} To see every statement in dbo.ArchiveTrackingEntityAudit, run InvestigateProcedure.sql.`,
+        doThis: `${ACT03_DO} To see every statement in dbo.ArchiveStockUnitAudit, open the query: its detail lists them all, most reads first.`,
         evidence:
-          "Page reads per run: min 2,881,402, avg 2,904,118, max 2,931,775. Max CPU: 19,604 ms. Top wait: Lock. Query hash: 0x51C0D7A2E94B3F18. Query: UPDATE dbo.TrackingEntityAudit SET Archived = 1 WHERE AuditDate < @Cutoff AND Archived = 0",
+          "Page reads per run: min 2,881,402, avg 2,904,118, max 2,931,775. Max CPU: 19,604 ms. Top wait: Lock. Query hash: 0x51C0D7A2E94B3F18. Query: UPDATE dbo.StockUnitAudit SET Archived = 1 WHERE AuditDate < @Cutoff AND Archived = 0",
       }),
     ])
     return {
@@ -2099,7 +2121,7 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
     }
   }
 
-  if (db.name === "GraniteTest") {
+  if (db.name === "WarehouseTest") {
     const findings = rankFindings([
       perfFinding("ACT02", "Session 112", "now", {
         severity: "Medium",
@@ -2110,7 +2132,7 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
         why: "An open transaction keeps its locks, which blocks other users, and stops the log from being emptied so it keeps growing.",
         doThis:
           "Ask the owner of the session or program to commit or close it. A sleeping session with an open transaction is usually a bug in the application or a forgotten SSMS window.",
-        evidence: `Program: Microsoft SQL Server Management Studio - Query. Started: ${scanTime(new Date(Date.now() - 12 * 60_000))}. Log used: 3.2 MB. Last statement: UPDATE dbo.Document SET Status = 'HOLD' WHERE Number = 'SO-104233'`,
+        evidence: `Program: Microsoft SQL Server Management Studio - Query. Started: ${scanTime(new Date(Date.now() - 12 * 60_000))}. Log used: 3.2 MB. Last statement: UPDATE dbo.SalesOrder SET Status = 'HOLD' WHERE Number = 'SO-104233'`,
       }),
       topWait(info, 1, "CXPACKET", "PAR", 41.0, "Medium", 51, 18_204_311),
       perfFinding("WRK02", info.serverName, "since-restart", {
@@ -2137,18 +2159,18 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
         db.name,
         68.0,
         57.3,
-        "GraniteTest 68.0% CPU, 412.6 GB read; GraniteLive 19.2% CPU, 198.3 GB read; Granite_Archive 3.1% CPU, 96.0 GB read; msdb 0.2% CPU, 0.4 GB read",
+        "WarehouseTest 68.0% CPU, 412.6 GB read; WarehouseLive 19.2% CPU, 198.3 GB read; Warehouse_Archive 3.1% CPU, 96.0 GB read; msdb 0.2% CPU, 0.4 GB read",
       ),
-      perfFinding("QRY01", "dbo.PRESCRIPT_PICKING_SCAN", "window", {
+      perfFinding("QRY01", "dbo.USP_PICKING_SCAN", "window", {
         severity: "Low",
         when: "Decide first",
         effort: "Moderate",
         finding:
           "Uses 18.4% of this database's query CPU over the last 7 days: 64,771 runs, 212 ms CPU and 48,211 page reads per run. About 9,253 runs a day (one every 9 s): small per run, large in total. Its plan has an implicit conversion that can stop SQL Server using an index.",
         why: ACT03_WHY,
-        doThis: `${ACT03_DO} Also ask whether it needs to run this often (a job or integration polling on a timer?). Implicit conversion: usually a variable, parameter or join column whose type differs from the column it is compared with. To see every statement in dbo.PRESCRIPT_PICKING_SCAN, run InvestigateProcedure.sql.`,
+        doThis: `${ACT03_DO} Also ask whether it needs to run this often (a job or integration polling on a timer?). Implicit conversion: usually a variable, parameter or join column whose type differs from the column it is compared with. To see every statement in dbo.USP_PICKING_SCAN, open the query: its detail lists them all, most reads first.`,
         evidence:
-          "Page reads per run: min 41,880, avg 48,211, max 61,870. Max CPU: 1,480 ms. Top wait: CPU. Conversion: CONVERT_IMPLICIT(nvarchar(50),[te].[Barcode],0)=[@Barcode]. Query hash: 0x8F3A2C11D07B9E45. Query: SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location FROM dbo.TrackingEntity te JOIN dbo.Location l ON l.ID = te.LocationID WHERE te.Barcode = @Barcode AND te.InStock = 1 ORDER BY te.ID DESC",
+          "Page reads per run: min 41,880, avg 48,211, max 61,870. Max CPU: 1,480 ms. Top wait: CPU. Conversion: CONVERT_IMPLICIT(nvarchar(50),[te].[Barcode],0)=[@Barcode]. Query hash: 0x8F3A2C11D07B9E45. Query: SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location FROM dbo.StockUnit te JOIN dbo.Location l ON l.ID = te.LocationID WHERE te.Barcode = @Barcode AND te.InStock = 1 ORDER BY te.ID DESC",
       }),
     ])
     return {
@@ -2169,25 +2191,25 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
     }
   }
 
-  // GraniteLive: the top wait is reading from disk at 22%, no blocking and no pressure.
+  // WarehouseLive: the top wait is reading from disk at 22%, no blocking and no pressure.
   const findings = rankFindings([
     topWait(info, 1, "PAGEIOLATCH_SH", "IO", 22.4, "Info", 19, 6_120_877),
     databaseLoad(
       db.name,
       74.2,
       61.0,
-      "GraniteLive 74.2% CPU, 198.3 GB read; GraniteTest 14.9% CPU, 96.1 GB read; Granite_Archive 2.2% CPU, 31.4 GB read; msdb 0.3% CPU, 0.4 GB read",
+      "WarehouseLive 74.2% CPU, 198.3 GB read; WarehouseTest 14.9% CPU, 96.1 GB read; Warehouse_Archive 2.2% CPU, 31.4 GB read; msdb 0.3% CPU, 0.4 GB read",
     ),
-    perfFinding("QRY01", "dbo.PRESCRIPT_RECEIVE_LOOKUP", "window", {
+    perfFinding("QRY01", "dbo.USP_RECEIVE_LOOKUP", "window", {
       severity: "Info",
       when: "None",
       effort: "None",
       finding:
         "Uses 12.6% of this database's query CPU over the last 7 days: 1,204,331 runs, 3 ms CPU and 212 page reads per run. About 172,047 runs a day (one every 1 s): small per run, large in total.",
       why: ACT03_WHY,
-      doThis: `${ACT03_DO} Also ask whether it needs to run this often (a job or integration polling on a timer?). To see every statement in dbo.PRESCRIPT_RECEIVE_LOOKUP, run InvestigateProcedure.sql.`,
+      doThis: `${ACT03_DO} Also ask whether it needs to run this often (a job or integration polling on a timer?). To see every statement in dbo.USP_RECEIVE_LOOKUP, open the query: its detail lists them all, most reads first.`,
       evidence:
-        "Page reads per run: min 188, avg 212, max 260. Max CPU: 41 ms. Top wait: CPU. Query hash: 0x2D94E0B7A1C35F60. Query: SELECT d.ID, d.Number, d.Status FROM dbo.Document d WHERE d.Number = @Number AND d.Type = 'RECEIPT'",
+        "Page reads per run: min 188, avg 212, max 260. Max CPU: 41 ms. Top wait: CPU. Query hash: 0x2D94E0B7A1C35F60. Query: SELECT d.ID, d.Number, d.Status FROM dbo.SalesOrder d WHERE d.Number = @Number AND d.Type = 'RECEIPT'",
     }),
   ])
   return {
@@ -2237,7 +2259,7 @@ function buildCards(info: InstanceInfo, db: DatabaseStatus): Card[] {
       "design",
       "Database design",
       "Is the database built well?",
-      "Indexes, heaps, the tables everyone waits on, and Granite PreScripts, per database.",
+      "Indexes, heaps, the tables everyone waits on, and the application's stored procedures, per database.",
     ),
   ]
 }

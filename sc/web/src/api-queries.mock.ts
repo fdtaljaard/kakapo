@@ -3,10 +3,10 @@ import type { QueryAction, QueryDetail, QueryPlan, QueryTable } from "./api-quer
 import type { FeatureMock } from "./api.mock"
 
 // Phase 4c (queries): fixture answers for this part's routes; undefined means "not mine".
-// GET .../queries/{hash}: in GraniteLive and GraniteTest, the barcode lookup (0x8F3A2C11D07B9E45, and any
+// GET .../queries/{hash}: in WarehouseLive and WarehouseTest, the barcode lookup (0x8F3A2C11D07B9E45, and any
 // other hash) has two plans, the one in use six times slower, an implicit conversion, compiled parameters,
-// a suggested index and a table with stale statistics, inside dbo.PRESCRIPT_PICKING; the audit update
-// (0x51C0D7A2E94B3F18) has one forced plan that keeps failing and waits on locks. In Granite_Archive
+// a suggested index and a table with stale statistics, inside dbo.USP_PICKING; the audit update
+// (0x51C0D7A2E94B3F18) has one forced plan that keeps failing and waits on locks. In Warehouse_Archive
 // (Query Store off) every query comes from the plan cache, with "Turn Query Store on". Forcing, stopping,
 // removing a plan and updating statistics change the fixture until the page is reloaded. Set localStorage
 // "mock.queryFails" to "1" to see the 502.
@@ -73,11 +73,11 @@ function plan(p: Partial<QueryPlan> & Pick<QueryPlan, "planId">): QueryPlan {
 }
 
 function trackingTable(db: string): QueryTable {
-  const fresh = state.freshStats.has(`${db}/[dbo].[TrackingEntity]`)
+  const fresh = state.freshStats.has(`${db}/[dbo].[StockUnit]`)
   return {
     schema: "dbo",
-    table: "TrackingEntity",
-    name: "dbo.TrackingEntity",
+    table: "StockUnit",
+    name: "dbo.StockUnit",
     found: true,
     rows: 4_212_880,
     statistics: 6,
@@ -85,9 +85,9 @@ function trackingTable(db: string): QueryTable {
     ageDays: fresh ? 0 : 31,
     maxModifiedPct: fresh ? 0 : 48,
     stale: !fresh,
-    indexes: ["PK_TrackingEntity", "IX_TrackingEntity_Location"],
-    action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.TrackingEntity", {
-      table: "[dbo].[TrackingEntity]",
+    indexes: ["PK_StockUnit", "IX_StockUnit_Location"],
+    action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.StockUnit", {
+      table: "[dbo].[StockUnit]",
     }),
   }
 }
@@ -111,10 +111,10 @@ function locationTable(): QueryTable {
   }
 }
 
-const createIndex = action("create-index", "Create index", "Create the suggested index on dbo.TrackingEntity", {
+const createIndex = action("create-index", "Create index", "Create the suggested index on dbo.StockUnit", {
   source: "plan",
   planId: "15",
-  table: "[GraniteLive].[dbo].[TrackingEntity]",
+  table: "[WarehouseLive].[dbo].[StockUnit]",
   equality: "[Barcode], [InStock]",
   inequality: "",
   included: "[Qty], [LocationID]",
@@ -173,8 +173,8 @@ function barcodeDetail(db: string, hash: string): QueryDetail {
     ],
     missingIndexes: [
       {
-        table: "[GraniteLive].[dbo].[TrackingEntity]",
-        tableName: "dbo.TrackingEntity",
+        table: "[WarehouseLive].[dbo].[StockUnit]",
+        tableName: "dbo.StockUnit",
         equality: "[Barcode], [InStock]",
         inequality: "",
         included: "[Qty], [LocationID]",
@@ -244,26 +244,26 @@ function barcodeDetail(db: string, hash: string): QueryDetail {
     },
     { text: "Its plan shows key lookups (the index used does not hold every column needed)." },
     {
-      text: "SQL Server suggests an index on dbo.TrackingEntity (Barcode, InStock) that it estimates would cut this query's cost by 91%. Create the index: the preview checks the existing indexes first.",
+      text: "SQL Server suggests an index on dbo.StockUnit (Barcode, InStock) that it estimates would cut this query's cost by 91%. Create the index: the preview checks the existing indexes first.",
       action: createIndex,
     },
   )
   if (tables[0].stale) {
     explain.push({
-      text: "It reads dbo.TrackingEntity (4.2 M rows) whose statistics are 31 days old with 48% of rows changed. Update statistics on it.",
+      text: "It reads dbo.StockUnit (4.2 M rows) whose statistics are 31 days old with 48% of rows changed. Update statistics on it.",
       action: tables[0].action,
     })
   }
   explain.push({
-    text: "In dbo.PRESCRIPT_PICKING, the statement on line 41 does 81% of the procedure's page reads; it is this query.",
+    text: "In dbo.USP_PICKING, the statement on line 41 does 81% of the procedure's page reads; it is this query.",
   })
   const detail: QueryDetail = {
     database: db,
     queryHash: hash,
     serverName: "CLIENTSQL01\\WMS",
     capturedAt: new Date().toISOString(),
-    text: "SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location\nFROM dbo.TrackingEntity te\nJOIN dbo.Location l ON l.ID = te.LocationID\nWHERE te.Barcode = @Barcode AND te.InStock = 1\nORDER BY te.ID DESC",
-    objectName: "dbo.PRESCRIPT_PICKING",
+    text: "SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location\nFROM dbo.StockUnit te\nJOIN dbo.Location l ON l.ID = te.LocationID\nWHERE te.Barcode = @Barcode AND te.InStock = 1\nORDER BY te.ID DESC",
+    objectName: "dbo.USP_PICKING",
     source: "query-store",
     queryStoreState: "READ_WRITE",
     summary: { window: "7 days", runs: 11_240, avgDurationMs: 155.2, maxDurationMs: 41_200, avgCpuMs: 99.5, avgReads: 7_941, maxReads: 61_870, lastRun: hoursAgo(0.2) },
@@ -281,7 +281,7 @@ function barcodeDetail(db: string, hash: string): QueryDetail {
     statements: [
       {
         line: 41,
-        text: "SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location FROM dbo.TrackingEntity te JOIN dbo.Location l ON l.ID = te.LocationID WHERE te.Barcode = @Barcode AND te.InStock = 1 ORDER BY te.ID DESC",
+        text: "SELECT TOP (1) te.ID, te.Barcode, te.Qty, te.LocationID, l.Name AS Location FROM dbo.StockUnit te JOIN dbo.Location l ON l.ID = te.LocationID WHERE te.Barcode = @Barcode AND te.InStock = 1 ORDER BY te.ID DESC",
         runs: 1_240,
         minCpuMs: 12,
         avgCpuMs: 410,
@@ -296,7 +296,7 @@ function barcodeDetail(db: string, hash: string): QueryDetail {
       },
       {
         line: 88,
-        text: "UPDATE dbo.PickSlip SET Status = 'PICKED', PickedQty = @Qty WHERE PickSlipID = @PickSlipID",
+        text: "UPDATE dbo.PickList SET Status = 'PICKED', PickedQty = @Qty WHERE PickListID = @PickListID",
         runs: 1_240,
         minCpuMs: 0.4,
         avgCpuMs: 1.1,
@@ -376,7 +376,7 @@ function auditDetail(db: string, hash: string): QueryDetail {
     queryHash: hash,
     serverName: "CLIENTSQL01\\WMS",
     capturedAt: new Date().toISOString(),
-    text: "UPDATE dbo.TrackingEntityAudit SET Archived = 1 WHERE AuditDate < @Cutoff AND Archived = 0",
+    text: "UPDATE dbo.StockUnitAudit SET Archived = 1 WHERE AuditDate < @Cutoff AND Archived = 0",
     objectName: "",
     source: "query-store",
     queryStoreState: "READ_WRITE",
@@ -393,8 +393,8 @@ function auditDetail(db: string, hash: string): QueryDetail {
     tables: [
       {
         schema: "dbo",
-        table: "TrackingEntityAudit",
-        name: "dbo.TrackingEntityAudit",
+        table: "StockUnitAudit",
+        name: "dbo.StockUnitAudit",
         found: true,
         rows: 61_004_211,
         statistics: 2,
@@ -402,9 +402,9 @@ function auditDetail(db: string, hash: string): QueryDetail {
         ageDays: 4,
         maxModifiedPct: 6,
         stale: false,
-        indexes: ["PK_TrackingEntityAudit"],
-        action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.TrackingEntityAudit", {
-          table: "[dbo].[TrackingEntityAudit]",
+        indexes: ["PK_StockUnitAudit"],
+        action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.StockUnitAudit", {
+          table: "[dbo].[StockUnitAudit]",
         }),
       },
     ],
@@ -495,7 +495,7 @@ function handover(d: QueryDetail): string {
 }
 
 function detailFor(db: string, hash: string): QueryDetail {
-  if (db === "Granite_Archive") return planCacheDetail(db, hash)
+  if (db === "Warehouse_Archive") return planCacheDetail(db, hash)
   if (hash === AUDIT) return auditDetail(db, hash)
   return barcodeDetail(db, hash)
 }
@@ -563,7 +563,7 @@ function fixPreview(db: string, fixId: string, options: Record<string, string>):
         statement: `DBCC FREEPROCCACHE (${h});`,
         warnings: [
           "Remove this plan from the cache so SQL Server compiles a fresh one. Harmless; the next run compiles.",
-          ...(h === handle15 ? ["The plan is the whole procedure dbo.PRESCRIPT_PICKING: every statement in it compiles again on its next run."] : []),
+          ...(h === handle15 ? ["The plan is the whole procedure dbo.USP_PICKING: every statement in it compiles again on its next run."] : []),
           "If the fresh plan is just as slow, the plan was not the problem: look at the query and its indexes.",
           "Only this plan is removed, not the whole plan cache.",
           "No rollback: a removed plan cannot be put back, and none is needed.",
@@ -576,8 +576,8 @@ function fixPreview(db: string, fixId: string, options: Record<string, string>):
       const m = /^\[(.+)\]\.\[(.+)\]$/.exec(table)
       if (!m) throw new ApiError(`table must name one table as schema.table, not "${table}"`, 400)
       const name = `${m[1]}.${m[2]}`
-      const big = name === "dbo.TrackingEntityAudit"
-      const rows = big ? "61.0 M" : name === "dbo.TrackingEntity" ? "4.2 M" : "18,430"
+      const big = name === "dbo.StockUnitAudit"
+      const rows = big ? "61.0 M" : name === "dbo.StockUnit" ? "4.2 M" : "18,430"
       const fresh = state.freshStats.has(`${db}/${table}`)
       return {
         ...base,

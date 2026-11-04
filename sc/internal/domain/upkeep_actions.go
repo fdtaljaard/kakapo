@@ -36,7 +36,7 @@ const (
 )
 
 // DefaultOperatorName is the operator operator-alerts creates when none has an email address.
-const DefaultOperatorName = "Granite support"
+const DefaultOperatorName = "Database support"
 
 // DefaultMaintenanceTime is when the maintenance jobs run by default.
 const DefaultMaintenanceTime = "01:00"

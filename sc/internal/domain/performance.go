@@ -413,7 +413,7 @@ const (
 	prs02Why        = "Each one is a query that failed: the user saw an error or a timeout, and the work was not done."
 	prs02Do         = "Find the queries with the largest memory grants (PRS01's evidence while it happens, QRY01's memory grant warning) and fix their estimates; then check max server memory (INS02)."
 	wrk08OtherWhy   = "Everything SQL Server does waits behind them: CPU those programs use is CPU no query can have, and nothing inside SQL Server can tune it."
-	wrk08OtherDo    = "Find what else runs on the database server. The usual suspects: Granite services or other application services installed on it, antivirus scanning the data and log files, a web shop, backup software. Move them to another machine, or exclude the SQL Server data, log and backup files from antivirus scanning."
+	wrk08OtherDo    = "Find what else runs on the database server. The usual suspects: the application's own services or other services installed on it, antivirus scanning the data and log files, a web shop, backup software. Move them to another machine, or exclude the SQL Server data, log and backup files from antivirus scanning."
 	wrk08SQLWhy     = "When SQL Server keeps the CPUs this busy, every query waits its turn for a processor, so the whole application slows down at once."
 	wrk08SQLDo      = "Tune the costliest queries first (QRY01) and the missing indexes (WRK03); only then look at the CPU count and MAXDOP (INS04)."
 	dlk01Do         = "The fix is ours: an index so each side touches fewer rows, the same order of touching the tables in both procedures, or READ COMMITTED SNAPSHOT for the database (decide first). Start with the victim's statement in the evidence."
@@ -810,7 +810,7 @@ func (b *perfBuild) blocking() (blocked int, longest int64) {
 	return blocked, longest
 }
 
-// act02: one finding per transaction open more than 5 minutes in this database (the triage's
+// act02: one finding per transaction open more than 5 minutes in this database (PerformanceTriage.sql's
 // ACT02), then one for the user sessions sleeping with a transaction open more than 5 minutes
 // elsewhere on the instance (the scan's WRK07); High from 30 minutes.
 func (b *perfBuild) act02() {
@@ -999,10 +999,10 @@ func (b *perfBuild) wrk05() {
 			switch p {
 			case "THREADPOOL":
 				why = "SQL Server ran out of worker threads: new requests queued until a thread was free. Usually heavy blocking or too much parallelism. Users see the server freeze."
-				do = "Find the blocking (WRK01 LCK waits, ACT01 and IDX11 in the triage) and cap parallelism (INS04, INS05). Do not raise max worker threads; it hides the cause."
+				do = "Find the sessions that block the others (the lock waits in WRK01, and ACT01) and have them finish sooner, and cap parallelism (INS04, INS05). Do not raise max worker threads; it hides the cause."
 			case "RESOURCE_SEMAPHORE":
 				why = "Queries waited for memory before they could start, because other queries held it all. Usually a few huge sorts or hashes from bad estimates."
-				do = "Find the queries with large memory grants (ACT03 in the triage shows memory grant warnings in their plans) and fix their estimates: statistics (MNT04), missing indexes, or the query itself."
+				do = "Find the queries that ask for large memory grants (their plans carry a memory grant warning) and fix their estimates: statistics (MNT04), missing indexes, or the query itself."
 			case "RESOURCE_SEMAPHORE_QUERY_COMPILE":
 				why = "Too many queries compiled at once and ran out of compile memory: a plan cache being cleared, or code that compiles for every value (INS06)."
 				do = "Stop whatever clears the plan cache (MNT05) and switch on optimize for ad hoc workloads (INS06)."
@@ -1019,7 +1019,7 @@ func (b *perfBuild) wrk05() {
 
 // wrk03: the top 5 missing index suggestions for this database by the scan's score, impact 50%
 // or more and score 100,000 or more; Medium from a score of 1,000,000. Each carries the
-// create-index fix (docs/phase4c-contract.md, part 3), behind the triage's index guards and a
+// create-index fix (docs/phase4c-contract.md, part 3), behind PerformanceTriage.sql's index guards and a
 // preview; AvailablePerformanceFixes lists its options.
 func (b *perfBuild) wrk03() {
 	f := b.f
@@ -1456,7 +1456,7 @@ func (b *perfBuild) qry01() {
 			do += b.rcsi(qry01RCSIOff)
 		}
 		if q.ObjectName != "" {
-			do += " To see every statement in " + q.ObjectName + ", run InvestigateProcedure.sql."
+			do += " To see every statement in " + q.ObjectName + ", open the query: its detail lists them all, most reads first."
 		}
 		do += qry01Arithabort
 

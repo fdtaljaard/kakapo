@@ -4,9 +4,46 @@ Date: 2026-11-03. Product name: **kakapo** (UI, window title, log); working name
 
 ## 1. One line
 
-A portable desktop app that connects to a client's Microsoft SQL Server, runs the Granite read-only checks and live
+A portable desktop app that connects to a client's Microsoft SQL Server, runs its read-only checks and live
 samples, keeps everything it finds in one DuckDB **case file**, and lets you read, share and re-open that case file
 anywhere, with or without the server.
+
+## 1a. Vision and grounding rules (2026-11-04)
+
+Where kakapo is going, and the three rules every design decision and every agent brief is checked against.
+Written after phases 0 to 4f, before the architecture review (`docs/architecture-review.md`).
+
+**What it is for.** One technical consultant per client, one portable exe, one database at a time: see what is
+wrong, understand why in plain words, and act from the same place. The user may not be a SQL specialist.
+
+**Rule 1: simplify complexity, in the product and in the code.** The product shows a sentence first and the
+numbers second; a screen that needs a DBA to read it has drifted. The code follows the same rule: a small number
+of plain parts (collect reads, domain judges, service wires, store keeps, the UI shows), one way to add a check,
+one way to add a fix, one way to add a page. Clever means fewer moving parts doing more, never more parts.
+
+**Rule 2: every recommendation is backed by a fact and a source.** kakapo gives advice. Each check has a rule
+with its thresholds, a why, a do-this, a then-check and the sources it rests on (Microsoft's documentation, the
+original toolkit, the practitioners named in `THIRD_PARTY_NOTICES.md`). That knowledge is one body, kept in one
+place, used by the app's texts, by the hand-over blocks, and by any AI that works inside kakapo. A number without
+a source is a guess and does not ship.
+
+**Rule 3: AI is part of the application, with the human in the loop.** Whatever the user is looking at, an AI
+must be able to see the same thing and reason about it: the page's findings, the facts behind them, the case
+file's history. It must be able to read the live database on the user's behalf (read-only, bounded, logged),
+because many actions can only be decided after an investigation, not before. When an investigation ends in a
+change, the AI builds the change and hands it to the fix pattern of section 3 item 9: preview, the human
+confirms, apply, read back, log. The AI never applies anything itself. The same knowledge of rule 2 is what an
+AI agent or an agent skill works from, so the knowledge base and the AI's reference are one and the same thing.
+
+**Rule 4: kakapo is a generic product.** Built by Granite, for any SQL Server. Nothing a user reads names
+Granite, its products, its tables or its scripts: a check that only makes sense for one application (IDX10's
+log tables as built) is made generic or removed, defaults are neutral ("Database support", not "Granite
+support"), fixtures and examples use neutral names. The toolkit the checks came from stays named in section 2
+and in the notices as provenance, nowhere else.
+
+**What this rules out.** A console for experts (grids first, sentences never); advice without a source; an AI
+that can change a server without a human click; a second copy of the knowledge for the AI; a service, a central
+store, or a team product (the scope of section 3 stands).
 
 ## 2. Where it comes from
 
@@ -16,7 +53,7 @@ anywhere, with or without the server.
 | Erik Darling's Performance Monitor **Lite** ([page](https://erikdarling.com/free-sql-server-performance-monitoring/), source under `References/PerformanceMonitor-main`) | The shape: one portable executable, nothing installed on the server, `VIEW SERVER STATE` only, DuckDB locally, collectors that sample DMVs on a timer and store deltas. We do not copy its 24/7 collection, alerting, PostgreSQL, plan viewer or MCP server. |
 | First Responder Kit, sp_QuickieStore | Reference for new checks only, as `DESIGN.md` already says. Not shipped. |
 
-What we add that neither has: the **case file** as the unit of work and sharing, and the Granite finding model
+What we add that neither has: the **case file** as the unit of work and sharing, and the finding model
 (Do this, When, Then check, Owner) as the centre of the UI instead of raw grids.
 
 ## 3. Scope of version 1
@@ -24,7 +61,7 @@ What we add that neither has: the **case file** as the unit of work and sharing,
 **In**
 
 1. **Connect**: add a server (Windows auth or SQL login, optional encryption), test, remember it. Passwords in Windows Credential Manager, never in the case file.
-2. **Health check and triage**: run the existing scripts against the server or one database, land every result set in DuckDB, show findings as cards ranked the Granite way (Start here, For the client's IT, everything else by category, Accepted, What was checked, glossary). Same words as the HTML reports today.
+2. **Health check and triage**: run the existing scripts against the server or one database, land every result set in DuckDB, show findings as cards ranked the toolkit's way (Start here, For the client's IT, everything else by category, Accepted, What was checked, glossary). Same words as the HTML reports today.
 3. **Live sample** ("why is it slow right now"): the `SqlLiveCheck` from `DESIGN.md` section 5.3, run as timed collectors for a chosen duration (default 30 seconds, up to an hour while you are on a call): waits, blocking chain, CPU, file latency, tempdb, top queries by delta. Stored as time series in the case file.
 4. **Tuning report**: Query Store hour by hour with the change log, the before and after comparison, as the current dashboard does, drawn from the case file.
 5. **Investigate a procedure**: statement-level cost for one procedure, plan XML stored (open in SSMS; no plan viewer in v1).
@@ -67,7 +104,7 @@ report and most of the triage depend on it.
 | Setting | Target | Why |
 |---|---|---|
 | OPERATION_MODE | READ_WRITE | |
-| QUERY_CAPTURE_MODE | AUTO | Granite sites run much single-use dynamic SQL; ALL floods the store. |
+| QUERY_CAPTURE_MODE | AUTO | Application databases run much single-use dynamic SQL; ALL floods the store. |
 | MAX_STORAGE_SIZE_MB | 2048 | Lives in the PRIMARY filegroup, so it adds to the database and its backups. |
 | SIZE_BASED_CLEANUP_MODE | AUTO | Cleans at 90% to 80%; stops the store going read-only. |
 | INTERVAL_LENGTH_MINUTES | 15 | Four points per hour for the tuning report. Four times the runtime rows of the default 60; the reason for 2 GB. |
@@ -119,7 +156,7 @@ Decisions to make before building:
 - **Ola Hallengren or native.** When `dbo.DatabaseBackup` exists (any database), the jobs call it with
   `@Compress = 'Y', @Verify = 'Y', @CheckSum = 'Y', @CleanupTime = 168`. When it does not, the fix either installs
   Ola's `DatabaseBackup` and `CommandExecute` (MIT, versioned, under the installed-helpers rule) or writes plain
-  `BACKUP` steps. Preference: install Ola, because every Granite site that has a DBA already has it and the
+  `BACKUP` steps. Preference: install Ola, because most sites that have a DBA already have it and the
   consultant knows its options; plain `BACKUP` only when the site refuses installs.
 - **Express** has no Agent. The fix then writes a `.sql` file and a Windows Task Scheduler command for the
   consultant to run on the server, and the card says so; kakapo cannot create the schedule itself there.
@@ -226,6 +263,8 @@ Phase 1 pieces, each small enough for one agent with this document as its brief:
 
 | Date | Decision |
 |---|---|
+| 2026-11-04 | kakapo is generic (rule 4). Every Granite reference leaves the product: texts, defaults, fixtures, the IDX10 check as built (made generic or removed). The toolkit stays as provenance in section 2 and the notices. Sweep to be done with the knowledge migration. |
+| 2026-11-04 | Pause for review. The vision and three grounding rules are section 1a; the review of what must change is `docs/architecture-review.md` (knowledge base as one body, a server-side page renderer, a read-only query path, a proposed-change fix, the three-level UI rule, case-file retention and export, the AI as a tool layer, builder unification, four documents). Nothing built from it yet. |
 | 2026-11-03 | Go + DuckDB agreed. Wails and Vue/PrimeVue dropped; React + TypeScript + shadcn/ui chosen for agent-driven development and the AI-UI ecosystem. Edge app mode instead of a native shell. |
 | 2026-11-03 | Version 1 is read only and on demand; no service, no alerts. |
 | 2026-11-03 | Phase 0 is first-run setup only (section 7). Nothing from the checks until the chain is proven. |

@@ -11,13 +11,13 @@ import (
 
 func TestStorageSizeFact(t *testing.T) {
 	f := sfacts()
-	file(&f, "GraniteLive").UsedMB = nil
+	file(&f, "WarehouseLive").UsedMB = nil
 	if card, _, _ := sbuild(f); factOf(card, "Database size").Value != "4.0 GB allocated" {
 		t.Errorf("used not read: %+v", factOf(card, "Database size"))
 	}
 	f = sfacts()
-	f.Files = append(f.Files, StorageFile{DatabaseID: 7, Database: "GraniteLive", FileID: 3, Type: "ROWS", LogicalName: "GraniteLive2",
-		PhysicalName: `D:\Data\GraniteLive2.ndf`, SizeMB: 2048, Growth: 32768, MaxSizePages: -1, UsedMB: i64(100),
+	f.Files = append(f.Files, StorageFile{DatabaseID: 7, Database: "WarehouseLive", FileID: 3, Type: "ROWS", LogicalName: "WarehouseLive2",
+		PhysicalName: `D:\Data\WarehouseLive2.ndf`, SizeMB: 2048, Growth: 32768, MaxSizePages: -1, UsedMB: i64(100),
 		Volume: `D:\`, VolumeTotalMB: 102400, VolumeFreeMB: 51200})
 	if card, _, _ := sbuild(f); factOf(card, "Database size") != (Fact{"Database size", "6.0 GB allocated, 3.5 GB used", ToneNormal}) {
 		t.Errorf("two data files: %+v", factOf(card, "Database size"))
@@ -30,7 +30,7 @@ func TestStorageSTO03Full(t *testing.T) {
 		want Severity
 	}{{3687, SeverityHigh}, {3686, SeverityLow}} { // 90.01% and 89.99% of 4096 MB
 		f := sfacts()
-		d := file(&f, "GraniteLive")
+		d := file(&f, "WarehouseLive")
 		d.Growth, d.UsedMB = 0, i64(c.used)
 		_, fs, _ := sbuild(f)
 		got := allOf(fs, "STO03")
@@ -38,15 +38,15 @@ func TestStorageSTO03Full(t *testing.T) {
 			t.Fatalf("%d: %+v", c.used, got)
 		}
 		if c.want == SeverityLow {
-			wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "GraniteLive", "File GraniteLive has autogrowth switched off.")
+			wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "WarehouseLive", "File WarehouseLive has autogrowth switched off.")
 			if got[0].Why != sto03WhyOff {
 				t.Errorf("89.99%%: why %q", got[0].Why)
 			}
 			continue
 		}
-		wantStorageFinding(t, got[0], SeverityHigh, WhenOnline, EffortQuickWin, "GraniteLive", "File GraniteLive has autogrowth switched off and is 90% full.")
+		wantStorageFinding(t, got[0], SeverityHigh, WhenOnline, EffortQuickWin, "WarehouseLive", "File WarehouseLive has autogrowth switched off and is 90% full.")
 		if got[0].Why != "Once the file is full, inserts and updates fail." ||
-			got[0].DoThis != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', FILEGROWTH = 256MB);" ||
+			got[0].DoThis != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', FILEGROWTH = 256MB);" ||
 			got[0].Evidence != "Current size: 4096 MB, 90.0% used." {
 			t.Errorf("90%%: %+v", got[0])
 		}
@@ -56,14 +56,14 @@ func TestStorageSTO03Full(t *testing.T) {
 	for pct, want := range map[float64]Severity{90: SeverityHigh, 89.9: SeverityLow} {
 		f := sfacts()
 		f.LogUsedPct, f.TempdbLogUsedPct = f64(pct), f64(pct)
-		file(&f, "GraniteLive_log").Growth = 0
+		file(&f, "WarehouseLive_log").Growth = 0
 		file(&f, "templog").Growth = 0
 		_, fs, _ := sbuild(f)
 		got := allOf(fs, "STO03")
 		if len(got) != 2 || got[0].Severity != want || got[1].Severity != want {
 			t.Fatalf("log at %v%%: %+v", pct, got)
 		}
-		if want == SeverityHigh && (got[0].Finding != "File GraniteLive_log has autogrowth switched off and is 90% full." ||
+		if want == SeverityHigh && (got[0].Finding != "File WarehouseLive_log has autogrowth switched off and is 90% full." ||
 			got[1].Finding != "File templog has autogrowth switched off and is 90% full.") {
 			t.Errorf("log sentences %q %q", got[0].Finding, got[1].Finding)
 		}
@@ -71,7 +71,7 @@ func TestStorageSTO03Full(t *testing.T) {
 
 	// Small growth is Low however full the file is.
 	f := sfacts()
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.Growth, d.SizeMB, d.UsedMB = 4096, 1024, i64(1024)
 	if _, fs, _ := sbuild(f); len(allOf(fs, "STO03")) != 1 || allOf(fs, "STO03")[0].Severity != SeverityLow {
 		t.Errorf("small growth, full: %+v", allOf(fs, "STO03"))
@@ -82,9 +82,9 @@ func TestStorageSTO03Full(t *testing.T) {
 func logFacts(pct float64, reuse string, noGrow bool) StorageFacts {
 	f := sfacts()
 	f.LogSizeMB, f.LogUsedPct, f.LogReuseWait = i64(10240), f64(pct), reuse
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.SizeMB = 10240
-	file(&f, "GraniteLive").SizeMB = 20480 // keep STO07 out of the way
+	file(&f, "WarehouseLive").SizeMB = 20480 // keep STO07 out of the way
 	if noGrow {
 		l.MaxSizePages = 10240 * 128 // at its max size
 	}
@@ -125,7 +125,7 @@ func TestStorageSTO11(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("%+v: %+v", c, got)
 		}
-		wantStorageFinding(t, got[0], c.want, WhenOnline, EffortQuickWin, "GraniteLive", c.finding)
+		wantStorageFinding(t, got[0], c.want, WhenOnline, EffortQuickWin, "WarehouseLive", c.finding)
 		if got[0].Owner != OwnerUs || got[0].Why != sto11Why || got[0].ThenCheck != "Re-run: STO11 gone and the log under 50% used." ||
 			checkOf(checks, "STO11").Status != CheckFinding {
 			t.Errorf("%+v: %+v", c, got[0])
@@ -157,7 +157,7 @@ func TestStorageSTO11(t *testing.T) {
 		"percent step fits":     func(l *StorageFile) bool { l.IsPercentGrowth, l.Growth, l.VolumeFreeMB = true, 10, 1024; return true },
 	} {
 		f := logFacts(95, "NOTHING", false)
-		canGrow := change(file(&f, "GraniteLive_log"))
+		canGrow := change(file(&f, "WarehouseLive_log"))
 		_, fs, _ := sbuild(f)
 		got := allOf(fs, "STO11")
 		if canGrow != (len(got) == 0) || (!canGrow && got[0].Severity != SeverityHigh) {
@@ -287,7 +287,7 @@ func TestStorageSTO12(t *testing.T) {
 
 	// The drive's tone is the worse of STO01 and STO12.
 	f := sfacts()
-	file(&f, "GraniteLive").VolumeFreeMB = 15000 // STO01 Medium
+	file(&f, "WarehouseLive").VolumeFreeMB = 15000 // STO01 Medium
 	card, _, _ := BuildStorageCard(f, storageDef, nil, trend(10, 6144+10240, 6144))
 	if d := factOf(card, "Tightest drive"); d.Tone != ToneWorse || !strings.HasSuffix(d.Value, ", full in ~6 days") {
 		t.Errorf("worse of both: %+v", d)
@@ -314,7 +314,7 @@ func TestStorageSamples(t *testing.T) {
 	if v, ok := f.TightestVolume(); !ok || v != `D:\` {
 		t.Errorf("tightest %q %v", v, ok)
 	}
-	file(&f, "GraniteLive_log").VolumeFreeMB = 1000 // L:\ is now the tightest
+	file(&f, "WarehouseLive_log").VolumeFreeMB = 1000 // L:\ is now the tightest
 	if v, _ := f.TightestVolume(); v != `L:\` {
 		t.Errorf("tightest %q", v)
 	}
@@ -338,7 +338,7 @@ func TestStorageSamples(t *testing.T) {
 }
 
 func TestSTO10Wording(t *testing.T) {
-	r := BuildCheckdbRoom(CheckdbRoomInputs{Database: "GraniteLive", EstimateKB: 1024, TempdbFreeMB: 10, TempdbRoomMB: 10,
+	r := BuildCheckdbRoom(CheckdbRoomInputs{Database: "WarehouseLive", EstimateKB: 1024, TempdbFreeMB: 10, TempdbRoomMB: 10,
 		DataVolume: `D:\`, DataFreeMB: 10, DataSizeMB: 10})
 	if !strings.HasSuffix(r.Finding.Why, " The snapshot grows with every change made while the check runs, so the figure is an estimate; run CHECKDB in a quiet period.") ||
 		!strings.HasSuffix(r.Finding.DoThis, "which also tests the backup. Run it in a quiet period.") {

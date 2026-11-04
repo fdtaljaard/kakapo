@@ -175,7 +175,7 @@ export function SetupScreen({
             </Label>
             <Input
               id="database"
-              placeholder="GraniteLive"
+              placeholder="ProductionDB"
               value={form.database}
               onChange={(e) => set("database", e.target.value)}
             />

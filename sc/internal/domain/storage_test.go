@@ -16,21 +16,21 @@ func intp(n int) *int        { return &n }
 // sfacts is a healthy database: data on D:\ (100 GB, half free), log on L:\, tempdb with 8 equal
 // files on T:\, 8 CPUs, 100 VLFs, tempdb 12% full, 3 GB of tables, quick disks.
 func sfacts() StorageFacts {
-	f := StorageFacts{Database: "GraniteLive", State: "ONLINE", RecoveryModel: "FULL", LogReuseWait: "NOTHING",
+	f := StorageFacts{Database: "WarehouseLive", State: "ONLINE", RecoveryModel: "FULL", LogReuseWait: "NOTHING",
 		EngineEdition: 3, EngineVersion: "16.0.1000.6", CPUCount: 8, VLFCount: intp(100),
 		TempdbAllocMB: i64(1024), TempdbFreeMB: i64(900), TempdbLogUsedPct: f64(5), LogSizeMB: i64(1024), LogUsedPct: f64(10),
 		TableCount: 120, TotalDataMB: 2048, TotalIndexMB: 1024,
 		Tables: []TableSize{
 			{Name: "[dbo].[Transaction]", DataMB: 800, IndexMB: 400.4, IndexCount: 3, Rows: 1234567},
-			{Name: "[dbo].[Document]", DataMB: 100, IndexMB: 20, IndexCount: 2, Rows: 5000},
+			{Name: "[dbo].[SalesOrder]", DataMB: 100, IndexMB: 20, IndexCount: 2, Rows: 5000},
 		},
-		LogTables: []LogTable{}, Identities: []IdentityColumn{},
+		GrowingTables: []GrowingTable{}, Identities: []IdentityColumn{},
 		ServerNow: serverNow, UTCOffsetMinutes: 120}
 	f.Files = []StorageFile{
-		{DatabaseID: 7, Database: "GraniteLive", FileID: 1, Type: "ROWS", LogicalName: "GraniteLive", PhysicalName: `D:\Data\GraniteLive.mdf`,
+		{DatabaseID: 7, Database: "WarehouseLive", FileID: 1, Type: "ROWS", LogicalName: "WarehouseLive", PhysicalName: `D:\Data\WarehouseLive.mdf`,
 			SizeMB: 4096, Growth: 32768, MaxSizePages: -1, UsedMB: i64(3500), Volume: `D:\`, VolumeTotalMB: 102400, VolumeFreeMB: 51200,
 			HasIO: true, Reads: 5000, Writes: 100, ReadStallMs: 25000, WriteStallMs: 100},
-		{DatabaseID: 7, Database: "GraniteLive", FileID: 2, Type: "LOG", LogicalName: "GraniteLive_log", PhysicalName: `L:\Log\GraniteLive_log.ldf`,
+		{DatabaseID: 7, Database: "WarehouseLive", FileID: 2, Type: "LOG", LogicalName: "WarehouseLive_log", PhysicalName: `L:\Log\WarehouseLive_log.ldf`,
 			SizeMB: 1024, Growth: 32768, MaxSizePages: 268435456, UsedMB: i64(100), Volume: `L:\`, VolumeTotalMB: 51200, VolumeFreeMB: 40960,
 			HasIO: true, Reads: 10, Writes: 8000, ReadStallMs: 10, WriteStallMs: 8000},
 	}
@@ -109,7 +109,9 @@ func TestStorageCatalogue(t *testing.T) {
 			t.Errorf("incomplete check %+v", c)
 		}
 		clientIT := map[string]bool{"STO01": true, "STO05": true, "STO06": true, "STO09": true, "STO10": true, "STO12": true}[c.ID]
-		if (c.Owner == OwnerClientIT) != clientIT || (c.Owner != OwnerClientIT && c.Owner != OwnerUs) {
+		vendor := c.ID == "IDX10" // the application's owner decides what may be deleted
+		if (c.Owner == OwnerClientIT) != clientIT || (c.Owner == OwnerVendor) != vendor ||
+			(c.Owner != OwnerClientIT && c.Owner != OwnerUs && c.Owner != OwnerVendor) {
 			t.Errorf("%s owner %q", c.ID, c.Owner)
 		}
 	}
@@ -124,16 +126,16 @@ func TestStorageGreen(t *testing.T) {
 	if len(fs) != 1 || fs[0].CheckID != "IDX01" {
 		t.Fatalf("findings %+v", fs)
 	}
-	wantStorageFinding(t, fs[0], SeverityInfo, WhenNone, EffortNone, "GraniteLive",
+	wantStorageFinding(t, fs[0], SeverityInfo, WhenNone, EffortNone, "WarehouseLive",
 		"The biggest table, [dbo].[Transaction], has 1,200 MB in total: 800 MB data and 400 MB in 3 index(es).")
-	if !strings.HasPrefix(fs[0].Evidence, "Top 2: [dbo].[Transaction]: 1,200 MB total, 800 MB data, 400 MB index, 1,234,567 rows; [dbo].[Document]: 120 MB total") ||
+	if !strings.HasPrefix(fs[0].Evidence, "Top 2: [dbo].[Transaction]: 1,200 MB total, 800 MB data, 400 MB index, 1,234,567 rows; [dbo].[SalesOrder]: 120 MB total") ||
 		!strings.HasSuffix(fs[0].Evidence, "All 120 tables: 2,048 MB data, 1,024 MB indexes.") {
 		t.Errorf("IDX01 evidence %q", fs[0].Evidence)
 	}
 	if c.Status != StatusGreen || c.StatusText != "No problem found" || c.ToDo != 0 || c.ForClientIT != 0 || c.Fixable != 0 {
 		t.Errorf("card %+v", c)
 	}
-	if c.Verdict != `GraniteLive is 3.0 GB on D:\, which has 50 GB free.` {
+	if c.Verdict != `WarehouseLive is 3.0 GB on D:\, which has 50 GB free.` {
 		t.Errorf("verdict %q", c.Verdict)
 	}
 	if c.AsOf == nil || !c.AsOf.Equal(time.Date(2026, 11, 3, 7, 21, 0, 0, time.UTC)) {
@@ -175,7 +177,7 @@ func TestStorageSTO01(t *testing.T) {
 		{1024000, 204799, SeverityMedium, "80", ToneBad}, // just under 20% of a big disk
 	} {
 		f := sfacts()
-		d := file(&f, "GraniteLive")
+		d := file(&f, "WarehouseLive")
 		d.VolumeTotalMB, d.VolumeFreeMB = c.total, c.free
 		card, fs, _ := sbuild(f)
 		got := allOf(fs, "STO01")
@@ -198,7 +200,7 @@ func TestStorageSTO01(t *testing.T) {
 	}
 	// The scan's evidence: free and total in whole GB.
 	f := sfacts()
-	file(&f, "GraniteLive").VolumeFreeMB = 9000
+	file(&f, "WarehouseLive").VolumeFreeMB = 9000
 	_, fs, _ := sbuild(f)
 	if e := allOf(fs, "STO01")[0].Evidence; e != "Free: 8 GB of 100 GB." {
 		t.Errorf("STO01 evidence %q", e)
@@ -217,19 +219,19 @@ func TestStorageSTO01(t *testing.T) {
 
 func TestStorageSTO02(t *testing.T) {
 	f := sfacts()
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.IsPercentGrowth, d.Growth, d.SizeMB = true, 10, 2048
 	t3 := file(&f, "temp3")
 	t3.IsPercentGrowth, t3.Growth = true, 25
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.IsPercentGrowth, l.Growth = true, 0 // percent but 0: STO03, not STO02
 	_, fs, _ := sbuild(f)
 	got := allOf(fs, "STO02")
 	if len(got) != 2 {
 		t.Fatalf("STO02 per file: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortQuickWin, "GraniteLive", "File GraniteLive (rows) grows by 10%.")
-	if got[0].DoThis != "Use a fixed growth: ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', FILEGROWTH = 256MB);" ||
+	wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortQuickWin, "WarehouseLive", "File WarehouseLive (rows) grows by 10%.")
+	if got[0].DoThis != "Use a fixed growth: ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', FILEGROWTH = 256MB);" ||
 		got[0].Evidence != "Current size: 2048 MB." {
 		t.Errorf("STO02 do/evidence %q %q", got[0].DoThis, got[0].Evidence)
 	}
@@ -239,7 +241,7 @@ func TestStorageSTO02(t *testing.T) {
 	}
 	for size, mb := range map[int64]string{1023: "64MB", 1024: "256MB", 10239: "256MB", 10240: "1024MB"} {
 		f := sfacts()
-		d := file(&f, "GraniteLive")
+		d := file(&f, "WarehouseLive")
 		d.IsPercentGrowth, d.Growth, d.SizeMB = true, 10, size
 		_, fs, _ := sbuild(f)
 		if x := allOf(fs, "STO02"); len(x) != 1 || !strings.Contains(x[0].DoThis, "FILEGROWTH = "+mb) {
@@ -250,8 +252,8 @@ func TestStorageSTO02(t *testing.T) {
 
 func TestStorageSTO03(t *testing.T) {
 	f := sfacts()
-	file(&f, "GraniteLive_log").Growth = 0
-	d := file(&f, "GraniteLive")
+	file(&f, "WarehouseLive_log").Growth = 0
+	d := file(&f, "WarehouseLive")
 	d.Growth, d.SizeMB = 4096, 1024 // 32 MB on 1 GB
 	file(&f, "temp5").Growth = 0
 	_, fs, _ := sbuild(f)
@@ -259,11 +261,11 @@ func TestStorageSTO03(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("STO03 per file: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "GraniteLive", "File GraniteLive grows in small steps of 32 MB.")
-	if got[0].Why != sto03WhySmall || got[0].DoThis != "ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', FILEGROWTH = 256MB);" {
+	wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "WarehouseLive", "File WarehouseLive grows in small steps of 32 MB.")
+	if got[0].Why != sto03WhySmall || got[0].DoThis != "ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', FILEGROWTH = 256MB);" {
 		t.Errorf("STO03 small: %+v", got[0])
 	}
-	wantStorageFinding(t, got[1], SeverityLow, WhenOnline, EffortQuickWin, "GraniteLive_log", "File GraniteLive_log has autogrowth switched off.")
+	wantStorageFinding(t, got[1], SeverityLow, WhenOnline, EffortQuickWin, "WarehouseLive_log", "File WarehouseLive_log has autogrowth switched off.")
 	if got[1].Why != sto03WhyOff {
 		t.Errorf("STO03 off why %q", got[1].Why)
 	}
@@ -272,14 +274,14 @@ func TestStorageSTO03(t *testing.T) {
 	// Thresholds: 64 MB growth, or a file under 1 GB, does not fire.
 	for _, c := range []struct{ growth, size int64 }{{8192, 1024}, {4096, 1023}} {
 		f := sfacts()
-		d := file(&f, "GraniteLive")
+		d := file(&f, "WarehouseLive")
 		d.Growth, d.SizeMB = c.growth, c.size
 		if _, fs, _ := sbuild(f); len(allOf(fs, "STO03")) != 0 {
 			t.Errorf("growth %d size %d: %+v", c.growth, c.size, allOf(fs, "STO03"))
 		}
 	}
 	f = sfacts()
-	d = file(&f, "GraniteLive")
+	d = file(&f, "WarehouseLive")
 	d.Growth, d.SizeMB = 0, 20480
 	_, fs, _ = sbuild(f)
 	if x := allOf(fs, "STO03"); len(x) != 1 || !strings.Contains(x[0].DoThis, "FILEGROWTH = 1024MB") {
@@ -289,19 +291,19 @@ func TestStorageSTO03(t *testing.T) {
 
 func TestStorageSTO04(t *testing.T) {
 	f := sfacts()
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.MaxSizePages, d.SizeMB = 128000, 900 // max 1000 MB, at 90%
 	_, fs, _ := sbuild(f)
 	got := allOf(fs, "STO04")
 	if len(got) != 1 {
 		t.Fatalf("STO04: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityHigh, WhenOnline, EffortQuickWin, "GraniteLive", "File GraniteLive is at 90% of its maximum size.")
-	if got[0].DoThis != "Raise or remove the limit (check disk space first): ALTER DATABASE [GraniteLive] MODIFY FILE (NAME = N'GraniteLive', MAXSIZE = UNLIMITED);" ||
+	wantStorageFinding(t, got[0], SeverityHigh, WhenOnline, EffortQuickWin, "WarehouseLive", "File WarehouseLive is at 90% of its maximum size.")
+	if got[0].DoThis != "Raise or remove the limit (check disk space first): ALTER DATABASE [WarehouseLive] MODIFY FILE (NAME = N'WarehouseLive', MAXSIZE = UNLIMITED);" ||
 		got[0].Evidence != "Size: 900 MB, max: 1000 MB." {
 		t.Errorf("STO04 %+v", got[0])
 	}
-	d = file(&f, "GraniteLive")
+	d = file(&f, "WarehouseLive")
 	d.SizeMB = 899
 	if _, fs, _ := sbuild(f); len(allOf(fs, "STO04")) != 0 {
 		t.Errorf("89.9%%: %+v", allOf(fs, "STO04"))
@@ -311,7 +313,7 @@ func TestStorageSTO04(t *testing.T) {
 	for size, sev := range map[int64]Severity{8191: "", 8192: SeverityMedium, 9215: SeverityMedium, 9216: SeverityHigh} {
 		f := sfacts()
 		f.EngineEdition = 4
-		file(&f, "GraniteLive").SizeMB = size
+		file(&f, "WarehouseLive").SizeMB = size
 		_, fs, _ := sbuild(f)
 		got := allOf(fs, "STO04")
 		if sev == "" {
@@ -323,13 +325,13 @@ func TestStorageSTO04(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("express %d: %+v", size, got)
 		}
-		wantStorageFinding(t, got[0], sev, WhenDecideFirst, EffortProject, "GraniteLive", "Database is close to the 10 GB limit of SQL Server Express.")
+		wantStorageFinding(t, got[0], sev, WhenDecideFirst, EffortProject, "WarehouseLive", "Database is close to the 10 GB limit of SQL Server Express.")
 	}
 }
 
 func TestStorageSTO05AndSTO06(t *testing.T) {
 	f := sfacts()
-	for _, n := range []string{"GraniteLive", "GraniteLive_log"} {
+	for _, n := range []string{"WarehouseLive", "WarehouseLive_log"} {
 		x := file(&f, n)
 		x.Volume, x.VolumeTotalMB, x.VolumeFreeMB = `C:\`, 512000, 256000
 	}
@@ -338,16 +340,16 @@ func TestStorageSTO05AndSTO06(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("STO05 once per database: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityMedium, WhenWindow, EffortModerate, "GraniteLive", "Database files are on the system drive (C:).")
-	if got[0].Evidence != `Files: D:\Data\GraniteLive.mdf, L:\Log\GraniteLive_log.ldf` {
+	wantStorageFinding(t, got[0], SeverityMedium, WhenWindow, EffortModerate, "WarehouseLive", "Database files are on the system drive (C:).")
+	if got[0].Evidence != `Files: D:\Data\WarehouseLive.mdf, L:\Log\WarehouseLive_log.ldf` {
 		t.Errorf("STO05 evidence %q", got[0].Evidence)
 	}
 	got = allOf(fs, "STO06")
 	if len(got) != 1 {
 		t.Fatalf("STO06: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityLow, WhenWindow, EffortProject, "GraniteLive", "1 database(s) have data and log files on the same volume.")
-	if got[0].Evidence != "Databases: GraniteLive" {
+	wantStorageFinding(t, got[0], SeverityLow, WhenWindow, EffortProject, "WarehouseLive", "1 database(s) have data and log files on the same volume.")
+	if got[0].Evidence != "Databases: WarehouseLive" {
 		t.Errorf("STO06 evidence %q", got[0].Evidence)
 	}
 	// Separate volumes: neither.
@@ -368,13 +370,13 @@ func TestStorageSTO07(t *testing.T) {
 	} {
 		f := sfacts()
 		f.LogReuseWait = c.reuse
-		file(&f, "GraniteLive_log").SizeMB = 4097
+		file(&f, "WarehouseLive_log").SizeMB = 4097
 		_, fs, _ := sbuild(f)
 		got := allOf(fs, "STO07")
 		if len(got) != 1 {
 			t.Fatalf("%s: %+v", c.reuse, got)
 		}
-		wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortModerate, "GraniteLive", "The log file (4097 MB) is larger than the data (4096 MB).")
+		wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortModerate, "WarehouseLive", "The log file (4097 MB) is larger than the data (4096 MB).")
 		if got[0].DoThis != c.do || got[0].Evidence != "Log reuse is waiting on: "+c.reuse {
 			t.Errorf("%s: %q %q", c.reuse, got[0].DoThis, got[0].Evidence)
 		}
@@ -382,8 +384,8 @@ func TestStorageSTO07(t *testing.T) {
 	// Equal, or bigger but under 1 GB: no finding.
 	for _, c := range []struct{ data, log int64 }{{4096, 4096}, {500, 1023}} {
 		f := sfacts()
-		file(&f, "GraniteLive").SizeMB = c.data
-		file(&f, "GraniteLive_log").SizeMB = c.log
+		file(&f, "WarehouseLive").SizeMB = c.data
+		file(&f, "WarehouseLive_log").SizeMB = c.log
 		if _, fs, _ := sbuild(f); len(allOf(fs, "STO07")) != 0 {
 			t.Errorf("%+v: %+v", c, allOf(fs, "STO07"))
 		}
@@ -405,7 +407,7 @@ func TestStorageSTO08(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("%d VLFs: %+v", n, got)
 		}
-		wantStorageFinding(t, got[0], sev, WhenWindow, EffortModerate, "GraniteLive",
+		wantStorageFinding(t, got[0], sev, WhenWindow, EffortModerate, "WarehouseLive",
 			"The transaction log is split into "+itoa(int64(n))+" virtual log files (VLFs).")
 	}
 	f := sfacts()
@@ -431,18 +433,18 @@ func TestStorageSTO09(t *testing.T) {
 		want                             Severity
 		finding                          string
 	}{
-		{"GraniteLive", 1000, 20000, 0, 0, SeverityMedium, `Data reads average 20 ms on D:\Data\GraniteLive.mdf.`},
-		{"GraniteLive", 1000, 50000, 0, 0, SeverityHigh, `Data reads average 50 ms on D:\Data\GraniteLive.mdf.`},
-		{"GraniteLive", 999, 99900, 0, 0, "", ""},
-		{"GraniteLive", 1000, 19999, 0, 0, "", ""},
-		{"GraniteLive", 0, 0, 1000, 90000, "", ""}, // slow data writes are not STO09
-		{"GraniteLive_log", 0, 0, 1000, 10000, SeverityMedium, `Log writes average 10 ms on L:\Log\GraniteLive_log.ldf.`},
-		{"GraniteLive_log", 0, 0, 1000, 20000, SeverityHigh, `Log writes average 20 ms on L:\Log\GraniteLive_log.ldf.`},
-		{"GraniteLive_log", 0, 0, 999, 99900, "", ""},
+		{"WarehouseLive", 1000, 20000, 0, 0, SeverityMedium, `Data reads average 20 ms on D:\Data\WarehouseLive.mdf.`},
+		{"WarehouseLive", 1000, 50000, 0, 0, SeverityHigh, `Data reads average 50 ms on D:\Data\WarehouseLive.mdf.`},
+		{"WarehouseLive", 999, 99900, 0, 0, "", ""},
+		{"WarehouseLive", 1000, 19999, 0, 0, "", ""},
+		{"WarehouseLive", 0, 0, 1000, 90000, "", ""}, // slow data writes are not STO09
+		{"WarehouseLive_log", 0, 0, 1000, 10000, SeverityMedium, `Log writes average 10 ms on L:\Log\WarehouseLive_log.ldf.`},
+		{"WarehouseLive_log", 0, 0, 1000, 20000, SeverityHigh, `Log writes average 20 ms on L:\Log\WarehouseLive_log.ldf.`},
+		{"WarehouseLive_log", 0, 0, 999, 99900, "", ""},
 	} {
 		f := sfacts()
-		set(&f, "GraniteLive", 5000, 25000, 100, 100)
-		set(&f, "GraniteLive_log", 10, 10, 8000, 8000)
+		set(&f, "WarehouseLive", 5000, 25000, 100, 100)
+		set(&f, "WarehouseLive_log", 10, 10, 8000, 8000)
 		set(&f, c.name, c.reads, c.readStall, c.writes, c.wStall)
 		card, fs, _ := sbuild(f)
 		got := allOf(fs, "STO09")
@@ -463,8 +465,8 @@ func TestStorageSTO09(t *testing.T) {
 	}
 	// One finding per file.
 	f := sfacts()
-	set(&f, "GraniteLive", 2000, 60000, 0, 0)
-	set(&f, "GraniteLive_log", 0, 0, 2000, 30000)
+	set(&f, "WarehouseLive", 2000, 60000, 0, 0)
+	set(&f, "WarehouseLive_log", 0, 0, 2000, 30000)
 	_, fs, _ := sbuild(f)
 	got := allOf(fs, "STO09")
 	if len(got) != 2 || got[0].Evidence != "Reads: 2000 (avg 30 ms). Writes: 0 (avg 0 ms)." {
@@ -599,9 +601,9 @@ func TestStorageTMP03(t *testing.T) {
 
 func TestStorageIDX07(t *testing.T) {
 	f := sfacts()
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.SizeMB, d.UsedMB = 6000, i64(2000)
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.SizeMB, l.UsedMB = 3000, i64(120)
 	f.LogReuseWait = "LOG_BACKUP"
 	_, fs, _ := sbuild(f)
@@ -609,25 +611,25 @@ func TestStorageIDX07(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("IDX07: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortModerate, "GraniteLive",
+	wantStorageFinding(t, got[0], SeverityMedium, WhenOnline, EffortModerate, "WarehouseLive",
 		"The log file (3,000 MB) is bigger than all the data in the database (2,000 MB).")
 	if !strings.HasPrefix(got[0].DoThis, "The log is waiting for a log backup.") || got[0].Evidence != "Log used: 120 MB. Waiting on: LOG_BACKUP. Recovery model: FULL." {
 		t.Errorf("IDX07 log %+v", got[0])
 	}
-	wantStorageFinding(t, got[1], SeverityLow, WhenWindow, EffortModerate, "GraniteLive", "Data file is 5.9 GB but only 2.0 GB is used.")
-	if !strings.HasSuffix(got[1].DoThis, "DBCC SHRINKFILE (N'GraniteLive', 2500);") || got[1].Evidence != "Allocated 6,000 MB, used 2,000 MB." {
+	wantStorageFinding(t, got[1], SeverityLow, WhenWindow, EffortModerate, "WarehouseLive", "Data file is 5.9 GB but only 2.0 GB is used.")
+	if !strings.HasSuffix(got[1].DoThis, "DBCC SHRINKFILE (N'WarehouseLive', 2500);") || got[1].Evidence != "Allocated 6,000 MB, used 2,000 MB." {
 		t.Errorf("IDX07 file %+v", got[1])
 	}
 	// Thresholds: under 5 GB, half used, a log under 2 GB.
 	f = sfacts()
-	d = file(&f, "GraniteLive")
+	d = file(&f, "WarehouseLive")
 	d.SizeMB, d.UsedMB = 5119, i64(100)
-	file(&f, "GraniteLive_log").SizeMB = 2047
+	file(&f, "WarehouseLive_log").SizeMB = 2047
 	if _, fs, _ := sbuild(f); len(allOf(fs, "IDX07")) != 0 {
 		t.Errorf("under the thresholds: %+v", allOf(fs, "IDX07"))
 	}
 	f = sfacts()
-	d = file(&f, "GraniteLive")
+	d = file(&f, "WarehouseLive")
 	d.SizeMB, d.UsedMB = 6000, i64(3000)
 	if _, fs, _ := sbuild(f); len(allOf(fs, "IDX07")) != 0 {
 		t.Errorf("half used: %+v", allOf(fs, "IDX07"))
@@ -641,7 +643,6 @@ func TestStorageIDX07(t *testing.T) {
 
 func TestStorageIDX10(t *testing.T) {
 	oldest := time.Date(2024, 1, 5, 10, 22, 0, 0, time.UTC)
-	newest := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
 		rows int64
 		mb   float64
@@ -650,12 +651,12 @@ func TestStorageIDX10(t *testing.T) {
 		{999999, 499, ""},
 		{1000000, 100, SeverityLow},
 		{10, 500, SeverityLow},
-		{4999999, 1023, SeverityLow},
-		{5000000, 100, SeverityMedium},
-		{10, 1024, SeverityMedium},
+		{9999999, 5119, SeverityLow},
+		{10000000, 100, SeverityMedium},
+		{10, 5120, SeverityMedium},
 	} {
 		f := sfacts()
-		f.LogTables = []LogTable{{Name: "IntegrationLog", Rows: c.rows, MB: c.mb, LeadCol: "Id", Oldest: &oldest, Newest: &newest}}
+		f.GrowingTables = []GrowingTable{{Schema: "dbo", Name: "IntegrationLog", Rows: c.rows, MB: c.mb, DateCol: "LoggedAt", Oldest: &oldest}}
 		card, fs, _ := sbuild(f)
 		got := allOf(fs, "IDX10")
 		if c.want == "" {
@@ -667,45 +668,105 @@ func TestStorageIDX10(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("%+v: %+v", c, got)
 		}
-		if got[0].Severity != c.want || got[0].When != WhenDecideFirst || got[0].Effort != EffortModerate || got[0].Object != "[dbo].[IntegrationLog]" {
+		if got[0].Severity != c.want || got[0].When != WhenDecideFirst || got[0].Effort != EffortModerate ||
+			got[0].Object != "[dbo].[IntegrationLog]" || got[0].Owner != OwnerVendor {
 			t.Errorf("%+v: %+v", c, got[0])
 		}
-		if fact := factOf(card, "Log tables"); fact.Tone != ToneBad || !strings.HasPrefix(fact.Value, "1 without cleanup, IntegrationLog ") {
+		if fact := factOf(card, "Tables that only grow"); fact.Tone != ToneBad || !strings.HasPrefix(fact.Value, "1, biggest dbo.IntegrationLog ") {
 			t.Errorf("%+v: fact %+v", c, fact)
 		}
 	}
 
 	f := sfacts()
-	f.LogTables = []LogTable{
-		{Name: "ScheduledJobsHistory", Rows: 2000000, MB: 700, LeadCol: "ID", Oldest: &oldest, Newest: &newest, Cleanup: "[dbo].[DeleteScheduledJobsHistory]"},
-		{Name: "EmailLog", Rows: 1500000, MB: 1500.4},
+	f.GrowingTables = []GrowingTable{
+		// A history table whose first date column goes back almost three years.
+		{Schema: "dbo", Name: "OrderHistory", Rows: 2000000, MB: 700, DateCol: "CreatedAt", Oldest: &oldest},
+		// A log table without a date column: how far back it goes is unknown.
+		{Schema: "app", Name: "IntegrationLog", Rows: 1500000, MB: 1500.4},
+		// Big, but its name does not say log or history: no finding.
+		{Schema: "dbo", Name: "Transaction", Rows: 50000000, MB: 20000},
+		// 10 million rows: Medium.
+		{Schema: "dbo", Name: "AuditTrail", Rows: 12000000, MB: 4000, DateCol: "At"},
 	}
 	card, fs, _ := sbuild(f)
 	got := allOf(fs, "IDX10")
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("IDX10 per table: %+v", got)
 	}
-	email, jobs := got[0], got[1] // Medium first
-	wantStorageFinding(t, jobs, SeverityLow, WhenDecideFirst, EffortModerate, "[dbo].[ScheduledJobsHistory]",
-		"ScheduledJobsHistory holds 2,000,000 rows (700 MB) going back to 2024-01-05. It keeps a row for every run of every Granite scheduled job, and nothing in Granite removes old rows. Cleanup code exists ([dbo].[DeleteScheduledJobsHistory]) but old rows are still here: check it is scheduled.")
-	wantDo := "Agree with the client how long to keep (suggested: 30 days), then schedule a cleanup outside busy hours that deletes in small batches, for example:\n" +
-		"DECLARE @Cutoff bigint = (SELECT MIN([ID]) FROM dbo.[ScheduledJobsHistory] WHERE [Date] >= DATEADD(DAY, -30, GETDATE()));\n" +
-		"WHILE 1 = 1 BEGIN DELETE TOP (20000) FROM dbo.[ScheduledJobsHistory] WHERE [ID] < @Cutoff; IF @@ROWCOUNT = 0 BREAK; END;\n" +
-		"Small batches keep locks short and the log small (run log backups during the first big cleanup). Deleting frees space inside the file for new rows; it does not shrink the file. Do not delete everything in one statement.\n" +
-		"Ready-made: GraniteLogCleanup\\Custom_CleanupLogTables.sql does this for all three tables, with a preview mode and a time limit."
-	if jobs.DoThis != wantDo {
-		t.Errorf("IDX10 do\n got %q\nwant %q", jobs.DoThis, wantDo)
+	audit, history, integration := got[0], got[1], got[2] // Medium first
+	wantStorageFinding(t, history, SeverityLow, WhenDecideFirst, EffortModerate, "[dbo].[OrderHistory]",
+		"dbo.OrderHistory has 2,000,000 rows (700 MB) and looks like a log or history table; its oldest row is from 2024-01-05 (33 months ago), so nothing seems to remove old rows.")
+	if history.Why != idx10Why || history.DoThis != idx10Do || history.Evidence != "Rows: 2,000,000. Size: 700 MB. Oldest CreatedAt: 2024-01-05 10:22." {
+		t.Errorf("IDX10 why, do, evidence: %q %q %q", history.Why, history.DoThis, history.Evidence)
 	}
-	if jobs.Evidence != "Rows: 2,000,000. Size: 700 MB. Oldest: 2024-01-05 10:22, newest: 2026-11-03 09:00. About 1,936 new rows a day." {
-		t.Errorf("IDX10 evidence %q", jobs.Evidence)
+	wantStorageFinding(t, integration, SeverityLow, WhenDecideFirst, EffortModerate, "[app].[IntegrationLog]",
+		"app.IntegrationLog has 1,500,000 rows (1,500 MB) and looks like a log or history table.")
+	if integration.Evidence != "Rows: 1,500,000. Size: 1,500 MB. It has no date column, so how far back its rows go is unknown." {
+		t.Errorf("IDX10 evidence without a date column: %q", integration.Evidence)
 	}
-	wantStorageFinding(t, email, SeverityMedium, WhenDecideFirst, EffortModerate, "[dbo].[EmailLog]",
-		"EmailLog holds 1,500,000 rows (1,500 MB). It keeps emails sent by Granite, and nothing in Granite removes old rows.")
-	if !strings.Contains(email.DoThis, "DELETE TOP (20000) FROM dbo.[EmailLog] WHERE [Date] < DATEADD(DAY, -90, GETDATE());  -- repeat until no rows are deleted") {
-		t.Errorf("IDX10 do without a key: %q", email.DoThis)
+	wantStorageFinding(t, audit, SeverityMedium, WhenDecideFirst, EffortModerate, "[dbo].[AuditTrail]",
+		"dbo.AuditTrail has 12,000,000 rows (4,000 MB) and looks like a log or history table.")
+	if audit.Evidence != "Rows: 12,000,000. Size: 4,000 MB. Its date column At is not indexed, so how far back its rows go was not read." {
+		t.Errorf("IDX10 evidence with an unindexed date column: %q", audit.Evidence)
 	}
-	if fact := factOf(card, "Log tables"); fact.Value != "2 without cleanup, EmailLog 1,500 MB" {
-		t.Errorf("log tables fact %+v", fact)
+	if fact := factOf(card, "Tables that only grow"); fact.Value != "3, biggest dbo.AuditTrail 4,000 MB" {
+		t.Errorf("tables that only grow fact %+v", fact)
+	}
+
+	// The minimum age: an oldest row 12 months old fires, 11 months old is being cleaned up. An
+	// indexed date column that could not be read leaves the age unknown: the finding fires and
+	// says nothing about removal.
+	twelve, eleven := time.Date(2025, 11, 3, 0, 0, 0, 0, time.UTC), time.Date(2025, 11, 4, 0, 0, 0, 0, time.UTC)
+	f = sfacts()
+	f.GrowingTables = []GrowingTable{
+		{Schema: "dbo", Name: "EventLog", Rows: 3000000, MB: 900, DateCol: "At", DateIndexed: true, Oldest: &twelve},
+		{Schema: "dbo", Name: "PickHistory", Rows: 3000000, MB: 800, DateCol: "At", DateIndexed: true, Oldest: &eleven},
+		{Schema: "dbo", Name: "MailLog", Rows: 2000000, MB: 700, DateCol: "SentAt", DateIndexed: true},
+	}
+	_, fs, _ = sbuild(f)
+	got = allOf(fs, "IDX10")
+	if len(got) != 2 {
+		t.Fatalf("IDX10 at the age boundary: %+v", got)
+	}
+	wantStorageFinding(t, got[0], SeverityLow, WhenDecideFirst, EffortModerate, "[dbo].[EventLog]",
+		"dbo.EventLog has 3,000,000 rows (900 MB) and looks like a log or history table; its oldest row is from 2025-11-03 (12 months ago), so nothing seems to remove old rows.")
+	wantStorageFinding(t, got[1], SeverityLow, WhenDecideFirst, EffortModerate, "[dbo].[MailLog]",
+		"dbo.MailLog has 2,000,000 rows (700 MB) and looks like a log or history table.")
+	if got[1].Evidence != "Rows: 2,000,000. Size: 700 MB. Its date column SentAt could not be read, so how far back its rows go is unknown." {
+		t.Errorf("IDX10 evidence with an unreadable date column: %q", got[1].Evidence)
+	}
+	if chk, _ := CheckByID("IDX10"); chk.Title != "Application tables that only grow" || chk.Question != "Which tables grow for ever?" ||
+		chk.Owner != OwnerVendor || chk.ThenCheck != "Re-run after the cleanup: the row count stopped growing." {
+		t.Errorf("IDX10 catalogue row %+v", chk)
+	}
+}
+
+func TestLooksLikeLogTable(t *testing.T) {
+	for name, want := range map[string]bool{
+		"IntegrationLog": true, "ORDERHISTORY": true, "audit_trail": true, "SqlTrace": true, "EventQueue": true,
+		"Journal": true, "Sales_Archive": true, "Transaction": false, "Item": false, "SalesOrder": false,
+	} {
+		if got := LooksLikeLogTable(name); got != want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}
+
+func TestWholeMonths(t *testing.T) {
+	now := time.Date(2026, 11, 3, 9, 21, 0, 0, time.UTC)
+	for _, c := range []struct {
+		at   time.Time
+		want int
+	}{
+		{time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), 0},
+		{time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), 1},
+		{time.Date(2025, 11, 4, 0, 0, 0, 0, time.UTC), 11},
+		{time.Date(2025, 11, 3, 0, 0, 0, 0, time.UTC), 12},
+		{time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC), 33},
+	} {
+		if got := wholeMonths(c.at, now); got != c.want {
+			t.Errorf("%s: %d, want %d", c.at.Format("2006-01-02"), got, c.want)
+		}
 	}
 }
 
@@ -766,23 +827,23 @@ func TestStorageIDX13(t *testing.T) {
 }
 
 func TestStorageFourthFact(t *testing.T) {
-	logs := []LogTable{{Name: "IntegrationLog", Rows: 2000000, MB: 800}}
+	grows := []GrowingTable{{Schema: "dbo", Name: "IntegrationLog", Rows: 2000000, MB: 800}}
 	ident := func(pct float64) []IdentityColumn {
-		return []IdentityColumn{{Table: "[dbo].[Document]", Column: "ID", Type: "int", LastValue: 1, PctUsed: pct}}
+		return []IdentityColumn{{Table: "[dbo].[SalesOrder]", Column: "ID", Type: "int", LastValue: 1, PctUsed: pct}}
 	}
 	for _, c := range []struct {
 		name  string
 		ids   []IdentityColumn
-		logs  []LogTable
+		grows []GrowingTable
 		label string
 	}{
-		{"identity at 70% wins", ident(70), logs, "Identity range"},
-		{"identity under 70% gives way to log tables", ident(69), logs, "Log tables"},
-		{"log tables", nil, logs, "Log tables"},
+		{"identity at 70% wins", ident(70), grows, "Identity range"},
+		{"identity under 70% gives way to tables that only grow", ident(69), grows, "Tables that only grow"},
+		{"tables that only grow", nil, grows, "Tables that only grow"},
 		{"tempdb otherwise", ident(60), nil, "TempDB"},
 	} {
 		f := sfacts()
-		f.Identities, f.LogTables = c.ids, c.logs
+		f.Identities, f.GrowingTables = c.ids, c.grows
 		card, _, _ := sbuild(f)
 		if len(card.Facts) != 4 || card.Facts[3].Label != c.label {
 			t.Errorf("%s: %+v", c.name, card.Facts)
@@ -792,9 +853,9 @@ func TestStorageFourthFact(t *testing.T) {
 
 func TestStorageCounts(t *testing.T) {
 	f := sfacts()
-	file(&f, "GraniteLive").VolumeFreeMB = 15000                // STO01 Medium, Client IT
-	file(&f, "GraniteLive_log").Growth = 0                      // STO03 Low, Us
-	f.LogTables = []LogTable{{Name: "EmailLog", Rows: 1000000}} // IDX10 Low, Us
+	file(&f, "WarehouseLive").VolumeFreeMB = 15000                                    // STO01 Medium, Client IT
+	file(&f, "WarehouseLive_log").Growth = 0                                          // STO03 Low, Us
+	f.GrowingTables = []GrowingTable{{Schema: "dbo", Name: "MailLog", Rows: 1000000}} // IDX10 Low, Vendor
 	card, fs, _ := sbuild(f)
 	// Fixable: STO03 carries the autogrowth fix since phase 4d.
 	if card.Status != StatusAmber || card.StatusText != "3 things to do" || card.ToDo != 3 || card.ForClientIT != 1 || card.Fixable != 1 {
@@ -804,7 +865,7 @@ func TestStorageCounts(t *testing.T) {
 		t.Errorf("verdict %q, top %s", card.Verdict, fs[0].CheckID)
 	}
 	f = sfacts()
-	file(&f, "GraniteLive_log").Growth = 0
+	file(&f, "WarehouseLive_log").Growth = 0
 	if card, _, _ := sbuild(f); card.StatusText != "1 thing to do" || card.ForClientIT != 0 {
 		t.Errorf("one: %+v", card)
 	}
@@ -814,7 +875,7 @@ func TestStorageGrey(t *testing.T) {
 	f := sfacts()
 	f.State = "RESTORING"
 	card, fs, checks := sbuild(f)
-	note := "GraniteLive is RESTORING, not online, so its storage was not checked."
+	note := "WarehouseLive is RESTORING, not online, so its storage was not checked."
 	if card.Status != StatusGrey || card.StatusText != "Could not be read" || card.Note != note || card.AsOf != nil || len(card.Facts) != 0 || len(fs) != 0 {
 		t.Errorf("not online: %+v %+v", card, fs)
 	}
@@ -827,7 +888,7 @@ func TestStorageGrey(t *testing.T) {
 		t.Errorf("%d checks", len(checks))
 	}
 
-	card, _, checks = sbuild(StorageFacts{Database: "GraniteLive", Error: "could not read the storage facts: timeout"})
+	card, _, checks = sbuild(StorageFacts{Database: "WarehouseLive", Error: "could not read the storage facts: timeout"})
 	if card.Status != StatusGrey || card.Note != "could not read the storage facts: timeout" || checkOf(checks, "IDX01").Status != CheckSkipped {
 		t.Errorf("not read: %+v", card)
 	}
@@ -835,7 +896,7 @@ func TestStorageGrey(t *testing.T) {
 	// Volumes unreadable: grey, the checks that need them skipped, the rest still run.
 	f = sfacts()
 	f.VolumeError = "the login does not have VIEW SERVER STATE."
-	file(&f, "GraniteLive_log").Growth = 0
+	file(&f, "WarehouseLive_log").Growth = 0
 	card, fs, checks = sbuild(f)
 	if card.Status != StatusGrey || card.Note != "Could not read the volumes (sys.dm_os_volume_stats): the login does not have VIEW SERVER STATE." {
 		t.Errorf("volumes: %+v", card)
@@ -870,13 +931,13 @@ func TestStorageGrey(t *testing.T) {
 
 	// Inside the database unreadable: those checks skipped, the card still answers.
 	f = sfacts()
-	f.TablesError, f.LogTablesError, f.IdentityError = "denied", "denied", "denied"
+	f.TablesError, f.GrowingTablesError, f.IdentityError = "denied", "denied", "denied"
 	card, _, checks = sbuild(f)
 	if card.Status != StatusGreen || factOf(card, "Database size").Value != "4.0 GB allocated, 3.4 GB used" || checkOf(checks, "IDX01").Note != "Could not read the table sizes: denied" ||
 		checkOf(checks, "IDX10").Status != CheckSkipped || checkOf(checks, "IDX13").Status != CheckSkipped {
 		t.Errorf("inside: %+v %+v", card, checks)
 	}
-	if card.Verdict != `GraniteLive is 4.0 GB on D:\, which has 50 GB free.` {
+	if card.Verdict != `WarehouseLive is 4.0 GB on D:\, which has 50 GB free.` {
 		t.Errorf("verdict from the data files: %q", card.Verdict)
 	}
 }
@@ -903,7 +964,7 @@ func TestStorageSTO10Status(t *testing.T) {
 
 func TestCheckdbRoomVerdicts(t *testing.T) {
 	at := time.Date(2026, 11, 3, 7, 30, 0, 0, time.UTC)
-	base := CheckdbRoomInputs{Database: "GraniteLive", CapturedAt: at, Duration: 1500 * time.Millisecond,
+	base := CheckdbRoomInputs{Database: "WarehouseLive", CapturedAt: at, Duration: 1500 * time.Millisecond,
 		EstimateKB: 1048576, TempdbFreeMB: 4096, TempdbRoomMB: 20480, DataVolume: `D:\`, DataFreeMB: 51200, DataSizeMB: 40960}
 
 	// Passed: 2 GB needed, 4 GB free, plenty on D:.
@@ -911,8 +972,8 @@ func TestCheckdbRoomVerdicts(t *testing.T) {
 	if r.NeedMB != 2048 || r.EstimateKB != 1048576 || r.DurationSeconds != 1.5 || !r.CapturedAt.Equal(at) || r.DataVolume != `D:\` {
 		t.Errorf("numbers %+v", r)
 	}
-	wantStorageFinding(t, r.Finding, SeverityInfo, WhenDecideFirst, EffortModerate, "GraniteLive",
-		"CHECKDB on GraniteLive needs about 2.0 GB of tempdb; tempdb has 4.0 GB free and the data volume has 50.0 GB free.")
+	wantStorageFinding(t, r.Finding, SeverityInfo, WhenDecideFirst, EffortModerate, "WarehouseLive",
+		"CHECKDB on WarehouseLive needs about 2.0 GB of tempdb; tempdb has 4.0 GB free and the data volume has 50.0 GB free.")
 	if r.Finding.Owner != OwnerClientIT || r.Finding.ThenCheck != "Run the estimate again: STO10 passed." ||
 		r.Finding.DoThis != `Free space on D:\ or let tempdb grow to 2.0 GB. Alternatives: run DBCC CHECKDB WITH PHYSICAL_ONLY (needs far less), or run the full check on a restored copy of the last backup, which also tests the backup. Run it in a quiet period.` {
 		t.Errorf("passed finding %+v", r.Finding)
@@ -925,14 +986,14 @@ func TestCheckdbRoomVerdicts(t *testing.T) {
 	in := base
 	in.TempdbFreeMB = 500
 	r = BuildCheckdbRoom(in)
-	wantStorageFinding(t, r.Finding, SeverityMedium, WhenDecideFirst, EffortModerate, "GraniteLive",
-		"CHECKDB on GraniteLive needs about 2.0 GB of tempdb; tempdb has 500 MB free and would have to grow by 1.5 GB.")
+	wantStorageFinding(t, r.Finding, SeverityMedium, WhenDecideFirst, EffortModerate, "WarehouseLive",
+		"CHECKDB on WarehouseLive needs about 2.0 GB of tempdb; tempdb has 500 MB free and would have to grow by 1.5 GB.")
 
 	// High: more than tempdb can reach.
 	in.TempdbRoomMB = 1000
 	r = BuildCheckdbRoom(in)
-	wantStorageFinding(t, r.Finding, SeverityHigh, WhenDecideFirst, EffortModerate, "GraniteLive",
-		"CHECKDB on GraniteLive needs about 2.0 GB of tempdb, but tempdb can only reach 1,000 MB.")
+	wantStorageFinding(t, r.Finding, SeverityHigh, WhenDecideFirst, EffortModerate, "WarehouseLive",
+		"CHECKDB on WarehouseLive needs about 2.0 GB of tempdb, but tempdb can only reach 1,000 MB.")
 
 	// Data volume: under 10% of the data size Medium, under 2% High.
 	for free, sev := range map[int64]Severity{4096: "", 4095: SeverityMedium, 820: SeverityMedium, 819: SeverityHigh} {
@@ -945,7 +1006,7 @@ func TestCheckdbRoomVerdicts(t *testing.T) {
 			}
 			continue
 		}
-		wantStorageFinding(t, r.Finding, sev, WhenDecideFirst, EffortModerate, "GraniteLive",
+		wantStorageFinding(t, r.Finding, sev, WhenDecideFirst, EffortModerate, "WarehouseLive",
 			"The data volume has "+mbText(free)+" free for a database of 40.0 GB; the snapshot CHECKDB takes needs room to grow while it runs.")
 	}
 
@@ -953,8 +1014,8 @@ func TestCheckdbRoomVerdicts(t *testing.T) {
 	in = base
 	in.TempdbFreeMB, in.DataFreeMB = 500, 100
 	r = BuildCheckdbRoom(in)
-	wantStorageFinding(t, r.Finding, SeverityHigh, WhenDecideFirst, EffortModerate, "GraniteLive",
-		"CHECKDB on GraniteLive needs about 2.0 GB of tempdb; tempdb has 500 MB free and would have to grow by 1.5 GB. The data volume has 100 MB free for a database of 40.0 GB; the snapshot CHECKDB takes needs room to grow while it runs.")
+	wantStorageFinding(t, r.Finding, SeverityHigh, WhenDecideFirst, EffortModerate, "WarehouseLive",
+		"CHECKDB on WarehouseLive needs about 2.0 GB of tempdb; tempdb has 500 MB free and would have to grow by 1.5 GB. The data volume has 100 MB free for a database of 40.0 GB; the snapshot CHECKDB takes needs room to grow while it runs.")
 
 	if NeedMB(1) != 1 || NeedMB(512) != 1 || NeedMB(513) != 2 || NeedMB(4604522) != 8994 {
 		t.Errorf("NeedMB %d %d %d %d", NeedMB(1), NeedMB(512), NeedMB(513), NeedMB(4604522))
@@ -997,7 +1058,7 @@ func TestCardDetailJSONCheckdbRoom(t *testing.T) {
 	if !strings.Contains(string(b), `"checkdbRoom":null`) {
 		t.Errorf("storage without a result: %s", b)
 	}
-	r := BuildCheckdbRoom(CheckdbRoomInputs{Database: "GraniteLive", EstimateKB: 1024, TempdbFreeMB: 10, TempdbRoomMB: 10, DataFreeMB: 10, DataSizeMB: 10})
+	r := BuildCheckdbRoom(CheckdbRoomInputs{Database: "WarehouseLive", EstimateKB: 1024, TempdbFreeMB: 10, TempdbRoomMB: 10, DataFreeMB: 10, DataSizeMB: 10})
 	storage.CheckdbRoom = &r
 	b, _ = json.Marshal(storage)
 	if !strings.Contains(string(b), `"checkdbRoom":{"capturedAt":`) || !strings.Contains(string(b), `"needMB":2`) || strings.Count(string(b), "checkdbRoom") != 1 {
@@ -1040,13 +1101,13 @@ func TestNumberFormats(t *testing.T) {
 // and kind, the rank the worst file's.
 func TestStorageSTO09PerVolume(t *testing.T) {
 	f := sfacts()
-	d2 := file(&f, "GraniteLive")
+	d2 := file(&f, "WarehouseLive")
 	d2.Reads, d2.ReadStallMs = 2000, 50000 // 25 ms
 	extra := *d2
-	extra.FileID, extra.LogicalName, extra.PhysicalName = 3, "GraniteLive2", `D:\Data\GraniteLive2.ndf`
+	extra.FileID, extra.LogicalName, extra.PhysicalName = 3, "WarehouseLive2", `D:\Data\WarehouseLive2.ndf`
 	extra.Reads, extra.ReadStallMs, extra.Writes, extra.WriteStallMs = 1000, 60000, 10, 20 // 60 ms
 	quick := extra
-	quick.FileID, quick.LogicalName, quick.PhysicalName = 4, "GraniteLive3", `D:\Data\GraniteLive3.ndf`
+	quick.FileID, quick.LogicalName, quick.PhysicalName = 4, "WarehouseLive3", `D:\Data\WarehouseLive3.ndf`
 	quick.Reads, quick.ReadStallMs = 5000, 5000 // 1 ms: not slow, not in the group
 	f.Files = append(f.Files, extra, quick)
 	_, fs, _ := sbuild(f)
@@ -1055,20 +1116,20 @@ func TestStorageSTO09PerVolume(t *testing.T) {
 		t.Fatalf("STO09 per volume: %+v", got)
 	}
 	wantStorageFinding(t, got[0], SeverityHigh, WhenDecideFirst, EffortProject, `D:\`,
-		`Data reads average 36 ms on 2 files on D:\ (GraniteLive2 is the slowest at 60 ms).`)
-	if got[0].Evidence != `D:\Data\GraniteLive.mdf: reads 2000 (avg 25 ms), writes 100 (avg 1 ms); D:\Data\GraniteLive2.ndf: reads 1000 (avg 60 ms), writes 10 (avg 2 ms).` {
+		`Data reads average 36 ms on 2 files on D:\ (WarehouseLive2 is the slowest at 60 ms).`)
+	if got[0].Evidence != `D:\Data\WarehouseLive.mdf: reads 2000 (avg 25 ms), writes 100 (avg 1 ms); D:\Data\WarehouseLive2.ndf: reads 1000 (avg 60 ms), writes 10 (avg 2 ms).` {
 		t.Errorf("evidence %q", got[0].Evidence)
 	}
 
 	// Data and log files on one volume: one finding per kind.
 	f = sfacts()
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.Volume, l.Writes, l.WriteStallMs = `D:\`, 2000, 30000
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.Reads, d.ReadStallMs = 2000, 50000
 	_, fs, _ = sbuild(f)
 	got = allOf(fs, "STO09")
-	if len(got) != 2 || got[0].Object != "GraniteLive" || got[1].Object != "GraniteLive_log" {
+	if len(got) != 2 || got[0].Object != "WarehouseLive" || got[1].Object != "WarehouseLive_log" {
 		t.Errorf("one file per kind on one volume: %+v", got)
 	}
 }
@@ -1185,14 +1246,14 @@ func TestStorageTMP03Filler(t *testing.T) {
 func TestStorageSlowGrowthAnd2022(t *testing.T) {
 	at := time.Date(2026, 11, 2, 21, 0, 0, 0, time.UTC)
 	f := sfacts()
-	l := file(&f, "GraniteLive_log")
+	l := file(&f, "WarehouseLive_log")
 	l.IsPercentGrowth, l.Growth = true, 10
-	d := file(&f, "GraniteLive")
+	d := file(&f, "WarehouseLive")
 	d.Growth = 0
-	f.SlowGrowth = &SlowGrowth{Ms: 4230, File: "GraniteLive_log", At: at}
+	f.SlowGrowth = &SlowGrowth{Ms: 4230, File: "WarehouseLive_log", At: at}
 	_, fs, _ := sbuild(f)
 	s2 := allOf(fs, "STO02")
-	if len(s2) != 1 || s2[0].Evidence != "Current size: 1024 MB. The slowest growth took 4.2 s (GraniteLive_log, 2026-11-02 21:00)." ||
+	if len(s2) != 1 || s2[0].Evidence != "Current size: 1024 MB. The slowest growth took 4.2 s (WarehouseLive_log, 2026-11-02 21:00)." ||
 		!strings.HasSuffix(s2[0].DoThis, sto02Log2022) {
 		t.Errorf("STO02 log %+v", s2)
 	}
@@ -1201,9 +1262,9 @@ func TestStorageSlowGrowthAnd2022(t *testing.T) {
 		t.Errorf("STO03 of another file %+v", s3)
 	}
 	// The slow file is the data file: its STO03 says so; under a second says nothing.
-	f.SlowGrowth = &SlowGrowth{Ms: 1500, File: "GraniteLive", At: at}
+	f.SlowGrowth = &SlowGrowth{Ms: 1500, File: "WarehouseLive", At: at}
 	_, fs, _ = sbuild(f)
-	if s3 = allOf(fs, "STO03"); !strings.HasSuffix(s3[0].Evidence, " The slowest growth took 1.5 s (GraniteLive, 2026-11-02 21:00).") {
+	if s3 = allOf(fs, "STO03"); !strings.HasSuffix(s3[0].Evidence, " The slowest growth took 1.5 s (WarehouseLive, 2026-11-02 21:00).") {
 		t.Errorf("STO03 slow %+v", s3)
 	}
 	f.SlowGrowth.Ms = 999
@@ -1214,9 +1275,9 @@ func TestStorageSlowGrowthAnd2022(t *testing.T) {
 	// Before SQL Server 2022, and on data files, no 64 MB note.
 	f = sfacts()
 	f.EngineVersion = "15.0.4355.3"
-	l = file(&f, "GraniteLive_log")
+	l = file(&f, "WarehouseLive_log")
 	l.IsPercentGrowth, l.Growth = true, 10
-	d = file(&f, "GraniteLive")
+	d = file(&f, "WarehouseLive")
 	d.IsPercentGrowth, d.Growth = true, 10
 	_, fs, _ = sbuild(f)
 	for _, x := range allOf(fs, "STO02") {
@@ -1227,7 +1288,7 @@ func TestStorageSlowGrowthAnd2022(t *testing.T) {
 	f.EngineVersion = "16.0.1000.6"
 	_, fs, _ = sbuild(f)
 	for _, x := range allOf(fs, "STO02") {
-		if strings.Contains(x.DoThis, "64 MB is instant") != (x.Object == "GraniteLive_log") {
+		if strings.Contains(x.DoThis, "64 MB is instant") != (x.Object == "WarehouseLive_log") {
 			t.Errorf("2022: %+v", x)
 		}
 	}

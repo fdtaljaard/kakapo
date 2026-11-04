@@ -13,8 +13,8 @@ var sampleStart = time.Date(2026, 11, 3, 10, 14, 0, 0, time.UTC)
 // a backup running, the log growing, THREADPOOL, CPU busy with other programs, slow data reads,
 // memory pressure and one query taking the CPU.
 func busySample() SampleInputs {
-	blocker := Blocker{Session: 83, Blocked: 14, LongestSec: 360, Database: "GraniteLive", Login: "granite", Host: "WMS-APP01",
-		Program: "GraniteScheduler", Status: "sleeping", OpenTran: 1, LastStatement: "EXEC dbo.Prescript_Packing_MasterItem @id = 5"}
+	blocker := Blocker{Session: 83, Blocked: 14, LongestSec: 360, Database: "WarehouseLive", Login: "appsvc", Host: "WMS-APP01",
+		Program: "AppScheduler", Status: "sleeping", OpenTran: 1, LastStatement: "EXEC dbo.usp_Packing_Item @id = 5"}
 	later := blocker
 	later.LongestSec = 390
 	first := SampleSnapshot{
@@ -30,11 +30,11 @@ func busySample() SampleInputs {
 			{QueryHash: "0xCCCC000000000003", CPU: 9000000, Execs: 50, Reads: 10, Elapsed: 9000000},
 		},
 		Files: []SampleFileStats{
-			{Database: "GraniteLive", FileID: 1, File: "GraniteLive", Type: "ROWS", Reads: 100, ReadStallMs: 1000, SizeBytes: 10 << 30},
-			{Database: "GraniteLive", FileID: 2, File: "GraniteLive_log", Type: "LOG", Writes: 1000, WriteStallMs: 1000, SizeBytes: 1024 << 20},
+			{Database: "WarehouseLive", FileID: 1, File: "WarehouseLive", Type: "ROWS", Reads: 100, ReadStallMs: 1000, SizeBytes: 10 << 30},
+			{Database: "WarehouseLive", FileID: 2, File: "WarehouseLive_log", Type: "LOG", Writes: 1000, WriteStallMs: 1000, SizeBytes: 1024 << 20},
 		},
 		Blockers:           []Blocker{blocker},
-		Running:            []RunningCommand{{Session: 61, Command: "BACKUP DATABASE", Database: "GraniteLive", PercentDone: 40, ElapsedSeconds: 600}},
+		Running:            []RunningCommand{{Session: 61, Command: "BACKUP DATABASE", Database: "WarehouseLive", PercentDone: 40, ElapsedSeconds: 600}},
 		PageLifeExpectancy: 4000, GrantsPending: 0,
 	}
 	second := SampleSnapshot{
@@ -57,17 +57,17 @@ func busySample() SampleInputs {
 			{QueryHash: "0xDDDD000000000004", CPU: 90000000, Execs: 1, Reads: 1, Elapsed: 1}, // kakapo's own: no text
 		},
 		Files: []SampleFileStats{
-			{Database: "GraniteLive", FileID: 1, File: "GraniteLive", Type: "ROWS", Reads: 200, ReadStallMs: 4000, ReadBytes: 8 << 20, SizeBytes: 10 << 30},
-			{Database: "GraniteLive", FileID: 2, File: "GraniteLive_log", Type: "LOG", Writes: 1100, WriteStallMs: 1300, WriteBytes: 4 << 20, SizeBytes: 1280 << 20},
+			{Database: "WarehouseLive", FileID: 1, File: "WarehouseLive", Type: "ROWS", Reads: 200, ReadStallMs: 4000, ReadBytes: 8 << 20, SizeBytes: 10 << 30},
+			{Database: "WarehouseLive", FileID: 2, File: "WarehouseLive_log", Type: "LOG", Writes: 1100, WriteStallMs: 1300, WriteBytes: 4 << 20, SizeBytes: 1280 << 20},
 		},
 		Blockers:           []Blocker{later},
-		Running:            []RunningCommand{{Session: 61, Command: "BACKUP DATABASE", Database: "GraniteLive", PercentDone: 45, ElapsedSeconds: 630, LeftSeconds: 780}},
+		Running:            []RunningCommand{{Session: 61, Command: "BACKUP DATABASE", Database: "WarehouseLive", PercentDone: 45, ElapsedSeconds: 630, LeftSeconds: 780}},
 		PageLifeExpectancy: 120, GrantsPending: 2,
 	}
-	return SampleInputs{Database: "GraniteLive", Seconds: 30, First: first, Second: second, QueryTexts: map[string]SampleQueryText{
-		"0xAAAA000000000001": {Database: "GraniteLive", ObjectName: "dbo.PickNext", Text: "SELECT TOP (1) * FROM dbo.Pick WHERE Status = @s"},
-		"0xBBBB000000000002": {Database: "GraniteLive", Text: "UPDATE dbo.Stock\r\nSET Qty = Qty - 1"},
-		"0xCCCC000000000003": {Database: "GraniteLive", Text: "SELECT 1"},
+	return SampleInputs{Database: "WarehouseLive", Seconds: 30, First: first, Second: second, QueryTexts: map[string]SampleQueryText{
+		"0xAAAA000000000001": {Database: "WarehouseLive", ObjectName: "dbo.PickNext", Text: "SELECT TOP (1) * FROM dbo.Pick WHERE Status = @s"},
+		"0xBBBB000000000002": {Database: "WarehouseLive", Text: "UPDATE dbo.Stock\r\nSET Qty = Qty - 1"},
+		"0xCCCC000000000003": {Database: "WarehouseLive", Text: "SELECT 1"},
 	}}
 }
 
@@ -101,11 +101,11 @@ func TestSampleDelta(t *testing.T) {
 	}
 
 	// Files: per file in the sample; growth of the log.
-	if len(s.Files) != 2 || s.Files[0].File != "GraniteLive" || s.Files[0].Reads != 100 || s.Files[0].MsPerRead != 30 || s.Files[0].ReadMB != 8 ||
+	if len(s.Files) != 2 || s.Files[0].File != "WarehouseLive" || s.Files[0].Reads != 100 || s.Files[0].MsPerRead != 30 || s.Files[0].ReadMB != 8 ||
 		s.Files[1].Writes != 100 || s.Files[1].MsPerWrite != 3 {
 		t.Errorf("files %+v", s.Files)
 	}
-	if len(s.Growth) != 1 || s.Growth[0].File != "GraniteLive_log" || s.Growth[0].BeforeMB != 1024 || s.Growth[0].AfterMB != 1280 {
+	if len(s.Growth) != 1 || s.Growth[0].File != "WarehouseLive_log" || s.Growth[0].BeforeMB != 1024 || s.Growth[0].AfterMB != 1280 {
 		t.Errorf("growth %+v", s.Growth)
 	}
 
@@ -122,14 +122,14 @@ func TestSampleDelta(t *testing.T) {
 	}
 
 	want := []SampleLine{
-		{Area: SampleAreaBlocking, Text: "Session 83 (GraniteScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.Prescript_Packing_MasterItem @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it."},
-		{Area: SampleAreaRunning, Text: "BACKUP DATABASE is running on GraniteLive: 45% done, about 13 minutes to go. It competes with users for disk and CPU while it runs."},
-		{Area: SampleAreaGrowth, Text: "The log file GraniteLive_log of GraniteLive grew by 256 MB during the sample. Users wait while a file grows: set a fixed growth of 256 MB so it grows rarely and quickly."},
+		{Area: SampleAreaBlocking, Text: "Session 83 (AppScheduler, host WMS-APP01) has blocked 14 sessions for 6 minutes. It is running EXEC dbo.usp_Packing_Item @id = 5. It is sleeping with its transaction open: the program that owns it has not committed. Do not kill it until you know who owns it."},
+		{Area: SampleAreaRunning, Text: "BACKUP DATABASE is running on WarehouseLive: 45% done, about 13 minutes to go. It competes with users for disk and CPU while it runs."},
+		{Area: SampleAreaGrowth, Text: "The log file WarehouseLive_log of WarehouseLive grew by 256 MB during the sample. Users wait while a file grows: set a fixed growth of 256 MB so it grows rarely and quickly."},
 		{Area: SampleAreaPoison, Text: "Poison wait THREADPOOL: 3.0 seconds of waiting in 30 seconds. SQL Server ran out of worker threads: find the blocking or the parallelism that uses them up."},
 		{Area: SampleAreaWaits, Text: "Most of the waiting in this sample was blocking (LCK_M_X 60.0 s, THREADPOOL 3.0 s, PAGEIOLATCH_SH 2.0 s). " + wrk01Do[waitLOCK]},
 		{Area: SampleAreaCPU, Text: "CPU 95%, 26% of it not SQL Server: look at what else runs on this host (antivirus, backup agent)."},
 		{Area: SampleAreaCPU, Text: "20 queries were waiting for a CPU on 8 schedulers: the server is short of CPU right now."},
-		{Area: SampleAreaFiles, Text: "Reads from GraniteLive (GraniteLive) took 30.0 ms each during the sample (100 reads); over 20 ms is slow for a data file."},
+		{Area: SampleAreaFiles, Text: "Reads from WarehouseLive (WarehouseLive) took 30.0 ms each during the sample (100 reads); over 20 ms is slow for a data file."},
 		{Area: SampleAreaMemory, Text: "2 queries were waiting for memory before they could start (memory grants pending): other queries hold it all, usually a few huge sorts or hashes."},
 		{Area: SampleAreaMemory, Text: "Page life expectancy fell from 4,000 to 120 seconds during the sample: a query is reading more data than memory holds, pushing everything else out."},
 		{Area: SampleAreaQueries, QueryHash: "0xAAAA000000000001", Text: "The query hurting now is dbo.PickNext: 60.0 s of CPU in 30 seconds (25% of the server), 12 runs."},
@@ -170,8 +170,8 @@ func TestSampleQuiet(t *testing.T) {
 	b.Runnable = 0
 	b.Queries = []SampleQueryStats{{QueryHash: "0xAAAA000000000001", CPU: 1500000, Execs: 15, Reads: 6000, Elapsed: 2600000}}
 	b.Files = []SampleFileStats{
-		{Database: "GraniteLive", FileID: 1, File: "GraniteLive", Type: "ROWS", Reads: 110, ReadStallMs: 1050, SizeBytes: 10 << 30},
-		{Database: "GraniteLive", FileID: 2, File: "GraniteLive_log", Type: "LOG", Writes: 1050, WriteStallMs: 1100, SizeBytes: 1024 << 20},
+		{Database: "WarehouseLive", FileID: 1, File: "WarehouseLive", Type: "ROWS", Reads: 110, ReadStallMs: 1050, SizeBytes: 10 << 30},
+		{Database: "WarehouseLive", FileID: 2, File: "WarehouseLive_log", Type: "LOG", Writes: 1050, WriteStallMs: 1100, SizeBytes: 1024 << 20},
 	}
 	b.PageLifeExpectancy, b.GrantsPending = 4010, 0
 
