@@ -33,6 +33,12 @@ const (
 	OptionStatsOnly     = "statisticsOnly" // maintenance-job: no weekly index job
 	OptionJobName       = "job"            // remove-shrink-step: the job
 	OptionJobStep       = "step"           // remove-shrink-step: the step number
+	// maintenance-job, set by the maintenance plan (docs/phase5b-contract.md) and not shown as inputs:
+	// the weekly maintenance day (statistics skip it, the index job runs on it), the index job's own
+	// time, and creating the index job only (another job already updates the statistics).
+	OptionMaintDay       = "day"
+	OptionMaintIndexTime = "indexTime"
+	OptionMaintIndexOnly = "indexOnly"
 )
 
 // DefaultOperatorName is the operator operator-alerts creates when none has an email address.
@@ -607,7 +613,7 @@ const (
 	statsOnlyHelp   = "Statistics matter most. Untick to add a weekly index job (Sunday at the same time): reorganise from 30% fragmentation, rebuild from 50%, tables over 1,000 pages."
 	maintNoOla      = "Without Ola Hallengren's maintenance solution the job runs sp_updatestats, which samples each statistic and updates every one with any change; Ola's IndexOptimize does better on large tables: https://ola.hallengren.com"
 	maintOla        = "Uses Ola Hallengren's IndexOptimize already in master, set up for statistics only as Erik Darling's job does it."
-	maintIndexWarn  = "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that Sunday %s is a quiet hour and that the log has room."
+	maintIndexWarn  = "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that %s %s is a quiet hour and that the log has room."
 	maintExpress    = "SQL Server Express has no Agent: kakapo cannot create the job. Copy the script and schedule it in Windows Task Scheduler (sqlcmd -E -i)."
 	maintOlaOddName = "The database name has characters IndexOptimize reads as a list or a pattern, so the job uses sp_updatestats instead."
 )
@@ -616,6 +622,8 @@ const (
 type maintenancePlan struct {
 	jobs      []KakapoJob
 	time      string
+	indexTime string
+	day       string // the weekly day: Sunday unless the day option is given
 	statsOnly bool
 	ola       bool
 	inputs    []FixInput
@@ -624,7 +632,7 @@ type maintenancePlan struct {
 }
 
 func planMaintenance(f MaintenanceJobFacts, options map[string]string) maintenancePlan {
-	p := maintenancePlan{time: DefaultMaintenanceTime, statsOnly: boolOption(options, OptionStatsOnly), options: map[string]string{}}
+	p := maintenancePlan{time: DefaultMaintenanceTime, day: defaultCheckdbDay, statsOnly: boolOption(options, OptionStatsOnly), options: map[string]string{}}
 	p.ola = f.Ola && OlaDatabaseNameOK(f.Database)
 	typed, given := options[OptionMaintTime]
 	in := FixInput{Name: OptionMaintTime, Label: "Time", Value: p.time, Kind: "text", Help: maintTimeHelp}
@@ -636,6 +644,34 @@ func planMaintenance(f MaintenanceJobFacts, options map[string]string) maintenan
 	}
 	p.inputs = append(p.inputs, in)
 	p.options[OptionMaintTime] = in.Value
+	// The maintenance plan's options (docs/phase5b-contract.md): echoed only when given, so the
+	// fix on its own is as it was.
+	p.indexTime = p.time
+	dayTyped, dayGiven := options[OptionMaintDay]
+	if dayGiven {
+		if v, ok := checkdbDay(dayTyped); ok {
+			p.day = v
+		} else {
+			p.blocked = append(p.blocked, checkdbDayWarn)
+		}
+		p.options[OptionMaintDay] = strings.TrimSpace(dayTyped)
+	}
+	if typed, given := options[OptionMaintIndexTime]; given {
+		if v, ok := parseClock(typed); ok {
+			p.indexTime = v
+		} else {
+			p.blocked = append(p.blocked, maintTimeWarn)
+		}
+		p.options[OptionMaintIndexTime] = strings.TrimSpace(typed)
+	}
+	indexOnly := false
+	if typed, given := options[OptionMaintIndexOnly]; given {
+		indexOnly = p.ola && strings.EqualFold(strings.TrimSpace(typed), "true")
+		p.options[OptionMaintIndexOnly] = fmt.Sprint(indexOnly)
+	}
+	if indexOnly {
+		p.statsOnly = false
+	}
 	if !p.ola {
 		p.statsOnly = true
 	} else {
@@ -648,13 +684,16 @@ func planMaintenance(f MaintenanceJobFacts, options map[string]string) maintenan
 	if f.EngineEdition == 4 {
 		operator = ""
 	}
+	dayBit := checkdbDayBit(p.day)
 	indexJob := p.ola && !p.statsOnly && !f.exists(IndexJobName(f.Database))
 	weeklyIndex := indexJob || (p.ola && f.exists(IndexJobName(f.Database)))
-	if !f.exists(StatisticsJobName(f.Database)) {
+	if !f.exists(StatisticsJobName(f.Database)) && !indexOnly {
 		sc := KakapoJobSchedule{Name: StatisticsJobName(f.Database) + ", daily " + p.time, Freq: JobDaily, Clock: p.time}
-		if weeklyIndex {
-			// On Sunday the index job updates the statistics too.
-			sc = KakapoJobSchedule{Name: StatisticsJobName(f.Database) + ", Monday to Saturday " + p.time, Freq: JobWeekly, Days: JobMonToSat, Clock: p.time}
+		if weeklyIndex || dayGiven {
+			// On the weekly day the index job updates the statistics too, or (the maintenance plan)
+			// the integrity check runs.
+			sc = KakapoJobSchedule{Freq: JobWeekly, Days: jobAllWeekday &^ dayBit, Clock: p.time}
+			sc.Name = StatisticsJobName(f.Database) + ", " + sc.words()
 		}
 		cmd, how := updateStatsCommand(f.Database), "sp_updatestats"
 		if p.ola {
@@ -665,7 +704,8 @@ func planMaintenance(f MaintenanceJobFacts, options map[string]string) maintenan
 			Steps:       []KakapoJobStep{{Name: "Update statistics", Command: cmd}}})
 	}
 	if indexJob {
-		sc := KakapoJobSchedule{Name: IndexJobName(f.Database) + ", Sunday " + p.time, Freq: JobWeekly, Days: JobSunday, Clock: p.time}
+		sc := KakapoJobSchedule{Freq: JobWeekly, Days: dayBit, Clock: p.indexTime}
+		sc.Name = IndexJobName(f.Database) + ", " + sc.words()
 		p.jobs = append(p.jobs, KakapoJob{Name: IndexJobName(f.Database), Operator: operator, Schedule: sc,
 			Description: KakapoJobDescription(date, f.Database, "indexes "+sc.words()+" (IndexOptimize: reorganise from 30%, rebuild from 50%, and statistics)"),
 			Steps:       []KakapoJobStep{{Name: "Reorganise or rebuild indexes, update statistics", Command: olaIndexCommand(f.Database)}}})
@@ -692,7 +732,8 @@ func (p maintenancePlan) script(f MaintenanceJobFacts) string {
 // script to run by hand. ErrFixNotApplicable when kakapo's jobs exist already. A wrong time leaves
 // the preview without changes.
 func BuildMaintenanceJobFix(f MaintenanceJobFacts, options map[string]string) (FixPreview, Fix, error) {
-	if f.exists(StatisticsJobName(f.Database)) && (!f.Ola || f.exists(IndexJobName(f.Database))) {
+	indexOnly := strings.EqualFold(strings.TrimSpace(options[OptionMaintIndexOnly]), "true")
+	if (f.exists(StatisticsJobName(f.Database)) || indexOnly) && (!f.Ola || f.exists(IndexJobName(f.Database))) {
 		return FixPreview{}, Fix{}, ErrFixNotApplicable
 	}
 	plan := planMaintenance(f, options)
@@ -720,7 +761,7 @@ func BuildMaintenanceJobFix(f MaintenanceJobFacts, options map[string]string) (F
 	}
 	for _, j := range plan.jobs {
 		if j.Name == IndexJobName(f.Database) {
-			p.Warnings = append(p.Warnings, fmt.Sprintf(maintIndexWarn, plan.time))
+			p.Warnings = append(p.Warnings, fmt.Sprintf(maintIndexWarn, plan.day, plan.indexTime))
 		}
 	}
 	switch {

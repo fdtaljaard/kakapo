@@ -488,10 +488,12 @@ func physicalOnlyInput(options map[string]string, dataMB *int64) (in FixInput, v
 // BuildCheckdbJobFix builds the preview of "Create the weekly integrity check" from the backup
 // facts, the integrity facts, the last CHECKDB room estimate (nil when never run) and the options
 // (day, time, physicalOnly). On Express the statement is a script to schedule by hand.
-// ErrFixNotApplicable when BAK03 does not carry the fix. A bad day or time, or kakapo's job already
-// there, gives the warning and no changes.
+// ErrFixNotApplicable when the jobs were not read or the database is a secondary replica
+// (offersCheckdbJob); a recent check by hand is not a schedule, so the fix does not wait for BAK03
+// (the maintenance plan offers it whenever no job covers the database). A bad day or time, or
+// kakapo's job already there, gives the warning and no changes.
 func BuildCheckdbJobFix(f BackupFacts, jf CheckdbJobFacts, room *CheckdbRoom, options map[string]string) (FixPreview, Fix, error) {
-	if x, ok := findingByID(backupsFindings(f), "BAK03"); !ok || x.FixID != FixCheckdbJob {
+	if !f.offersCheckdbJob() {
 		return FixPreview{}, Fix{}, ErrFixNotApplicable
 	}
 	d, _ := FindFixDef(FixCheckdbJob)

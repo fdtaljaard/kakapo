@@ -71,9 +71,10 @@ func TestBackupActionBadOptions(t *testing.T) {
 	if err := buildBackupActionFix(g, domain.FixRecoveryModel, f, backupActionFacts{}, nil); err != nil || len(g.preview.Changes) != 0 {
 		t.Errorf("read-only: %v %+v", err, g.preview)
 	}
-	// Nothing fired: nothing to apply (prepareGenericFix answers KindNotFound).
+	// A recent check by hand is not a schedule: the weekly job stays applicable (the maintenance
+	// plan offers it whenever no job covers the database); suspect pages need records.
 	healthy := backupScheduleFacts()
-	if err := buildBackupActionFix(actionFix(), domain.FixCheckdbJob, healthy, backupActionFacts{}, nil); !errors.Is(err, domain.ErrFixNotApplicable) {
+	if err := buildBackupActionFix(actionFix(), domain.FixCheckdbJob, healthy, backupActionFacts{}, nil); err != nil {
 		t.Errorf("checked recently: %v", err)
 	}
 	if err := buildBackupActionFix(actionFix(), domain.FixSuspectPagesClear, healthy, backupActionFacts{}, nil); !errors.Is(err, domain.ErrFixNotApplicable) {

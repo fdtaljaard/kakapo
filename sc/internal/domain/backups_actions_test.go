@@ -245,9 +245,15 @@ func TestCheckdbJobFix(t *testing.T) {
 		!strings.Contains(p.Statement, "sqlcmd -S SQL01\\WMS -E -b -i checkdb-WarehouseLive.sql") || strings.Contains(p.Statement, "sp_add_job") {
 		t.Errorf("express: %+v", p)
 	}
-	// BAK03 did not fire: nothing to apply.
-	if _, _, err := BuildCheckdbJobFix(scheduleFacts("FULL"), CheckdbJobFacts{}, nil, nil); !errors.Is(err, ErrFixNotApplicable) {
+	// A recent check by hand is not a schedule: the job is offered even when BAK03 did not fire.
+	if _, _, err := BuildCheckdbJobFix(scheduleFacts("FULL"), CheckdbJobFacts{}, nil, nil); err != nil {
 		t.Errorf("checked: %v", err)
+	}
+	// Not offered when the jobs were not read (Express and other jobs unknown) or on a secondary replica.
+	unread := scheduleFacts("FULL")
+	unread.JobsRead = false
+	if _, _, err := BuildCheckdbJobFix(unread, CheckdbJobFacts{}, nil, nil); !errors.Is(err, ErrFixNotApplicable) {
+		t.Errorf("jobs not read: %v", err)
 	}
 }
 

@@ -19,6 +19,7 @@ func goodUpkeep() UpkeepFacts {
 		FailedJobs: []FailedJob{}, MaintenanceJob: "IndexOptimize - USER_DATABASES", ShrinkJobs: []ShrinkJob{},
 		MissingAlerts: []string{}, Operators: 1, AlertsOn: 10,
 		TraceRunning: true, TraceCommands: []TraceCommand{}, SevereErrors: []SevereErrors{},
+		BackupHistoryRows: 4200, JobHistoryRows: 900, CleanupJob: "sp_delete_backuphistory",
 		ServerNow: setupNow, UTCOffsetMinutes: 120,
 	}
 }
@@ -47,11 +48,11 @@ func TestUpkeepGreen(t *testing.T) {
 	}
 	wantFacts(t, c, "SQL Agent=running, automatic/normal", "Failed jobs, 7 days=0/normal", "Maintenance job=found/normal",
 		"Told about errors=operator and 10 alerts/normal")
-	if len(cs) != 7 {
+	if len(cs) != 8 {
 		t.Fatalf("checks %+v", cs)
 	}
 	for i, x := range cs {
-		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
+		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07", "MNT08"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
 			t.Errorf("check %+v", x)
 		}
 	}
@@ -131,7 +132,7 @@ func TestUpkeepExpress(t *testing.T) {
 	if len(fs) != 1 {
 		t.Errorf("express findings %+v", fs)
 	}
-	for _, id := range []string{"MNT02", "MNT03", "MNT07"} {
+	for _, id := range []string{"MNT02", "MNT03", "MNT07", "MNT08"} {
 		if st := statusOf(cs, id); st.Status != CheckSkipped || st.Note != "Not applicable to Express edition (no SQL Server Agent)." {
 			t.Errorf("%s %+v", id, st)
 		}
@@ -448,7 +449,7 @@ func TestUpkeepGrey(t *testing.T) {
 	f = goodUpkeep()
 	f.Error = "could not read the upkeep facts: timeout"
 	c, fs, cs = runUpkeep(f)
-	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 7 || statusOf(cs, "MNT07").Note != f.Error {
+	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 8 || statusOf(cs, "MNT07").Note != f.Error {
 		t.Errorf("error %+v %+v", c, cs)
 	}
 	f = goodUpkeep()
@@ -567,11 +568,11 @@ func TestBuildCardsWithUpkeep(t *testing.T) {
 
 func TestUpkeepCatalogue(t *testing.T) {
 	checks := ChecksFor(CardUpkeep)
-	if len(checks) != 7 {
+	if len(checks) != 8 {
 		t.Fatalf("upkeep checks: %d", len(checks))
 	}
 	owners := map[string]string{"MNT01": OwnerClientIT, "MNT02": OwnerUs, "MNT03": OwnerUs, "MNT04": OwnerUs, "MNT05": OwnerUs,
-		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT}
+		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT, "MNT08": OwnerUs}
 	for _, c := range checks {
 		if c.Title == "" || c.Question == "" || c.ThenCheck == "" || c.Owner != owners[c.ID] {
 			t.Errorf("check %+v", c)
@@ -690,5 +691,66 @@ func TestUpkeepMNT07Silent(t *testing.T) {
 func TestUpkeepMNT03Wording(t *testing.T) {
 	if !strings.HasPrefix(mnt03Do, "Nightly statistics updates (Ola Hallengren's IndexOptimize with @StatisticsModificationLevel = 5 and no index work) matter most; rebuild or reorganise indexes weekly or not at all.") {
 		t.Errorf("MNT03 do this %q", mnt03Do)
+	}
+}
+
+// MNT08 (docs/phase5b-contract.md): msdb history that nothing prunes. Low; Medium over a million
+// rows or two years; silent with a cleanup job or no history; skipped when unreadable or on Express.
+func TestUpkeepMNT08(t *testing.T) {
+	oldest := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	jobs := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+	f := goodUpkeep()
+	f.CleanupJob, f.BackupHistoryRows, f.JobHistoryRows, f.BackupHistoryOldest, f.JobHistoryOldest = "", 182000, 9400, &oldest, &jobs
+	c, fs, cs := runUpkeep(f)
+	x := one(t, fs, "MNT08")
+	if x.Severity != SeverityLow || x.Owner != OwnerUs || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Object != `SQL01\WMS` ||
+		x.Finding != "msdb keeps 182,000 backup history rows going back to 2025-06-01 and 9,400 job history rows; nothing prunes them." ||
+		x.Why != mnt08Why || x.DoThis != mnt08Do || x.ThenCheck != "Re-run after the first cleanup: MNT08 gone." || x.FixID != FixHistoryCleanup ||
+		x.Evidence != "Backup history (msdb.dbo.backupset): 182,000 rows since 2025-06-01. Job history (msdb.dbo.sysjobhistory): 9,400 rows since 2026-10-04. No enabled job runs sp_delete_backuphistory, sp_purge_jobhistory or a CommandLog cleanup." {
+		t.Errorf("MNT08 %+v", x)
+	}
+	if statusOf(cs, "MNT08").Status != CheckFinding || c.Fixable != 1 {
+		t.Errorf("check %+v fixable %d", statusOf(cs, "MNT08"), c.Fixable)
+	}
+	fixes := AvailableUpkeepFixes(f, fs)
+	if len(fixes) != 1 || fixes[0].ID != FixHistoryCleanup || fixes[0].Current != "182,000 backup and 9,400 job history rows, nothing prunes them" ||
+		fixes[0].Target != "kakapo: history cleanup (Sunday 05:00, keeps 30 days)" {
+		t.Errorf("fixes %+v", fixes)
+	}
+	// Medium: over a million rows, or history over two years old.
+	f.BackupHistoryRows = 1_000_001
+	if _, fs, _ = runUpkeep(f); one(t, fs, "MNT08").Severity != SeverityMedium {
+		t.Error("a million rows is Medium")
+	}
+	f.BackupHistoryRows = 990_000 // with 9,400 job rows: under a million
+	if _, fs, _ = runUpkeep(f); one(t, fs, "MNT08").Severity != SeverityLow {
+		t.Error("under a million is Low")
+	}
+	ancient := setupNow.AddDate(-2, 0, -1)
+	f.JobHistoryOldest = &ancient
+	if _, fs, _ = runUpkeep(f); one(t, fs, "MNT08").Severity != SeverityMedium {
+		t.Error("over two years is Medium")
+	}
+	// No backup history at all: the sentence without a date.
+	f.BackupHistoryRows, f.BackupHistoryOldest = 0, nil
+	if _, fs, _ = runUpkeep(f); one(t, fs, "MNT08").Finding != "msdb keeps 0 backup history rows and 9,400 job history rows; nothing prunes them." {
+		t.Errorf("no backups %q", one(t, fs, "MNT08").Finding)
+	}
+	// Silent: a cleanup job, or nothing kept.
+	f.CleanupJob = "sp_delete_backuphistory"
+	_, fs, cs = runUpkeep(f)
+	none(t, fs, "MNT08")
+	if statusOf(cs, "MNT08").Status != CheckPassed {
+		t.Errorf("cleanup job %+v", statusOf(cs, "MNT08"))
+	}
+	f.CleanupJob, f.JobHistoryRows = "", 0
+	_, fs, _ = runUpkeep(f)
+	none(t, fs, "MNT08")
+	// Unreadable: skipped with the reason.
+	f.JobHistoryRows, f.HistoryError = 10, "The SELECT permission was denied on the object 'backupset'"
+	_, fs, cs = runUpkeep(f)
+	none(t, fs, "MNT08")
+	if st := statusOf(cs, "MNT08"); st.Status != CheckSkipped || st.Note != "msdb is not readable with this login. "+f.HistoryError {
+		t.Errorf("unreadable %+v", st)
 	}
 }

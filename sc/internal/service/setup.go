@@ -64,6 +64,9 @@ type genericFix struct {
 	options  map[string]string  // what the user set in the preview (the backup schedule's folder)
 	preview  domain.FixPreview
 	fix      domain.Fix
+	// plan is what the maintenance plan's prepare keeps for its apply (docs/phase5b-contract.md): the
+	// pieces prepared through their own fixes, in apply order.
+	plan *planRun
 }
 
 // prepareGenericFix connects, finds the database, reads the facts the fix's card needs (the setup

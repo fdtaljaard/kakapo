@@ -47,6 +47,21 @@ type UpkeepFacts struct {
 	// SilentAlerts are the enabled severity 19-25 / error 823-825 alerts that notify no enabled
 	// operator with an email address by email (msdb.dbo.sysnotifications), by name (MNT07).
 	SilentAlerts []string
+	// MNT08 (docs/phase5b-contract.md): the history msdb keeps and whether anything prunes it, in
+	// its own TRY. BackupHistoryOldest is MIN(backup_finish_date) in msdb.dbo.backupset and
+	// JobHistoryOldest the oldest run_date in msdb.dbo.sysjobhistory (nil when none). CleanupJob is
+	// an enabled job whose step runs sp_delete_backuphistory, sp_purge_jobhistory or cleans
+	// CommandLog; "" none.
+	BackupHistoryOldest *time.Time
+	BackupHistoryRows   int64
+	JobHistoryRows      int64
+	JobHistoryOldest    *time.Time
+	CleanupJob          string
+	HistoryError        string
+	// MaintenancePlan is the plan read (docs/phase5b-contract.md), filled in by the service after
+	// the card is built; nil when it was not read. AvailableUpkeepFixes offers the maintenance plan
+	// fix from it.
+	MaintenancePlan *MaintenancePlan
 
 	// MNT05 and MNT06: the default trace, last 7 days. TraceRunning false when no default trace
 	// runs; TraceError when it could not be read (needs ALTER TRACE).
@@ -205,7 +220,7 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 
 	b.mnt01()
 	if f.IsExpress() {
-		b.skip(expressSkipped, "MNT02", "MNT03", "MNT07")
+		b.skip(expressSkipped, "MNT02", "MNT03", "MNT07", "MNT08")
 	} else {
 		b.mnt02()
 		b.mnt03()
@@ -215,6 +230,7 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 	b.mnt06()
 	if !f.IsExpress() {
 		b.mnt07()
+		b.mnt08()
 	}
 	RankFindings(b.findings)
 	checks := b.checks(def.ID)
@@ -628,6 +644,55 @@ func (b *upkeepBuild) mnt07() {
 	b.add("MNT07", 4, "Online", EffortQuickWin, f.ServerName, finding, mnt07Why, mnt07Do, evidence, FixOperatorAlerts)
 }
 
+// MNT08's texts and thresholds (docs/phase5b-contract.md). Sources: Microsoft, "sp_delete_backuphistory"
+// ("we recommend that you periodically execute sp_delete_backuphistory": msdb grows with every
+// backup); Ola Hallengren's installation prunes backup and job history weekly, keeping 30 days. The
+// thresholds of Medium (a million rows, two years) are the contract's.
+const (
+	mnt08Why = "msdb is SQL Server's own database of Agent jobs and backups. Every backup and every job run adds rows to its history and nothing deletes them: a bloated msdb slows SQL Server Agent, the backup and restore dialogs and the Backups card's own reads, and it is carried in every backup of msdb. Microsoft recommends pruning the backup history periodically (sp_delete_backuphistory)."
+	mnt08Do  = "Create the weekly history cleanup (the fix): every Sunday at 05:00 it deletes the backup and job history older than 30 days (sp_delete_backuphistory, sp_purge_jobhistory), as Ola Hallengren's installation does. The backup files themselves are not touched."
+	// mnt08MediumRows: more history rows than this (backup and job history together) is Medium.
+	mnt08MediumRows  = 1_000_000
+	mnt08MediumYears = 2
+)
+
+// mnt08: msdb keeps backup and job history and no enabled job prunes it. Low; Medium from a million
+// rows or history over two years old. Silent when a cleanup job exists, or when msdb holds no
+// history at all.
+func (b *upkeepBuild) mnt08() {
+	f := b.f
+	if f.HistoryError != "" {
+		b.skip(msdbNotReadable+f.HistoryError, "MNT08")
+		return
+	}
+	rows := f.BackupHistoryRows + f.JobHistoryRows
+	if f.CleanupJob != "" || rows == 0 {
+		return
+	}
+	rank := 4
+	old := f.ServerNow.AddDate(-mnt08MediumYears, 0, 0)
+	if rows > mnt08MediumRows || (f.BackupHistoryOldest != nil && f.BackupHistoryOldest.Before(old)) ||
+		(f.JobHistoryOldest != nil && f.JobHistoryOldest.Before(old)) {
+		rank = 3
+	}
+	backups := n0int(f.BackupHistoryRows) + " backup history rows"
+	if f.BackupHistoryOldest != nil {
+		backups += " going back to " + sqlDay(*f.BackupHistoryOldest)
+	}
+	finding := "msdb keeps " + backups + " and " + n0int(f.JobHistoryRows) + " job history rows; nothing prunes them."
+	evidence := "Backup history (msdb.dbo.backupset): " + n0int(f.BackupHistoryRows) + " rows" + sinceDay(f.BackupHistoryOldest) +
+		". Job history (msdb.dbo.sysjobhistory): " + n0int(f.JobHistoryRows) + " rows" + sinceDay(f.JobHistoryOldest) +
+		". No enabled job runs sp_delete_backuphistory, sp_purge_jobhistory or a CommandLog cleanup."
+	b.add("MNT08", rank, "Online", EffortQuickWin, f.ServerName, finding, mnt08Why, mnt08Do, evidence, FixHistoryCleanup)
+}
+
+func sinceDay(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return " since " + sqlDay(*t)
+}
+
 // SlowGrowthSentence is the evidence sentence for an autogrowth that took a second or more, with
 // its leading space: " The slowest growth took 4.2 s (WarehouseLive_log, 2026-11-02 22:05)."; ""
 // for a quicker one.
@@ -805,7 +870,8 @@ func buildUpkeepFix(d FixDef, f UpkeepFacts) (FixPreview, Fix, error) {
 }
 
 // AvailableUpkeepFixes are the fixes of the Upkeep findings that fired on this read, in the order
-// the findings rank.
+// the findings rank (MNT08 offers history-cleanup), then the maintenance plan when the plan read
+// (f.MaintenancePlan) has a piece to create (docs/phase5b-contract.md).
 func AvailableUpkeepFixes(f UpkeepFacts, findings []Finding) []Fix {
 	out := []Fix{}
 	seen := map[string]bool{}
@@ -829,6 +895,10 @@ func AvailableUpkeepFixes(f UpkeepFacts, findings []Finding) []Fix {
 			continue
 		}
 		seen[x.FixID] = true
+		if x.FixID == FixHistoryCleanup {
+			out = append(out, historyCleanupOffer(f))
+			continue
+		}
 		if x.FixID == FixAutoShrink {
 			// The Setup card's fix (DBC03), offered here by an AUTO_SHRINK event and applied
 			// through the Setup path.
@@ -843,6 +913,9 @@ func AvailableUpkeepFixes(f UpkeepFacts, findings []Finding) []Fix {
 				out = append(out, fix)
 			}
 		}
+	}
+	if fix, ok := MaintenancePlanOffer(f.MaintenancePlan); ok {
+		out = append(out, fix)
 	}
 	return out
 }

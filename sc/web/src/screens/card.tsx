@@ -12,6 +12,7 @@ import { DeadlocksPanel } from "@/components/deadlocks-panel"
 import { SamplePanel } from "@/components/sample-panel"
 import { FindingCard } from "@/components/finding-card"
 import { FixDialog } from "@/components/fix-dialog"
+import { MaintenancePlanRow } from "@/components/maintenance-plan-row"
 import { StillRunningNotice } from "@/components/fix-progress"
 import { CardStatusLine } from "@/components/instance-card"
 import { PageCrumbs } from "@/components/page-crumbs"
@@ -202,6 +203,17 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                     <CheckdbRoomPanel serverId={serverId} database={database} room={detail.checkdbRoom} onResult={setRan} />
                   </FindingContext.Provider>
                 </>
+              ) : cardId === "upkeep" ? (
+                // Phase 5b: the maintenance plan row (docs/phase5b-contract.md).
+                <MaintenancePlanRow
+                  plan={detail.maintenancePlan}
+                  fixes={detail.fixes}
+                  context={handover}
+                  onCreate={(piece) =>
+                    setFixing({ fixId: piece.fixId ?? "", title: `Create: ${piece.title}`, options: piece.options })
+                  }
+                  onSetUp={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
+                />
               ) : (
                 cardId === "performance" && (
                   <FindingContext.Provider value={deadlockContext}>

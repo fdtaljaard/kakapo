@@ -105,6 +105,9 @@ var FixDefs = []FixDef{
 	// Phase 5a (docs/phase5a-contract.md): archive or delete the old rows of a table that only grows.
 	{"archive-table", "Archive or delete old rows", ScopeDatabase, "IDX10", "Archive"},
 	{"remove-archive", "Stop archiving a table", ScopeDatabase, "IDX10", "Archive"},
+	// Phase 5b (docs/phase5b-contract.md): the maintenance plan.
+	{"history-cleanup", "Prune msdb history weekly", ScopeServer, "MNT08", "msdb history"},
+	{"maintenance-plan", "Set up the maintenance plan", ScopeServer, "MNT03", "Maintenance plan"},
 	{FixBackupSchedule, "Create a backup schedule", ScopeDatabase, "BAK01", "Backup schedule"},
 	{FixRemoveBackupSchedule, "Remove kakapo's backup jobs", ScopeDatabase, "BAK01", "Backup schedule"},
 }

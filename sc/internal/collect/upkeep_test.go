@@ -22,14 +22,16 @@ func TestUpkeepQueries(t *testing.T) {
 		t.Error("table rows from the heap or clustered index")
 	}
 	// The AUTO_CLOSE open, then the Agent and each msdb, trace and dump area in its own TRY.
-	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 8 {
+	// Phase 5b: MNT08's history read is the ninth.
+	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 9 {
 		t.Errorf("%d TRY blocks", n)
 	}
 	// Phase 3f: plan-handle evictions apart from cache clears, auto-shrink events, the slowest
 	// growth, and the alerts that notify no one.
 	for _, want := range []string{"EventClass IN (22, 92, 93, 94, 95, 116)", "N'%FREEPROCCACHE%(%0x%'", "N'%FREEPROCCACHE%(%@%'",
 		"N'evict'", "N'autoshrink'", "EventClass IN (94, 95)", "ORDER BY Duration DESC", "msdb.dbo.sysnotifications",
-		"(n.notification_method & 1) = 1", "is_auto_shrink_on", "SELECT name FROM @silent"} {
+		"(n.notification_method & 1) = 1", "is_auto_shrink_on", "SELECT name FROM @silent",
+		"MIN(backup_finish_date)", "FROM msdb.dbo.sysjobhistory", "sp[_]delete[_]backuphistory", "sp[_]purge[_]jobhistory", "@historyError"} {
 		if !strings.Contains(upkeepInstanceQuery, want) {
 			t.Errorf("upkeep query lacks %q", want)
 		}

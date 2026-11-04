@@ -147,6 +147,10 @@ type CardDetail struct {
 	// Deadlocks is the last stored deadlock report (DLK01): written for the Performance card (null
 	// when it was never run), left out for every other card (see MarshalJSON).
 	Deadlocks *DeadlockReport `json:"deadlocks,omitempty"`
+	// MaintenancePlan is the Upkeep card's Maintenance plan row (docs/phase5b-contract.md): every
+	// piece of regular maintenance and where it stands; nil (left out) for every other card, and when
+	// the Upkeep card itself could not be read (a plan whose jobs could not be read says so in it).
+	MaintenancePlan *MaintenancePlan `json:"maintenancePlan,omitempty"`
 }
 
 // Check is one check the app implements: which card it belongs to, its title, the question it
@@ -297,6 +301,8 @@ var Checks = []Check{
 	{"MNT07", CardUpkeep, "Alerts and an operator for corruption and severe errors",
 		"Will anyone be told about corruption or a severe error?", OwnerClientIT,
 		"RAISERROR('Alert test' 18 1) WITH LOG reaches the operator's mailbox."},
+	{"MNT08", CardUpkeep, "msdb history kept for ever", "Does anything prune the backup and job history?", OwnerUs,
+		"Re-run after the first cleanup: MNT08 gone."},
 
 	{"PRS01", CardPerformance, "Pressure right now", "Is the server short of threads, CPU or memory right now?", OwnerUs,
 		"Re-run: PRS01 gone"},

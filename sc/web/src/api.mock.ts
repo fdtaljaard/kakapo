@@ -1,4 +1,5 @@
 import { mockBlocking } from "./api-blocking.mock"
+import { mockMaintenance, withMaintenancePlan } from "./api-maintenance.mock"
 import { mockQueries } from "./api-queries.mock"
 import { mockProgress, startMockRun } from "./api-progress.mock"
 import { mockSample } from "./api-sample.mock"
@@ -2346,7 +2347,7 @@ function updateServer(id: string, input: ServerInput): Server {
 
 /** A feature mock answers its own routes and returns undefined for the rest. */
 export type FeatureMock = (method: string, path: string, init?: RequestInit) => Promise<unknown | undefined>
-const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress, mockTables]
+const featureMocks: FeatureMock[] = [mockQueries, mockBlocking, mockSample, mockProgress, mockTables, mockMaintenance]
 
 export async function mockRequest<T>(path: string, init?: RequestInit): Promise<T> {
   await delay(500)
@@ -2424,7 +2425,8 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     // Phase 5a: the archive fix on IDX10's findings and the Tables row's entries (api-tables.mock.ts).
     if (detail[3] === "storage") return structuredClone(withArchives(storageDetail(db), db.name)) as T
     if (detail[3] === "setup") return structuredClone(setupDetail(instanceInfo(srv, db), db)) as T
-    if (detail[3] === "upkeep") return structuredClone(upkeepDetail(instanceInfo(srv, db), db)) as T
+    // Phase 5b: the Maintenance plan row and its fixes (api-maintenance.mock.ts).
+    if (detail[3] === "upkeep") return structuredClone(withMaintenancePlan(upkeepDetail(instanceInfo(srv, db), db), db.name)) as T
     if (detail[3] === "performance") return structuredClone(performanceDetail(instanceInfo(srv, db), db)) as T
     const card = buildCards(instanceInfo(srv, db), db).find((c) => c.id === detail[3])
     if (!card) throw new ApiError("card not found", 404)

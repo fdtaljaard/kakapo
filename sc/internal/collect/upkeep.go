@@ -13,7 +13,8 @@ import (
 
 // upkeepInstanceQuery reads what the Upkeep card needs from the instance, in one batch
 // (docs/phase3d-contract.md, "Reads"): the SQL Server Agent service, the msdb jobs, job history,
-// job steps, maintenance plan subplans, alerts and operators, the default trace (shrinks, cache
+// job steps, maintenance plan subplans, alerts and operators, the msdb history and what prunes it
+// (MNT08), the default trace (shrinks, cache
 // clears, this database's file growths, severe errors) and the memory dumps. Every msdb, trace and
 // dump area is read in its own TRY, so a missing permission gives that area's error column, not a
 // failed read; the msdb reads run through sp_executesql so that even msdb being closed to the
@@ -138,6 +139,25 @@ BEGIN CATCH
     SET @alertsError = ERROR_MESSAGE();
 END CATCH;
 
+/* MNT08 msdb history (backup and job) and whether an enabled job prunes it */
+DECLARE @bhOldest datetime, @bhRows bigint, @jhRows bigint, @jhOldest int, @cleanupJob sysname, @historyError nvarchar(2048);
+IF @express = 0
+BEGIN TRY
+    EXEC sys.sp_executesql N'/* kakapo */ SELECT @bo = MIN(backup_finish_date), @br = COUNT_BIG(*) FROM msdb.dbo.backupset;
+        SELECT @jo = MIN(run_date), @jr = COUNT_BIG(*) FROM msdb.dbo.sysjobhistory;
+        SELECT TOP (1) @c = j.name
+        FROM msdb.dbo.sysjobs j
+        JOIN msdb.dbo.sysjobsteps s ON s.job_id = j.job_id
+        WHERE j.enabled = 1
+          AND (s.command LIKE N''%sp[_]delete[_]backuphistory%'' OR s.command LIKE N''%sp[_]purge[_]jobhistory%'' OR s.command LIKE N''%CommandLog%'')
+        ORDER BY j.name;',
+        N'@bo datetime OUTPUT, @br bigint OUTPUT, @jo int OUTPUT, @jr bigint OUTPUT, @c sysname OUTPUT',
+        @bo = @bhOldest OUTPUT, @br = @bhRows OUTPUT, @jo = @jhOldest OUTPUT, @jr = @jhRows OUTPUT, @c = @cleanupJob OUTPUT;
+END TRY
+BEGIN CATCH
+    SET @historyError = ERROR_MESSAGE();
+END CATCH;
+
 /* MNT05 / MNT06 Events from the default trace (last 7 days): shrinks, cache clears and plan evictions,
    file growth (with the slowest), auto-shrink (94, 95), severe errors */
 DECLARE @traceRunning bit = 0, @traceError nvarchar(2048), @tracePath nvarchar(260);
@@ -221,6 +241,7 @@ SELECT @found, @autoShrink,
        @maintJob, ISNULL(@plans, 0), @maintError,
        @shrinkError,
        @missing, ISNULL(@operators, 0), ISNULL(@alertsOn, 0), @alertsError,
+       @bhOldest, ISNULL(@bhRows, 0), ISNULL(@jhRows, 0), ISNULL(@jhOldest, 0), @cleanupJob, @historyError,
        @traceRunning, @traceError,
        ISNULL(@dumps, 0), @dumpLast, @dumpFile, @dumpsError,
        @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET());
@@ -298,6 +319,9 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		jobsErr, maintJob, maintErr, shrinkErr        sql.NullString
 		missing, alertsErr, traceErr, dumpFile, dumpE sql.NullString
 		dumpLast                                      sql.NullTime
+		bhOldest                                      sql.NullTime
+		jhOldest                                      int
+		cleanupJob, historyErr                        sql.NullString
 	)
 	if err := rows.Scan(&found, &f.AutoShrinkOn, &f.ServerName, &f.ProductVersion, &f.EngineEdition, &state,
 		&agentStatus, &agentStartup, &agentErr,
@@ -305,6 +329,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		&maintJob, &f.MaintenancePlans, &maintErr,
 		&shrinkErr,
 		&missing, &f.Operators, &f.AlertsOn, &alertsErr,
+		&bhOldest, &f.BackupHistoryRows, &f.JobHistoryRows, &jhOldest, &cleanupJob, &historyErr,
 		&f.TraceRunning, &traceErr,
 		&f.Dumps, &dumpLast, &dumpFile, &dumpE,
 		&f.ServerNow, &f.UTCOffsetMinutes); err != nil {
@@ -324,6 +349,12 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 	if missing.String != "" {
 		f.MissingAlerts = strings.Split(missing.String, ", ")
 	}
+	f.BackupHistoryOldest = naivePtr(bhOldest)
+	if jhOldest > 0 {
+		t := runDate(jhOldest)
+		f.JobHistoryOldest = &t
+	}
+	f.CleanupJob, f.HistoryError = cleanupJob.String, historyErr.String
 	f.TraceError = traceErr.String
 	f.DumpLast, f.DumpFile, f.DumpsError = naivePtr(dumpLast), dumpFile.String, dumpE.String
 

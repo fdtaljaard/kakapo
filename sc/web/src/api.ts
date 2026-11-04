@@ -242,6 +242,46 @@ export interface CardDetail {
   fixes?: Fix[] // the fixes available on this card right now (setup, upkeep, backups); only fixes whose finding fired, and on backups the remove fix
   deadlocks?: DeadlockReport | null // performance only: the last stored DLK01 report; omitted or null otherwise
   checkdbRun?: CheckdbRun | null // backups and storage only: the last DBCC CHECKDB run from kakapo; omitted or null otherwise
+  maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
+}
+
+// Phase 5b: the maintenance plan of a database (docs/phase5b-contract.md): one line per piece of regular
+// maintenance with where it stands, the fix that creates it, and why that cadence (with its source).
+export type PlanStatus =
+  | "in-place"
+  | "other-job"
+  | "missing"
+  | "disabled"
+  | "failing"
+  | "never-ran"
+  | "not-needed"
+  | "optional"
+  | "unknown"
+
+export interface PlanPiece {
+  id: string // "full-backup", "log-backup", "integrity-check", "statistics", "indexes", "history-cleanup", "alerts", "archive"
+  title: string // "Full backup", "Archive dbo.MailLog"
+  cadence: string // what kakapo proposes: "daily 22:00"
+  status: PlanStatus
+  job?: string // the job that covers it
+  schedule?: string // that job's schedule in words
+  lastRun?: string // "2026-11-02 01:00", server time
+  lastOutcome?: string // "succeeded", "failed", ...
+  lastDuration?: string // "4 min"
+  nextRun?: string
+  fixId?: string // the fix that creates it (Create)
+  options?: Record<string, string> // that fix's options, so it fits the plan's times
+  source: string // why this cadence, with the source
+  note?: string
+}
+
+export interface MaintenancePlan {
+  pieces: PlanPiece[]
+  missing: number // pieces the composite fix can create (index work is optional and not counted)
+  fixId?: string // "maintenance-plan" when it has something to create
+  express?: boolean
+  order: string // why these times, with the source
+  note?: string
 }
 
 // Phase 3e: DLK01, the deadlocks in system_health over the last 7 days grouped by the pair of

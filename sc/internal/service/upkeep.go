@@ -48,7 +48,14 @@ func (s *Service) upkeepDetail(ctx context.Context, db *sql.DB, serverID int64, 
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.CardDetail{}, err
 	}
-	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Fixes: domain.AvailableUpkeepFixes(facts, findings)}, nil
+	// The Maintenance plan row (docs/phase5b-contract.md), with the operator and alerts state of the
+	// facts just read.
+	if facts.Error == "" && facts.State == "ONLINE" {
+		plan := readUpkeepPlan(ctx, db, facts)
+		facts.MaintenancePlan = &plan
+	}
+	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Fixes: domain.AvailableUpkeepFixes(facts, findings),
+		MaintenancePlan: facts.MaintenancePlan}, nil
 }
 
 // prepareUpkeepFix reads what an Upkeep fix needs and builds it: for update-statistics, the
@@ -150,4 +157,17 @@ func statisticsCompleted(ctx context.Context, s *Service, g *genericFix, started
 	}
 	return recovered{after: after, verified: n == 0, change: domain.Change{Object: g.fix.Setting, ChangeType: "MAINTENANCE",
 		Description: domain.UpdateStatisticsDescription(name, g.upkeep.UpdateStatisticsTables()), Statement: g.preview.Statement}}, true, nil
+}
+
+// readUpkeepPlan reads the maintenance plan of the database for the Upkeep card. A plan that could
+// not be read is still a plan: its job lines say why.
+func readUpkeepPlan(ctx context.Context, db *sql.DB, facts domain.UpkeepFacts) domain.MaintenancePlan {
+	readCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	f, err := collect.MaintenancePlan(readCtx, db, facts.Database)
+	if err != nil {
+		f = domain.MaintenancePlanFacts{ServerName: facts.ServerName, EngineEdition: facts.EngineEdition, Database: facts.Database,
+			JobsError: err.Error(), ServerNow: facts.ServerNow}
+	}
+	return domain.BuildMaintenancePlan(f, facts.PlanAlerts())
 }
