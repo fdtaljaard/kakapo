@@ -40,5 +40,10 @@ func (s *Service) Blocking(ctx context.Context, serverID int64, dbName string) (
 	if f.ServerName == "" {
 		f.ServerName = srv.Name
 	}
-	return domain.BuildBlockingTree(f, time.Now().UTC().Truncate(time.Millisecond)), nil
+	t := domain.BuildBlockingTree(f, time.Now().UTC().Truncate(time.Millisecond))
+	// Once the week's history was read, the sentences point to it (docs/phase5d-contract.md).
+	if h, err := s.store.LastBlockingHistory(ctx, serverID, d.Name); err == nil {
+		t.AddHistoryHint(h)
+	}
+	return t, nil
 }

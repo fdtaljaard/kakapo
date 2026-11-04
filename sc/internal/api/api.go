@@ -205,6 +205,45 @@ func Handler(svc *service.Service, ui fs.FS) http.Handler {
 		writeJSON(w, http.StatusOK, report)
 	})
 
+	// BLK01 on request: the blocking of the last days ({"days": 1 to 7}, 7 without a body) from the
+	// system_health session, grouped by head blocker; stores and returns it (docs/phase5d-contract.md).
+	// 400 for days out of range, 502 when the session cannot be read.
+	mux.HandleFunc("POST /api/servers/{id}/databases/{db}/cards/performance/blocking-history", func(w http.ResponseWriter, r *http.Request) {
+		id, name, err := serverAndDatabase(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		var body struct {
+			Days int `json:"days"`
+		}
+		if r.Body != nil {
+			raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
+			if err == nil && len(bytes.TrimSpace(raw)) > 0 {
+				dec := json.NewDecoder(bytes.NewReader(raw))
+				dec.DisallowUnknownFields()
+				err = dec.Decode(&body)
+			}
+			if err != nil {
+				writeError(w, http.StatusBadRequest, errors.New("invalid request body: "+err.Error()))
+				return
+			}
+		}
+		if body.Days == 0 {
+			body.Days = domain.BlockingHistoryDays
+		}
+		if body.Days < 1 || body.Days > domain.BlockingHistoryDays {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("days must be 1 to %d", domain.BlockingHistoryDays))
+			return
+		}
+		report, err := svc.BlockingHistory(r.Context(), id, name, body.Days)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+	})
+
 	mux.HandleFunc("GET /api/servers/{id}/databases/{db}/changes", func(w http.ResponseWriter, r *http.Request) {
 		id, name, err := serverAndDatabase(r)
 		if err != nil {
@@ -302,6 +341,7 @@ func Handler(svc *service.Service, ui fs.FS) http.Handler {
 	progressRoutes(mux, svc) // docs/phase4e-contract.md
 	tablesRoutes(mux, svc)   // docs/phase5a-contract.md
 	tuningRoutes(mux, svc)   // docs/phase5c-contract.md
+	helpersRoutes(mux, svc)  // docs/phase5e-contract.md
 	runRoutes(mux, svc)      // docs/phase4f-contract.md
 
 	// Any other /api/ path is an unknown route, not a page of the UI.

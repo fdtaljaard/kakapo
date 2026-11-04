@@ -56,18 +56,18 @@ func cpuHistory(n, sqlPct, otherPct int) []CPUSample {
 func perfDef() CardDef { d, _ := FindCardDef(CardPerformance); return d }
 
 func runPerf(f PerformanceFacts) (Card, []Finding, []CheckStatus) {
-	return BuildPerformanceCard(f, perfDef(), nil)
+	return BuildPerformanceCard(f, perfDef(), nil, nil)
 }
 
 func TestPerformanceCatalogue(t *testing.T) {
 	checks := ChecksFor(CardPerformance)
-	want := []string{"PRS01", "PRS02", "ACT01", "ACT02", "WRK01", "WRK02", "WRK03", "WRK05", "WRK06", "WRK08", "SRV04", "SRV07", "QRY01", "DLK01"}
+	want := []string{"PRS01", "PRS02", "ACT01", "ACT02", "WRK01", "WRK02", "WRK03", "WRK05", "WRK06", "WRK08", "SRV04", "SRV07", "QRY01", "DLK01", "BLK01"}
 	if len(checks) != len(want) {
 		t.Fatalf("performance checks: %d", len(checks))
 	}
 	owners := map[string]string{"PRS01": OwnerUs, "PRS02": OwnerUs, "ACT01": OwnerUs, "ACT02": OwnerVendor, "WRK01": OwnerUs, "WRK02": OwnerClientIT,
 		"WRK03": OwnerUs, "WRK05": OwnerUs, "WRK06": OwnerUs, "WRK08": OwnerClientIT, "SRV04": OwnerUs, "SRV07": OwnerVendor, "QRY01": OwnerUs,
-		"DLK01": OwnerUs}
+		"DLK01": OwnerUs, "BLK01": OwnerUs}
 	for i, c := range checks {
 		if c.ID != want[i] || c.Title == "" || c.Question == "" || c.ThenCheck == "" || c.Owner != owners[c.ID] {
 			t.Errorf("check %+v", c)
@@ -103,7 +103,7 @@ func TestPerformanceGreen(t *testing.T) {
 	if len(findingsOf(fs, "WRK01")) != 5 || len(findingsOf(fs, "SRV04")) != 1 || len(findingsOf(fs, "QRY01")) != 1 || len(fs) != 7 {
 		t.Errorf("findings %+v", fs)
 	}
-	if len(cs) != 14 {
+	if len(cs) != 15 {
 		t.Fatalf("checks %+v", cs)
 	}
 	for _, x := range cs {
@@ -111,6 +111,10 @@ func TestPerformanceGreen(t *testing.T) {
 		case "DLK01":
 			if x.Status != CheckSkipped || x.Note != Dlk01NotRun {
 				t.Errorf("DLK01 %+v", x)
+			}
+		case "BLK01":
+			if x.Status != CheckSkipped || x.Note != Blk01NotRun {
+				t.Errorf("BLK01 %+v", x)
 			}
 		case "QRY01":
 			if x.Status != CheckPassed || x.Note != "From the plan cache since restart; turn Query Store on for history. The top query takes 30.0% of the CPU: moderate." {
@@ -722,7 +726,8 @@ func TestPerformanceGrey(t *testing.T) {
 
 	// Nothing read, or the database not online.
 	c, fs, cs = runPerf(PerformanceFacts{Database: "WarehouseLive", Error: "login failed"})
-	if c.Status != StatusGrey || c.Note != perfNotRead+"login failed" || len(fs) != 0 || len(cs) != 14 || statusOf(cs, "DLK01").Status != CheckSkipped {
+	if c.Status != StatusGrey || c.Note != perfNotRead+"login failed" || len(fs) != 0 || len(cs) != 15 ||
+		statusOf(cs, "DLK01").Status != CheckSkipped || statusOf(cs, "BLK01").Status != CheckSkipped {
 		t.Errorf("unread %+v %+v", c, cs)
 	}
 	c, _, _ = runPerf(PerformanceFacts{Database: "WarehouseLive", State: "RESTORING"})
@@ -806,7 +811,7 @@ func TestPerformanceDLK01Check(t *testing.T) {
 	now := time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
 	r := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile,
 		Events: []DeadlockEvent{deadlockEvent(now.Add(-time.Hour), "WarehouseLive", "dbo.A", "dbo.B", "T")}})
-	c, fs, cs := BuildPerformanceCard(goodPerf(), perfDef(), &r)
+	c, fs, cs := BuildPerformanceCard(goodPerf(), perfDef(), &r, nil)
 	if st := statusOf(cs, "DLK01"); st.Status != CheckFinding || st.Note != "" {
 		t.Errorf("DLK01 with deadlocks %+v", st)
 	}
@@ -815,7 +820,7 @@ func TestPerformanceDLK01Check(t *testing.T) {
 		t.Errorf("the report never changes the card %+v", c)
 	}
 	clean := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
-	_, _, cs = BuildPerformanceCard(goodPerf(), perfDef(), &clean)
+	_, _, cs = BuildPerformanceCard(goodPerf(), perfDef(), &clean, nil)
 	if st := statusOf(cs, "DLK01"); st.Status != CheckPassed || st.Note != "No deadlocks in this database in the last 7 days." {
 		t.Errorf("DLK01 clean %+v", st)
 	}

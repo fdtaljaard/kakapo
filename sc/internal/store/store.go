@@ -155,6 +155,13 @@ var migrations = []string{
 	   duration_seconds DOUBLE NOT NULL, physical_only BOOLEAN NOT NULL, clean BOOLEAN NOT NULL,
 	   outcome VARCHAR NOT NULL, messages_json VARCHAR NOT NULL
 	 );`,
+	// 11: every BLK01 blocking history from the system_health session, read on request, as JSON (docs/phase5d-contract.md)
+	`CREATE SEQUENCE IF NOT EXISTS seq_blocking_report START 1;
+	 CREATE TABLE IF NOT EXISTS blocking_report (
+	   id INTEGER PRIMARY KEY DEFAULT nextval('seq_blocking_report'),
+	   server_id INTEGER NOT NULL, db_name VARCHAR NOT NULL, captured_at TIMESTAMP NOT NULL,
+	   days INTEGER NOT NULL, source VARCHAR NOT NULL, leaders INTEGER NOT NULL, report_json VARCHAR NOT NULL
+	 );`,
 }
 
 // InstallID returns the id of this data file, made once on first use. Stored passwords are

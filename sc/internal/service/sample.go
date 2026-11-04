@@ -51,6 +51,10 @@ func (s *Service) PerformanceSample(ctx context.Context, serverID int64, dbName 
 		return domain.PerfSample{}, newError(KindUnreachable, "could not take the sample on %s: %s", srv.Name, msg)
 	}
 	p := domain.BuildPerfSample(in, time.Now().UTC().Truncate(time.Microsecond))
+	// Once the week's history was read, the blocking sentence points to it (docs/phase5d-contract.md).
+	if h, err := s.store.LastBlockingHistory(ctx, serverID, d.Name); err == nil {
+		p.AddHistoryHint(h)
+	}
 	if err := s.store.InsertPerfSample(ctx, serverID, d.Name, p); err != nil {
 		return domain.PerfSample{}, err
 	}

@@ -27,19 +27,24 @@ func readPerformanceFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStat
 }
 
 // performanceDetail reads the Performance card of one database and keeps the read. The detail
-// carries the last stored deadlock report, or null; reading the card never reads the deadlocks.
+// carries the last stored deadlock report and the last stored blocking history (docs/phase5d-contract.md),
+// each null before its first run; reading the card never reads the system_health session.
 func (s *Service) performanceDetail(ctx context.Context, db *sql.DB, serverID int64, d domain.DatabaseStatus, def domain.CardDef) (domain.CardDetail, error) {
 	facts := readPerformanceFacts(ctx, db, d)
 	last, err := s.store.LastDeadlockReport(ctx, serverID, d.Name)
 	if err != nil {
 		return domain.CardDetail{}, err
 	}
-	card, findings, checks := domain.BuildPerformanceCard(facts, def, last)
+	blocking, err := s.store.LastBlockingHistory(ctx, serverID, d.Name)
+	if err != nil {
+		return domain.CardDetail{}, err
+	}
+	card, findings, checks := domain.BuildPerformanceCard(facts, def, last, blocking)
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.CardDetail{}, err
 	}
 	// The create-index fix of each WRK03 finding, with its options (docs/phase4c-contract.md, part 3).
-	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Deadlocks: last,
+	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Deadlocks: last, Blocking: blocking,
 		Fixes: domain.AvailablePerformanceFixes(facts, findings)}, nil
 }
 

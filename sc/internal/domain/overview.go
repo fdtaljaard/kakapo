@@ -156,8 +156,8 @@ func BuildCards(setup *SetupFacts, backups *BackupFacts, storage *StorageFacts, 
 			c, _, _ := BuildUpkeepCard(*upkeep, def)
 			cards = append(cards, c)
 		case def.ID == CardPerformance && performance != nil:
-			// The last deadlock report changes only DLK01's line in the checks, never the card.
-			c, _, _ := BuildPerformanceCard(*performance, def, nil)
+			// The last deadlock report and blocking history change only DLK01's and BLK01's lines in the checks, never the card.
+			c, _, _ := BuildPerformanceCard(*performance, def, nil, nil)
 			cards = append(cards, c)
 		default:
 			cards = append(cards, GreyCard(def))

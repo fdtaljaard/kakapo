@@ -175,9 +175,12 @@ func (f StorageFacts) TempdbGrowthMB() int64 {
 // out for every other card; it writes checkdbRun for the Backups and Storage cards, null when no
 // CHECKDB ran from the app, and leaves it out for every other card; it writes fixes for the Setup and Upkeep cards, [] when none, and
 // leaves them out for every other card; it writes deadlocks for the Performance card, null when
-// the report was never run, and leaves it out for every other card.
+// the report was never run, and leaves it out for every other card; the same for blockingHistory.
 func (d CardDetail) MarshalJSON() ([]byte, error) {
 	type plain CardDetail
+	if d.Card.ID != CardPerformance {
+		d.Blocking = nil
+	}
 	if d.Card.ID == CardSetup || d.Card.ID == CardUpkeep {
 		// The cards with fixes always say which are available, [] when none.
 		fixes := d.Fixes
@@ -191,13 +194,15 @@ func (d CardDetail) MarshalJSON() ([]byte, error) {
 		}{plain(d), fixes})
 	}
 	if d.Card.ID == CardPerformance {
-		// The Performance card always says what the last deadlock report found, null before a run.
-		last := d.Deadlocks
-		d.Deadlocks = nil
+		// The Performance card always says what the last deadlock report and the last blocking
+		// history found, null before a run.
+		last, blocking := d.Deadlocks, d.Blocking
+		d.Deadlocks, d.Blocking = nil, nil
 		return json.Marshal(struct {
 			plain
-			Deadlocks *DeadlockReport `json:"deadlocks"`
-		}{plain(d), last})
+			Deadlocks *DeadlockReport  `json:"deadlocks"`
+			Blocking  *BlockingHistory `json:"blockingHistory"`
+		}{plain(d), last, blocking})
 	}
 	run := d.CheckdbRun
 	d.CheckdbRun = nil

@@ -17,7 +17,9 @@ import (
 // (docs/phase3e-contract.md, DLK01): from its file target (the session's current file's folder,
 // every system_health*.xel there, so the rolled-over files are read too), or from its ring buffer
 // target when the session has no file target or the files cannot be read. On 2017 and later the
-// files are filtered on timestamp_utc to the window. The same read takes the session's
+// files are filtered on timestamp_utc to the window, always through CONVERT(datetime2, timestamp_utc):
+// a direct predicate on that column makes fn_xe_file_target_read_file return no rows at all (seen on
+// SQL Server 2022, 2026-11-04); the conversion keeps the filter out of the function. The same read takes the session's
 // sp_server_diagnostics_component_result events for the SYSTEM and IO_SUBSYSTEM components in
 // state WARNING or ERROR (docs/phase3f-contract.md, item 21; sp_HealthParser's reads), in its own
 // TRY so a failure there never costs the deadlocks. SELECTs only. Result sets: one row (source,
@@ -50,7 +52,7 @@ BEGIN TRY
                 EXEC sys.sp_executesql N'/* kakapo */ SELECT CONVERT(nvarchar(max), event_data)
                     FROM sys.fn_xe_file_target_read_file(@p, NULL, NULL, NULL)
                     WHERE object_name = N''xml_deadlock_report''
-                      AND timestamp_utc >= DATEADD(DAY, -@days, SYSUTCDATETIME());', N'@p nvarchar(520), @days int', @p = @path, @days = @days;
+                      AND CONVERT(datetime2, timestamp_utc) >= DATEADD(DAY, -@days, SYSUTCDATETIME());', N'@p nvarchar(520), @days int', @p = @path, @days = @days;
             ELSE
                 INSERT @events (event_xml)
                 SELECT CONVERT(nvarchar(max), event_data)
@@ -71,7 +73,7 @@ BEGIN TRY
                     FROM (SELECT CONVERT(xml, event_data) AS e
                           FROM sys.fn_xe_file_target_read_file(@p, NULL, NULL, NULL)
                           WHERE object_name = N''sp_server_diagnostics_component_result''
-                            AND timestamp_utc >= DATEADD(DAY, -@days, SYSUTCDATETIME())) AS x
+                            AND CONVERT(datetime2, timestamp_utc) >= DATEADD(DAY, -@days, SYSUTCDATETIME())) AS x
                     WHERE x.e.exist(''/event/data[@name="component"]/text[. = "SYSTEM" or . = "IO_SUBSYSTEM"]'') = 1
                       AND x.e.exist(''/event/data[@name="state"]/text[. = "WARNING" or . = "ERROR"]'') = 1;', N'@p nvarchar(520), @days int', @p = @path, @days = @days;
             ELSE

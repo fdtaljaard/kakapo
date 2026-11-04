@@ -147,6 +147,10 @@ type CardDetail struct {
 	// Deadlocks is the last stored deadlock report (DLK01): written for the Performance card (null
 	// when it was never run), left out for every other card (see MarshalJSON).
 	Deadlocks *DeadlockReport `json:"deadlocks,omitempty"`
+	// Blocking is the last stored blocking history (BLK01, docs/phase5d-contract.md): written for the
+	// Performance card as blockingHistory (null when it was never read), left out for every other card
+	// (see MarshalJSON).
+	Blocking *BlockingHistory `json:"blockingHistory,omitempty"`
 	// MaintenancePlan is the Upkeep card's Maintenance plan row (docs/phase5b-contract.md): every
 	// piece of regular maintenance and where it stands; nil (left out) for every other card, and when
 	// the Upkeep card itself could not be read (a plan whose jobs could not be read says so in it).
@@ -332,6 +336,8 @@ var Checks = []Check{
 		"Re-run after a business day: the query's share is lower"},
 	{"DLK01", CardPerformance, "Deadlock report", "Which procedures deadlock with each other?", OwnerUs,
 		"Re-run after a week: fewer deadlocks for the top pair"},
+	{"BLK01", CardPerformance, "Blocking history", "What blocked users this week, and how often?", OwnerUs,
+		"Re-run after a week: fewer occurrences for the top blocker"},
 }
 
 // CheckByID returns a check of the catalogue by its id.

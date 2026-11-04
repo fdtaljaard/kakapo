@@ -170,7 +170,7 @@ func TestCardDetailLive(t *testing.T) {
 	}
 	t.Logf("upkeep: %s %q %q %+v", d.Card.Status, d.Card.StatusText, d.Card.Verdict, d.Card.Facts)
 	d, body = read(dbName, "performance")
-	if d.Card.ID != domain.CardPerformance || d.Card.Status == "" || len(d.Checks) != 12 || len(d.Card.Facts) != 4 ||
+	if d.Card.ID != domain.CardPerformance || d.Card.Status == "" || len(d.Checks) != 15 || len(d.Card.Facts) != 4 ||
 		!strings.Contains(body, `"deadlocks":null`) || strings.Contains(body, "checkdbRoom") || strings.Contains(body, `"fixes"`) {
 		t.Errorf("performance detail: %s", body)
 	}

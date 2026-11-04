@@ -4,6 +4,7 @@ import { ChartColumn, Check, Copy, Loader2, RotateCw, XCircle } from "lucide-rea
 
 import type { CardDetail, Card as CardData, CheckdbRoom, DeadlockReport, Finding, Fix, Overview, Owner } from "@/api"
 import { archiveTableFixId } from "@/api-tables"
+import { BlockingHistoryPanel } from "@/components/blocking-history-panel"
 import { CheckdbRoomPanel } from "@/components/checkdb-room-panel"
 import { CheckdbRunPanel } from "@/components/checkdb-run-panel"
 import { ChecksList } from "@/components/checks-list"
@@ -230,6 +231,8 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                       report={detail.deadlocks}
                       onResult={setReadDeadlocks}
                     />
+                    {/* Phase 5d: a week of blocking from system_health (docs/phase5d-contract.md). */}
+                    <BlockingHistoryPanel serverId={serverId} database={database} report={detail.blockingHistory} />
                   </FindingContext.Provider>
                 )
               )
@@ -277,6 +280,7 @@ function pageFindings(detail: CardDetail): Finding[] {
     ...(inPanel ? detail.findings.filter((f) => f.checkId !== inPanel) : detail.findings),
     ...(detail.checkdbRoom ? [detail.checkdbRoom.finding] : []),
     ...(detail.deadlocks?.findings ?? []),
+    ...(detail.blockingHistory?.findings ?? []),
   ]
 }
 
@@ -456,6 +460,7 @@ function DetailBody({
     ...findings,
     ...(detail.checkdbRoom ? [detail.checkdbRoom.finding] : []),
     ...(detail.deadlocks?.findings ?? []),
+    ...(detail.blockingHistory?.findings ?? []),
   ]
   if (card.status === "grey") {
     const skipped = checks.some((c) => c.status === "skipped" && c.note)

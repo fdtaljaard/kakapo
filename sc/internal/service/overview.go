@@ -86,7 +86,11 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if err != nil {
 		return domain.Overview{}, err
 	}
-	card, findings, checks = domain.BuildPerformanceCard(performance, performanceDef, lastDeadlocks)
+	lastBlocking, err := s.store.LastBlockingHistory(ctx, serverID, d.Name)
+	if err != nil {
+		return domain.Overview{}, err
+	}
+	card, findings, checks = domain.BuildPerformanceCard(performance, performanceDef, lastDeadlocks, lastBlocking)
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}

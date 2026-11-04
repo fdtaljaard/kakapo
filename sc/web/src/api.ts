@@ -241,6 +241,7 @@ export interface CardDetail {
   checkdbRoom?: CheckdbRoom | null // storage only: the last stored STO10 result; omitted or null otherwise
   fixes?: Fix[] // the fixes available on this card right now (setup, upkeep, backups); only fixes whose finding fired, and on backups the remove fix
   deadlocks?: DeadlockReport | null // performance only: the last stored DLK01 report; omitted or null otherwise
+  blockingHistory?: BlockingHistory | null // performance only (phase 5d): the last stored BLK01 history; omitted or null otherwise
   checkdbRun?: CheckdbRun | null // backups and storage only: the last DBCC CHECKDB run from kakapo; omitted or null otherwise
   maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
 }
@@ -304,6 +305,56 @@ export interface HealthEvent {
   component: "SYSTEM" | "IO_SUBSYSTEM" | string
   state: "warning" | "error" | string
   detail: string // what it reported, in words
+}
+
+// Phase 5d: BLK01, a week of blocking from the system_health session's five-minute snapshots, grouped by
+// the head blocker's statement and the object it held, read on request (docs/phase5d-contract.md).
+export interface BlockingHistory {
+  capturedAt: string
+  durationSeconds: number
+  days: number // 1 to 7
+  source: "file" | "ring-buffer"
+  snapshots: number // snapshots that saw blocking in this database
+  reportsTotal: number // blocked-process reports in this database
+  missedNote: string // what the history cannot show (blocks shorter than the snapshot)
+  thresholdSeconds: number // the blocked process threshold (s); 0 means only the five-minute snapshots exist
+  leaders: BlockingLeader[] // most occurrences first, at most 20
+  byHour: BlockingHour[] // every hour of the window on the server's clock, oldest first
+  findings: Finding[] // one BLK01 finding per leader, ranked (Info for a leader seen once)
+  notes: string[] // what could not be read
+}
+
+// How a head blocker is classified (the live blocking page's kinds, plus a blocker in another database).
+export type HistoryKind = "sleeping" | "implicit" | "serializable" | "repeatable-read" | "long-running" | "cross-database"
+
+export interface BlockingLeader {
+  key: string
+  blockerStatement: string // normalised: whitespace collapsed, literals as ?
+  procedure?: string // when the blocker ran a procedure
+  blockerProgram: string
+  blockerLogin: string
+  blockerHost: string
+  object: string // the table its victims waited on, or the wait resource when it could not be named
+  database: string
+  occurrences: number // distinct blocking episodes (one blocker transaction counts once)
+  snapshots: number // five-minute snapshots that saw it
+  longestWaitSec: number
+  totalBlockedSessions: number
+  kinds: HistoryKind[]
+  first: string
+  last: string
+  byDay: { day: string; count: number }[] // server days
+  sampleVictimStatement: string
+  sampleBlockerStatement: string
+  lockMode?: string
+  queryHash?: string // when Query Store holds the blocker's exact statement: Investigate opens the query
+  heldWhileWaiting?: boolean // system_health wrote it as the head of a chain: an open transaction held while it waited
+}
+
+export interface BlockingHour {
+  hour: string // "2026-11-03T14:00", the server's clock
+  reports: number
+  sessionsBlocked: number // the most sessions blocked in one snapshot of the hour
 }
 
 export interface DeadlockPair {

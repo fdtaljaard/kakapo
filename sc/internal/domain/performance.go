@@ -453,7 +453,8 @@ func RestartNote(hours int) string {
 // card, its findings ranked (each with its clock), and what became of each check behind it, in
 // catalogue order. lastDeadlocks is the last stored deadlock report, or nil when it was never run;
 // it decides only DLK01's line in the checks (the card detail carries the report itself).
-func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *DeadlockReport) (Card, []Finding, []CheckStatus) {
+// lastBlocking is the last stored blocking history, or nil; it decides only BLK01's line the same way.
+func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *DeadlockReport, lastBlocking *BlockingHistory) (Card, []Finding, []CheckStatus) {
 	c := Card{ID: def.ID, Title: def.Title, Question: def.Question, Facts: []Fact{}}
 	b := &perfBuild{f: f, findings: []Finding{}, notes: map[string]string{}, skipped: map[string]bool{}}
 
@@ -462,12 +463,12 @@ func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *Deadlo
 		note := perfNotRead + f.Error
 		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", note
 		b.skipAll(def.ID, note)
-		return c, b.findings, b.checks(def.ID, nil)
+		return c, b.findings, b.checks(def.ID, nil, nil)
 	case f.State != "ONLINE":
 		note := fmt.Sprintf("%s is %s, not online, so its performance was not checked.", f.Database, f.State)
 		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", note
 		b.skipAll(def.ID, note)
-		return c, b.findings, b.checks(def.ID, nil)
+		return c, b.findings, b.checks(def.ID, nil, nil)
 	}
 
 	b.prs01()
@@ -492,8 +493,9 @@ func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *Deadlo
 	b.srv04()
 	b.qry01()
 	b.skip(Dlk01NotRun, "DLK01")
+	b.skip(Blk01NotRun, "BLK01")
 	RankFindings(b.findings)
-	checks := b.checks(def.ID, lastDeadlocks)
+	checks := b.checks(def.ID, lastDeadlocks, lastBlocking)
 
 	if f.WaitsError != "" {
 		// Without the waits the card cannot answer its question. The other checks still ran, and
@@ -578,8 +580,8 @@ func (b *perfBuild) skipAll(card CardID, note string) {
 
 // checks says what became of each check: a finding when it found something to act on, skipped
 // with its note, passed otherwise; a note that is not a skip reason (QRY01's source, PRS01's
-// partial read) is kept on any status. DLK01 follows the last stored report when there is one.
-func (b *perfBuild) checks(card CardID, last *DeadlockReport) []CheckStatus {
+// partial read) is kept on any status. DLK01 and BLK01 follow their last stored report when there is one.
+func (b *perfBuild) checks(card CardID, last *DeadlockReport, blocking *BlockingHistory) []CheckStatus {
 	out := []CheckStatus{}
 	for _, c := range ChecksFor(card) {
 		st := CheckStatus{CheckID: c.ID, Title: c.Title, Status: CheckPassed, Note: b.notes[c.ID]}
@@ -594,6 +596,8 @@ func (b *perfBuild) checks(card CardID, last *DeadlockReport) []CheckStatus {
 			if st.Status == CheckPassed {
 				st.Note = fmt.Sprintf("No deadlocks in this database in the last %d days.", last.Days)
 			}
+		case c.ID == "BLK01" && blocking != nil && b.notes[c.ID] == Blk01NotRun:
+			st = blk01Check(st, blocking)
 		case b.skipped[c.ID]:
 			st.Status = CheckSkipped
 		default:

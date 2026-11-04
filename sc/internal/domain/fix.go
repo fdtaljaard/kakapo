@@ -108,6 +108,9 @@ var FixDefs = []FixDef{
 	// Phase 5b (docs/phase5b-contract.md): the maintenance plan.
 	{"history-cleanup", "Prune msdb history weekly", ScopeServer, "MNT08", "msdb history"},
 	{"maintenance-plan", "Set up the maintenance plan", ScopeServer, "MNT03", "Maintenance plan"},
+	// Phase 5e (docs/phase5e-contract.md): the first installed helper, an Extended Events session.
+	{"install-xe-session", "Keep every block and deadlock on the server", ScopeServer, "BLK01", "Event session kakapo"},
+	{"remove-xe-session", "Remove kakapo's event session", ScopeServer, "BLK01", "Event session kakapo"},
 	{FixBackupSchedule, "Create a backup schedule", ScopeDatabase, "BAK01", "Backup schedule"},
 	{FixRemoveBackupSchedule, "Remove kakapo's backup jobs", ScopeDatabase, "BAK01", "Backup schedule"},
 }
