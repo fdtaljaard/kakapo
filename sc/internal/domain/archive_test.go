@@ -624,3 +624,44 @@ func TestArchiveJobHelpers(t *testing.T) {
 		t.Errorf("sorted %+v", ts)
 	}
 }
+
+// The date column not indexed but the table clustered on an ascending identity: each batch reads
+// forward from the last batch's highest key (a range seek on the clustered index), no index is
+// asked for, and the nights go at the seek pace.
+func TestArchiveStepThroughClusteredKey(t *testing.T) {
+	f := archiveFacts()
+	f.Columns[0].ClusteredKey = true
+	f.Columns[2].DateIndexed = false
+	opts := map[string]string{OptionTable: "[dbo].[MailLog]", OptionArchiveDateColumn: "LoggedAt", OptionArchiveCondition: "status = 'Sent'"}
+	plan, _, _, _ := f.archivePlan(opts)
+	if plan.KeyColumn != "Id" || plan.KeyType != "int" {
+		t.Fatalf("key %q %q", plan.KeyColumn, plan.KeyType)
+	}
+	step := plan.StepCommand()
+	for _, want := range []string{
+		"DECLARE @from int, @to int;\nSELECT @from = MIN([Id]) - 1 FROM [Shop].[dbo].[MailLog];\nWHILE SYSDATETIME() < @stop",
+		"SELECT @to = MAX(k) FROM (SELECT TOP (5000) [Id] AS k FROM [Shop].[dbo].[MailLog] WITH (READPAST) WHERE [Id] > @from AND [LoggedAt] < @cutoff AND ([Status] = 'Sent') ORDER BY [Id]) AS x;",
+		"WITH batch AS (SELECT * FROM [Shop].[dbo].[MailLog] WITH (READPAST, UPDLOCK, ROWLOCK) WHERE [Id] > @from AND [Id] <= @to AND [LoggedAt] < @cutoff AND ([Status] = 'Sent'))",
+		"SET @n = @@ROWCOUNT;\n    IF @to IS NULL SET @n = 0; ELSE SET @from = @to;\n",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("step lacks %q:\n%s", want, step)
+		}
+	}
+	if first := plan.FirstBatch(); !strings.Contains(first, "SELECT @from = MIN([Id]) - 1") || !strings.Contains(first, "ORDER BY [Id]) AS x;") {
+		t.Errorf("first batch:\n%s", first)
+	}
+	if plan.rowsPerNight() != int64(30*60/archiveIndexedBatchSeconds)*5000 {
+		t.Errorf("rows per night %d", plan.rowsPerNight())
+	}
+	p, _ := BuildArchiveFix(f, opts)
+	if !hasWarning(p, "LoggedAt is not indexed, but the table is stored in Id order (an identity), oldest rows first: each batch reads forward") ||
+		hasWarning(p, "create an index on LoggedAt first") {
+		t.Errorf("warnings %v", p.Warnings)
+	}
+	// An indexed date column keeps the plain batch.
+	f.Columns[2].DateIndexed = true
+	if plan, _, _, _ = f.archivePlan(opts); plan.KeyColumn != "" || strings.Contains(plan.StepCommand(), "@from") {
+		t.Errorf("indexed date column read through the key")
+	}
+}

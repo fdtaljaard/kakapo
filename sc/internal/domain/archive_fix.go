@@ -85,6 +85,14 @@ func (f ArchiveFacts) archivePlan(options map[string]string) (ArchivePlan, []Fix
 			}
 		}
 		plan.DateColumn, plan.DateIndexed = chosen.Name, chosen.DateIndexed
+		if !plan.DateIndexed {
+			for _, c := range f.Columns {
+				if c.ClusteredKey {
+					plan.KeyColumn, plan.KeyType = c.Name, strings.ToLower(c.Type)
+					break
+				}
+			}
+		}
 		in.Value = dateChoice(chosen)
 		if in.Warning != "" {
 			in.Value = strings.TrimSpace(options[OptionArchiveDateColumn])
@@ -369,7 +377,10 @@ func (f ArchiveFacts) archiveWarnings(plan ArchivePlan) []string {
 		}
 		out = append(out, word+strings.Join(deleteTriggers, ", ")+" on "+t+verb+" on DELETE: "+archiveTriggerWarn)
 	}
-	if plan.DateColumn != "" && !plan.DateIndexed {
+	if plan.DateColumn != "" && !plan.DateIndexed && plan.KeyColumn != "" {
+		out = append(out, fmt.Sprintf("%s is not indexed, but the table is stored in %s order (an identity), oldest rows first: each batch reads forward from where the last one stopped, so no new index is needed.",
+			plan.DateColumn, plan.KeyColumn))
+	} else if plan.DateColumn != "" && !plan.DateIndexed {
 		out = append(out, fmt.Sprintf("%s is not the first column of an index, so each batch scans the table: create an index on %s first (\"Create the suggested index\" when the Performance card suggests one, or by hand).",
 			plan.DateColumn, plan.DateColumn))
 	}

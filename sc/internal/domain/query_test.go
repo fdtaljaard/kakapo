@@ -304,3 +304,20 @@ func TestQueryFormatting(t *testing.T) {
 		t.Error("wait words")
 	}
 }
+
+// A missing index hint of a plan compiled before a restore or rename names the database it had then:
+// the create-index action takes this database's name. A hint about another database the plan really
+// reads (it also names this one) offers no index.
+func TestThisDatabaseTable(t *testing.T) {
+	old := Showplan{Objects: []ShowplanObject{{Database: "LiveDb", Schema: "dbo", Table: "Queue"}}}
+	if got, ok := qThisDatabaseTable("[LiveDb].[dbo].[Queue]", "Copy", old); !ok || got != "[Copy].[dbo].[Queue]" {
+		t.Errorf("restored copy %q %v", got, ok)
+	}
+	if got, ok := qThisDatabaseTable("[Copy].[dbo].[Queue]", "Copy", old); !ok || got != "[Copy].[dbo].[Queue]" {
+		t.Errorf("this database %q %v", got, ok)
+	}
+	cross := Showplan{Objects: []ShowplanObject{{Database: "Copy", Schema: "dbo", Table: "A"}, {Database: "Other", Schema: "dbo", Table: "B"}}}
+	if _, ok := qThisDatabaseTable("[Other].[dbo].[B]", "Copy", cross); ok {
+		t.Error("an index offered in another database")
+	}
+}

@@ -652,7 +652,9 @@ func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 			sp := ParseShowplan(xmlText)
 			p.Parameters = sp.Parameters
 			for _, mi := range sp.MissingIndexes {
-				if canChange {
+				table, here := qThisDatabaseTable(mi.Table, f.Database, sp)
+				if canChange && here {
+					mi.Table = table
 					mi.Action = qCreateIndexAction(mi, p.PlanID)
 				}
 				p.MissingIndexes = append(p.MissingIndexes, mi)
@@ -789,6 +791,27 @@ func qUnforceAction(planID int64) QueryAction {
 func qEvictAction(handle, hash string) QueryAction {
 	return QueryAction{FixID: "evict-plan", Label: "Remove from cache", Title: "Remove the plan from the cache",
 		Options: map[string]string{"planHandle": handle, "queryHash": hash}}
+}
+
+// qThisDatabaseTable is a missing index hint's [database].[schema].[table] as this database's. A plan
+// compiled before the database was restored or renamed names the database it had then (Query Store
+// keeps the plan as compiled), so when none of the plan's objects names this database, the hint's
+// database becomes this one. False when the hint is about another database the plan really reads:
+// no index is offered there.
+func qThisDatabaseTable(table, database string, sp Showplan) (string, bool) {
+	i := strings.Index(table, "].")
+	if !strings.HasPrefix(table, "[") || i < 0 {
+		return table, true
+	}
+	if strings.EqualFold(qUnbracket(table[:i+1]), database) {
+		return table, true
+	}
+	for _, o := range sp.Objects {
+		if strings.EqualFold(o.Database, database) {
+			return table, false
+		}
+	}
+	return QuoteName(database) + table[i+1:], true
 }
 
 func qCreateIndexAction(mi QueryMissingIndex, planID int64) *QueryAction {

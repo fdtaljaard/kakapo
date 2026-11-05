@@ -89,7 +89,7 @@ IF @obj IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.tables AS t WHERE t.object
 DECLARE @rows bigint, @mb float, @keysOut int, @cdc bit, @ct bit, @pub bit, @merge bit, @repl bit, @memopt bit, @temporal nvarchar(60);
 DECLARE @tableError nvarchar(2048), @colsError nvarchar(2048), @keysError nvarchar(2048), @trgError nvarchar(2048), @featError nvarchar(2048);
 DECLARE @cols TABLE (column_id int NOT NULL, name sysname NOT NULL, type_name sysname NULL, is_identity bit NOT NULL,
-                     is_computed bit NOT NULL, is_nullable bit NOT NULL, date_indexed bit NOT NULL);
+                     is_computed bit NOT NULL, is_nullable bit NOT NULL, date_indexed bit NOT NULL, clustered_key bit NOT NULL);
 DECLARE @keys TABLE (name sysname NOT NULL, from_table nvarchar(300) NOT NULL);
 DECLARE @trg TABLE (name sysname NOT NULL, event_type nvarchar(60) NULL, is_disabled bit NOT NULL, is_instead_of bit NOT NULL);
 IF @obj IS NOT NULL
@@ -103,13 +103,20 @@ BEGIN
     END CATCH;
 
     BEGIN TRY
-        INSERT @cols (column_id, name, type_name, is_identity, is_computed, is_nullable, date_indexed)
+        INSERT @cols (column_id, name, type_name, is_identity, is_computed, is_nullable, date_indexed, clustered_key)
         SELECT c.column_id, c.name, TYPE_NAME(c.system_type_id), c.is_identity, c.is_computed, c.is_nullable,
                CASE WHEN TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')
                      AND EXISTS (SELECT 1 FROM sys.index_columns AS ic
                                  JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
                                  WHERE ic.object_id = c.object_id AND ic.column_id = c.column_id AND ic.key_ordinal = 1
                                    AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0)
+                    THEN 1 ELSE 0 END,
+               /* an ascending integer identity that leads the clustered index: the rows are stored oldest first */
+               CASE WHEN TYPE_NAME(c.system_type_id) IN (N'int', N'bigint', N'smallint', N'tinyint')
+                     AND EXISTS (SELECT 1 FROM sys.index_columns AS ic
+                                 JOIN sys.identity_columns AS ident ON ident.object_id = ic.object_id AND ident.column_id = ic.column_id
+                                 WHERE ic.object_id = c.object_id AND ic.column_id = c.column_id AND ic.index_id = 1
+                                   AND ic.key_ordinal = 1 AND ic.is_descending_key = 0 AND CONVERT(bigint, ident.increment_value) > 0)
                     THEN 1 ELSE 0 END
         FROM sys.columns AS c WHERE c.object_id = @obj;
     END TRY
@@ -159,7 +166,7 @@ END;
 SELECT CAST(CASE WHEN @obj IS NULL THEN 0 ELSE 1 END AS bit), ISNULL(@rows, 0), ISNULL(@mb, 0),
        ISNULL(@cdc, 0), ISNULL(@ct, 0), ISNULL(@pub, 0), ISNULL(@merge, 0), ISNULL(@repl, 0), ISNULL(@memopt, 0), @temporal,
        ISNULL(@keysOut, 0), @tableError, @colsError, @keysError, @trgError, @featError;
-SELECT name, type_name, is_identity, is_computed, is_nullable, date_indexed FROM @cols ORDER BY column_id;
+SELECT name, type_name, is_identity, is_computed, is_nullable, date_indexed, clustered_key FROM @cols ORDER BY column_id;
 SELECT name, from_table FROM @keys ORDER BY from_table, name;
 SELECT name, event_type, is_disabled, is_instead_of FROM @trg ORDER BY name, event_type;`
 
@@ -352,7 +359,7 @@ func readArchiveTable(ctx context.Context, db *sql.DB, f *domain.ArchiveFacts) e
 	for rows.Next() {
 		var c domain.ArchiveColumn
 		var typ sql.NullString
-		if err := rows.Scan(&c.Name, &typ, &c.Identity, &c.Computed, &c.Nullable, &c.DateIndexed); err != nil {
+		if err := rows.Scan(&c.Name, &typ, &c.Identity, &c.Computed, &c.Nullable, &c.DateIndexed, &c.ClusteredKey); err != nil {
 			return err
 		}
 		c.Type = typ.String

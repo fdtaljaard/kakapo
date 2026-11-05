@@ -92,6 +92,9 @@ type ArchiveColumn struct {
 	// DateIndexed: a date column that is the first key column of an enabled, unfiltered index, so
 	// that "older than" is a seek.
 	DateIndexed bool
+	// ClusteredKey: an ascending integer identity that leads the clustered index, so the table is
+	// stored oldest row first and a batch can read forward from where the last one stopped.
+	ClusteredKey bool
 }
 
 // IsDate says whether the column can say how old a row is: datetime, datetime2 or date.
@@ -412,6 +415,11 @@ type ArchivePlan struct {
 	Table       string
 	DateColumn  string
 	DateIndexed bool
+	// KeyColumn and KeyType: when DateColumn is not indexed, the ascending integer identity that leads
+	// the clustered index (ArchiveColumn.ClusteredKey). Each batch then takes the next due rows after
+	// the last batch's highest key, a range seek, instead of scanning the table. "" when there is none.
+	KeyColumn   string
+	KeyType     string
 	KeepMonths  int
 	Action      string
 	ArchiveName string
@@ -490,7 +498,17 @@ func (p ArchivePlan) batchBody(indent string) string {
 	if p.Condition != "" {
 		where += " AND (" + p.Condition + ")"
 	}
-	line(fmt.Sprintf("WITH batch AS (SELECT TOP (%d) * FROM %s WITH (READPAST, UPDLOCK, ROWLOCK) WHERE %s)", p.BatchRows, p.source(), where))
+	if p.KeyColumn != "" {
+		// The next BatchRows due rows after the last batch's highest key, read forward on the
+		// clustered index; the batch then takes exactly that key range.
+		key := QuoteName(p.KeyColumn)
+		line(fmt.Sprintf("SELECT @to = MAX(k) FROM (SELECT TOP (%d) %s AS k FROM %s WITH (READPAST) WHERE %s > @from AND %s ORDER BY %s) AS x;",
+			p.BatchRows, key, p.source(), key, where, key))
+		where = key + " > @from AND " + key + " <= @to AND " + where
+		line(fmt.Sprintf("WITH batch AS (SELECT * FROM %s WITH (READPAST, UPDLOCK, ROWLOCK) WHERE %s)", p.source(), where))
+	} else {
+		line(fmt.Sprintf("WITH batch AS (SELECT TOP (%d) * FROM %s WITH (READPAST, UPDLOCK, ROWLOCK) WHERE %s)", p.BatchRows, p.source(), where))
+	}
 	if p.Archives() {
 		deleted, cols := make([]string, len(p.Columns)), make([]string, len(p.Columns))
 		for i, c := range p.Columns {
@@ -502,6 +520,10 @@ func (p ArchivePlan) batchBody(indent string) string {
 		line("DELETE FROM batch;")
 	}
 	line("SET @n = @@ROWCOUNT;")
+	if p.KeyColumn != "" {
+		// No due rows left after @from: done, even when the last range's rows were all held by users.
+		line("IF @to IS NULL SET @n = 0; ELSE SET @from = @to;")
+	}
 	if identity {
 		line("SET IDENTITY_INSERT " + p.target() + " OFF;")
 	}
@@ -518,6 +540,7 @@ func (p ArchivePlan) StepCommand() string {
 	b.WriteString("SET LOCK_TIMEOUT 10000; SET DEADLOCK_PRIORITY LOW;\n")
 	fmt.Fprintf(&b, "DECLARE @cutoff datetime2 = DATEADD(MONTH, -%d, SYSDATETIME()), @stop datetime2 = DATEADD(MINUTE, %d, SYSDATETIME()), @moved bigint = 0, @n int;\n",
 		p.KeepMonths, p.MaxMinutes)
+	b.WriteString(p.keyDeclare())
 	b.WriteString("WHILE SYSDATETIME() < @stop\nBEGIN\n")
 	b.WriteString(p.batchBody("    "))
 	b.WriteString("    SET @moved += @n;\n")
@@ -526,6 +549,16 @@ func (p ArchivePlan) StepCommand() string {
 	b.WriteString("END;\n")
 	b.WriteString("PRINT 'rows moved: ' + CONVERT(varchar(20), @moved);")
 	return b.String()
+}
+
+// keyDeclare starts the key range below the table's lowest key (a seek on the clustered index), when
+// the batches read forward by KeyColumn.
+func (p ArchivePlan) keyDeclare() string {
+	if p.KeyColumn == "" {
+		return ""
+	}
+	key := QuoteName(p.KeyColumn)
+	return fmt.Sprintf("DECLARE @from %s, @to %s;\nSELECT @from = MIN(%s) - 1 FROM %s;\n", p.KeyType, p.KeyType, key, p.source())
 }
 
 // TidyCommand is the optional second step: the table's indexes reorganised (online, in every
@@ -542,6 +575,7 @@ func (p ArchivePlan) FirstBatch() string {
 	var b strings.Builder
 	b.WriteString("SET LOCK_TIMEOUT 10000; SET DEADLOCK_PRIORITY LOW;\n")
 	fmt.Fprintf(&b, "DECLARE @cutoff datetime2 = DATEADD(MONTH, -%d, SYSDATETIME()), @n int;\n", p.KeepMonths)
+	b.WriteString(p.keyDeclare())
 	b.WriteString(p.batchBody(""))
 	b.WriteString("PRINT 'rows moved: ' + CONVERT(varchar(20), @n);")
 	return b.String()
@@ -657,7 +691,7 @@ func (p ArchivePlan) Rollback() string {
 // over the seconds a batch takes, times the batch size.
 func (p ArchivePlan) rowsPerNight() int64 {
 	secs := archiveScanBatchSeconds
-	if p.DateIndexed {
+	if p.DateIndexed || p.KeyColumn != "" {
 		secs = archiveIndexedBatchSeconds
 	}
 	return int64(p.MaxMinutes*60/secs) * int64(p.BatchRows)
