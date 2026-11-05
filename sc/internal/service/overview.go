@@ -17,7 +17,8 @@ const recentChanges = 10
 // Overview reads the database page now: the instance header, the one database and its Query Store
 // state (stored as a snapshot, as the database list does), its setup, backup, storage, upkeep and
 // performance facts (each card stored as a card read, the storage samples kept; neither the CHECKDB
-// room estimate nor the deadlock report is run here), the six cards about it and its latest changes.
+// room estimate nor the deadlock report is run here), the six cards about it and its latest changes,
+// with the changes made outside kakapo harvested from the default trace first.
 // A successful read also updates the server's last build, edition and check time.
 func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (domain.Overview, error) {
 	if strings.TrimSpace(dbName) == "" {
@@ -80,6 +81,11 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
+	// The changes made outside kakapo, from the same read of the default trace (docs/phase5f-contract.md).
+	window, err := s.harvestSchemaChanges(ctx, serverID, upkeep)
+	if err != nil {
+		return domain.Overview{}, err
+	}
 	performance := readPerformanceFacts(ctx, db, *d)
 	performanceDef, _ := domain.FindCardDef(domain.CardPerformance)
 	lastDeadlocks, err := s.store.LastDeadlockReport(ctx, serverID, d.Name)
@@ -113,6 +119,7 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		Database:      *d,
 		Cards:         domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance),
 		RecentChanges: changes,
+		ChangeWindow:  window,
 		CheckedAt:     checkedAt,
 	}, nil
 }

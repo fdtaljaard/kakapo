@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,11 +69,68 @@ func TestUpkeepFactsLive(t *testing.T) {
 		name, f.AgentStatus, f.AgentStartup, f.AgentError, len(f.FailedJobs), f.JobsError, f.MaintenanceJob, f.MaintenancePlans, f.MaintenanceError,
 		len(f.ShrinkJobs), f.ShrinkJobsError, f.MissingAlerts, f.Operators, f.AlertsOn, f.AlertsError, f.TraceRunning, f.TraceError,
 		len(f.TraceCommands), f.Growth, len(f.SevereErrors), f.Dumps, f.DumpLast, f.DumpFile, f.DumpsError, len(f.StaleStats), f.StatsError)
+	t.Logf("trace oldest %v newest %v, %d DDL events, login %q", f.TraceOldestUTC, f.TraceNewestUTC, len(f.SchemaChanges), f.LoginName)
+	for i, x := range f.SchemaChanges {
+		if x.Database == name && i >= len(f.SchemaChanges)-40 {
+			t.Logf("  %+v", x)
+		}
+	}
 	n, err := ReadStaleStatsCount(ctx, db, name)
 	if err != nil || n != len(f.StaleStats) {
 		t.Errorf("stale count %d %v, facts %d", n, err, len(f.StaleStats))
 	}
 	if _, err := UpkeepFacts(ctx, db, "NoSuchDatabase_x9"); err == nil {
 		t.Error("an unknown database should be an error")
+	}
+}
+
+// The change log's read (docs/phase5f-contract.md): the DDL rows are one more result set of the Upkeep
+// read, from the same @trace table (no second fn_trace_gettable), tagged and read-only; the
+// enable-default-trace read too.
+func TestSchemaChangeRead(t *testing.T) {
+	q := Tag(upkeepInstanceQuery)
+	if !strings.HasPrefix(q, KakapoTag+" "+safeSession) {
+		t.Errorf("not tagged with the safe session first: %.80s", q)
+	}
+	// The trace part and the result sets (the msdb reads before it match job commands, ALTER INDEX
+	// among them, as text inside sp_executesql).
+	readOnly(t, "upkeep trace", strings.ReplaceAll(q[strings.Index(q, "/* MNT05 / MNT06 Events"):], "ALTER TRACE", "the ALTER_TRACE permission"))
+	if n := strings.Count(upkeepInstanceQuery, "fn_trace_gettable"); n != 1 {
+		t.Errorf("the trace is read %d times", n)
+	}
+	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 9 {
+		t.Errorf("%d TRY blocks", n)
+	}
+	for _, want := range []string{
+		"x.EventClass IN (46, 47, 164) AND x.EventSubClass = 1 AND x.DatabaseID > 4",
+		"ISNULL(x.ApplicationName, N'') <> N'SQLMonitor'",
+		"NOT (x.EventClass = 164 AND x.ObjectType = 22601)",
+		"(x.ObjectType <> 16964 OR x.EventClass = 164)",
+		"MIN(t.StartTime) OVER () AS Oldest, MAX(t.StartTime) OVER () AS Newest",
+		"FROM @trace AS t\n", "WHERE t.EventClass IN (46, 47, 164)",
+		"DATEADD(MINUTE, @toUtc, t.StartTime)", "@toUtc int = -DATEPART(TZOFFSET, SYSDATETIMEOFFSET())",
+		"OBJECT_SCHEMA_NAME(t.ObjectID, t.DatabaseID)", "SUSER_SNAME()",
+		// MNT05 keeps its last 7 days.
+		"x.StartTime >= DATEADD(DAY, -7, GETDATE()) AND x.EventClass IN (22, 92, 93, 94, 95, 116)",
+	} {
+		if !strings.Contains(upkeepInstanceQuery, want) {
+			t.Errorf("upkeep query lacks %q", want)
+		}
+	}
+	for _, c := range domain.SchemaObjectTypeCodes() {
+		if !strings.Contains(schemaObjectTypeList, strconv.Itoa(c)) {
+			t.Errorf("object type %d not read", c)
+		}
+	}
+	if strings.Contains(schemaObjectTypeList, strconv.Itoa(domain.ObjTypeStatistics)) {
+		t.Error("statistics are left out")
+	}
+	if cs := ConnString(domain.ServerInput{Host: "h", Auth: domain.AuthWindows}); !strings.Contains(cs, "app name="+domain.KakapoProgram+";") ||
+		!strings.Contains(upkeepInstanceQuery, "N'"+domain.KakapoProgram+"'") {
+		t.Errorf("kakapo's own connections are left out by their app name: %s", cs)
+	}
+	suReadOnly(t, "default trace", Tag(defaultTraceQuery))
+	if !strings.Contains(defaultTraceQuery, "name = N'default trace enabled'") || !strings.Contains(defaultTraceQuery, "is_default = 1 AND status = 1") {
+		t.Error("default trace read")
 	}
 }

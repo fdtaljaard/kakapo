@@ -70,7 +70,7 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
               <InstanceCard key={card.id} card={card} serverId={serverId} database={database} checking={loading} />
             ))}
           </div>
-          <RecentChanges changes={overview.recentChanges} />
+          <RecentChanges changes={overview.recentChanges} window={overview.changeWindow} />
         </>
       ) : (
         loading && (

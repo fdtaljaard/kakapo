@@ -55,6 +55,10 @@ const (
 	// ChangeRecordedByHand is the Result of a change the consultant recorded by hand: something done
 	// outside kakapo (a procedure deployed, an index created in SSMS).
 	ChangeRecordedByHand = "recorded by hand"
+
+	// ChangeSeenOnServer is the Result of a change kakapo read from SQL Server's default trace: made
+	// outside kakapo, by someone else (docs/phase5f-contract.md).
+	ChangeSeenOnServer = "seen on the server"
 )
 
 // Hour classes.
@@ -84,8 +88,11 @@ const (
 
 // performanceChangeTypes are the change log's types that can affect performance; the latest of them
 // (or of the changes recorded by hand) is the report's default centre. CHECK, KILL, JOB, ALERT, CLEAR,
-// ARCHIVE, FILE, TABLE and the maintenance plan's PLAN summary stay choosable but never the default.
-var performanceChangeTypes = []string{"SETTING", "INDEX", "STATISTICS", "PLAN", "PROCEDURE", "VIEW", "MAINTENANCE", "FILE", "OTHER"} // FILE: the TempDB file set changes how the server behaves
+// ARCHIVE, TABLE and the maintenance plan's PLAN summary stay choosable but never the default. DEPLOY,
+// FUNCTION and TRIGGER are the changes seen on the server (docs/phase5f-contract.md); a table created or
+// altered alone is rarely a performance change, and inside a DEPLOY when it comes with a release.
+var performanceChangeTypes = []string{"SETTING", "INDEX", "STATISTICS", "PLAN", "PROCEDURE", "VIEW", "MAINTENANCE", "FILE", "OTHER",
+	ChangeTypeDeploy, changeTypeFunction, changeTypeTrigger} // FILE: the TempDB file set changes how the server behaves
 
 // maintenancePlanObject is the Object of the maintenance plan's summary row, whose type is PLAN too.
 const maintenancePlanObject = "Maintenance plan"
@@ -369,6 +376,7 @@ type TuningChange struct {
 	ChangeType  string `json:"changeType"`
 	Description string `json:"description"`
 	ByHand      bool   `json:"byHand"`
+	OnServer    bool   `json:"onServer"`    // seen on the server: read from the default trace
 	ServerLevel bool   `json:"serverLevel"` // a change to the whole server (no database)
 	Performance bool   `json:"performance"` // can affect performance; only these are the default centre
 }
@@ -560,7 +568,7 @@ func BuildTuningReport(f TuningFacts, changes []Change, opt TuningOptions) Tunin
 	for _, c := range tcs {
 		changeHours[c.at.Truncate(time.Hour)] = true
 		r.Changes = append(r.Changes, TuningChange{ID: c.c.ID, At: tStamp(c.at), Object: c.c.Object, ChangeType: c.c.ChangeType,
-			Description: c.c.Description, ByHand: c.c.Result == ChangeRecordedByHand, ServerLevel: c.c.Database == "",
+			Description: c.c.Description, ByHand: c.c.Result == ChangeRecordedByHand, OnServer: c.c.Result == ChangeSeenOnServer, ServerLevel: c.c.Database == "",
 			Performance: IsPerformanceChange(c.c)})
 	}
 
@@ -1523,6 +1531,12 @@ func tChangeName(c Change) string {
 		return "the change to procedure " + obj
 	case "VIEW":
 		return "the change to view " + obj
+	case changeTypeFunction:
+		return "the change to function " + obj
+	case changeTypeTrigger:
+		return "the change to trigger " + obj
+	case ChangeTypeDeploy:
+		return "the deploy of " + obj
 	}
 	return "the change to " + obj
 }

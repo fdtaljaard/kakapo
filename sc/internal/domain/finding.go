@@ -307,6 +307,9 @@ var Checks = []Check{
 		"RAISERROR('Alert test' 18 1) WITH LOG reaches the operator's mailbox."},
 	{"MNT08", CardUpkeep, "msdb history kept for ever", "Does anything prune the backup and job history?", OwnerUs,
 		"Re-run after the first cleanup: MNT08 gone."},
+	// Phase 5f (docs/phase5f-contract.md): the default trace that feeds the change log.
+	{"CHG01", CardUpkeep, "Changes made outside kakapo are seen", "Can kakapo see the changes made outside it, for a week back?", OwnerUs,
+		"Re-run: CHG01 gone, and the line under Recent changes names the trace's days."},
 
 	{"PRS01", CardPerformance, "Pressure right now", "Is the server short of threads, CPU or memory right now?", OwnerUs,
 		"Re-run: PRS01 gone"},

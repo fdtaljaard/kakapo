@@ -109,12 +109,20 @@ type ChangeEntry struct {
 	ChangeType  string    `json:"changeType"`
 	Description string    `json:"description"`
 	Result      string    `json:"result"`
+	// Copy is a change seen on the server with the objects it names, one per line (a DEPLOY row's
+	// statement), for the Copy button; "" otherwise.
+	Copy string `json:"copy,omitempty"`
 }
 
-// Entry is the change as the database page shows it, without the statements.
+// Entry is the change as the database page shows it, without the statements; a change seen on the
+// server that names its objects carries them in Copy.
 func (c Change) Entry() ChangeEntry {
-	return ChangeEntry{ID: c.ID, ServerID: c.ServerID, Database: c.Database, ChangedAt: c.ChangedAt.UTC(),
+	e := ChangeEntry{ID: c.ID, ServerID: c.ServerID, Database: c.Database, ChangedAt: c.ChangedAt.UTC(),
 		Object: c.Object, ChangeType: c.ChangeType, Description: c.Description, Result: c.Result}
+	if c.Result == ChangeSeenOnServer && c.Statement != "" {
+		e.Copy = c.Description + "\n" + c.Statement
+	}
+	return e
 }
 
 // Overview is the whole database page in one read: the instance header, the chosen database and
@@ -124,7 +132,10 @@ type Overview struct {
 	Database      DatabaseStatus `json:"database"`
 	Cards         []Card         `json:"cards"`         // always six, in CardDefs order
 	RecentChanges []ChangeEntry  `json:"recentChanges"` // newest first
-	CheckedAt     time.Time      `json:"checkedAt"`
+	// ChangeWindow is the line under Recent changes (docs/phase5f-contract.md); nil when the
+	// instance could not be read.
+	ChangeWindow *ChangeWindow `json:"changeWindow,omitempty"`
+	CheckedAt    time.Time     `json:"checkedAt"`
 }
 
 // UptimeDays is the time since start in days, to one decimal.

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -78,4 +80,89 @@ func (s *Store) UpdateServerTested(ctx context.Context, serverID int64, version,
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Setting reads one value of the setting table; "" when it is not set.
+func (s *Store) Setting(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read setting %s: %w", key, err)
+	}
+	return v, nil
+}
+
+// SetSetting writes one value of the setting table, replacing what was there.
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)`, key, value); err != nil {
+		return fmt.Errorf("write setting %s: %w", key, err)
+	}
+	return nil
+}
+
+// ReplaceSeenChanges is a harvest's per-hour replace (docs/phase5f-contract.md): in one transaction,
+// the server's changes seen on the server from since (UTC) on, in every database, become fresh
+// (domain.DiffSeenChanges: a row already there stays with its id, one no longer recomputed goes, a new
+// one is added). Rows before since, and every other row of the change log, are never touched. It
+// returns how many rows were added and deleted.
+func (s *Store) ReplaceSeenChanges(ctx context.Context, serverID int64, since time.Time, fresh []domain.Change) (added, deleted int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, server_id, coalesce(db_name, ''), changed_at, object, change_type, description, statement,
+		       coalesce(rollback_statement, ''), coalesce(result, '')
+		FROM change
+		WHERE server_id = ? AND result = ? AND changed_at >= ?`, serverID, domain.ChangeSeenOnServer, since.UTC())
+	if err != nil {
+		return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+	}
+	existing := []domain.Change{}
+	for rows.Next() {
+		var c domain.Change
+		if err = rows.Scan(&c.ID, &c.ServerID, &c.Database, &c.ChangedAt, &c.Object, &c.ChangeType,
+			&c.Description, &c.Statement, &c.Rollback, &c.Result); err != nil {
+			rows.Close()
+			return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+		}
+		c.ChangedAt = asUTC(c.ChangedAt)
+		existing = append(existing, c)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+	}
+	stale, add := domain.DiffSeenChanges(existing, fresh)
+	for _, id := range stale {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM change WHERE id = ?`, id); err != nil {
+			return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+		}
+	}
+	for _, c := range add {
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO change (server_id, db_name, changed_at, object, change_type, description, statement, rollback_statement, result)
+			VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+			serverID, nullIfEmpty(c.Database), c.ChangedAt.UTC(), c.Object, c.ChangeType, c.Description, c.Statement,
+			domain.ChangeSeenOnServer); err != nil {
+			return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("replace seen changes: %w", err)
+	}
+	return len(add), len(stale), nil
 }

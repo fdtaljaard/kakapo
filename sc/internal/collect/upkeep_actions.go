@@ -292,3 +292,30 @@ func ReadJobSteps(ctx context.Context, db *sql.DB, job string) (domain.ShrinkSte
 	}
 	return f, friendlyErrOrNil(rows.Err())
 }
+
+// defaultTraceQuery reads what enable-default-trace needs (docs/phase5f-contract.md): the value in
+// use of 'default trace enabled' and, in its own TRY, whether the default trace runs (sys.traces
+// needs ALTER TRACE). SELECTs only.
+const defaultTraceQuery = safeSession + `SET NOCOUNT ON;
+DECLARE @running bit = 0, @traceError nvarchar(2048);
+BEGIN TRY
+    IF EXISTS (SELECT 1 FROM sys.traces WHERE is_default = 1 AND status = 1) SET @running = 1;
+END TRY
+BEGIN CATCH
+    SET @traceError = ERROR_MESSAGE();
+END CATCH;
+SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)), CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
+       ISNULL((SELECT CONVERT(bigint, value_in_use) FROM sys.configurations WHERE name = N'default trace enabled'), 0),
+       @running, @traceError;`
+
+// ReadDefaultTrace reads the default trace option and whether the trace runs, for
+// enable-default-trace's preview and read-back; Pending is left for the caller.
+func ReadDefaultTrace(ctx context.Context, db *sql.DB) (domain.DefaultTraceFacts, error) {
+	var f domain.DefaultTraceFacts
+	var traceErr sql.NullString
+	if err := db.QueryRowContext(ctx, Tag(defaultTraceQuery)).Scan(&f.ServerName, &f.ProductVersion, &f.ValueInUse, &f.Running, &traceErr); err != nil {
+		return f, friendlyError(err)
+	}
+	f.TraceError = traceErr.String
+	return f, nil
+}

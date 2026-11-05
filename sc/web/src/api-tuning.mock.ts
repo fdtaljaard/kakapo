@@ -351,6 +351,7 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
     changeType: c.changeType,
     description: c.description,
     byHand: c.byHand,
+    onServer: false,
     serverLevel: false,
     performance: c.byHand || !["CHECK", "KILL", "JOB", "ALERT", "CLEAR", "ARCHIVE"].includes(c.changeType),
   }))

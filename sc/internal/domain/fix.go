@@ -111,6 +111,8 @@ var FixDefs = []FixDef{
 	// Phase 5e (docs/phase5e-contract.md): the first installed helper, an Extended Events session.
 	{"install-xe-session", "Keep every block and deadlock on the server", ScopeServer, "BLK01", "Event session kakapo"},
 	{"remove-xe-session", "Remove kakapo's event session", ScopeServer, "BLK01", "Event session kakapo"},
+	// Phase 5f (docs/phase5f-contract.md): the default trace back on, for the change log.
+	{FixEnableDefaultTrace, "Switch SQL Server's default trace back on", ScopeServer, "CHG01", DefaultTraceSetting},
 	{FixBackupSchedule, "Create a backup schedule", ScopeDatabase, "BAK01", "Backup schedule"},
 	{FixRemoveBackupSchedule, "Remove kakapo's backup jobs", ScopeDatabase, "BAK01", "Backup schedule"},
 }

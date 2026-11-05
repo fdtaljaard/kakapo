@@ -1033,6 +1033,10 @@ func upkeepActionFixes(f UpkeepFacts, x Finding) []Fix {
 		fix := suFix(FixMaintenanceJob)
 		fix.Current, fix.Target = "no maintenance job", StatisticsJobName(f.Database)+" (daily "+DefaultMaintenanceTime+")"
 		return []Fix{fix}
+	case FixEnableDefaultTrace:
+		fix := suFix(FixEnableDefaultTrace)
+		fix.Current, fix.Target = defaultTraceValue(0), defaultTraceValue(1)
+		return []Fix{fix}
 	case FixRemoveShrinkStep:
 		out := []Fix{}
 		for _, j := range f.ShrinkJobs {

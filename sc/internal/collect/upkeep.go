@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +22,12 @@ import (
 // login is caught. Nothing in msdb is read on Express (no SQL Server Agent). SELECTs only.
 // Result sets: one row of facts, then the failed jobs, the shrinking job steps, the shrinks, cache
 // clears, plan evictions and auto-shrinks, this database's growth events (with the slowest one),
-// the severe errors and the alerts that notify no one.
+// the severe errors, the alerts that notify no one, and the DDL events of every user database in the
+// trace (docs/phase5f-contract.md): the trace is read once, whole, and the DDL rows are one more result
+// set of that same read.
 // Source: DarlingData sp_PerfCheck/sp_PerfCheck.sql 1984-1985 (MIT): the plan-handle FREEPROCCACHE
 // patterns that tell a single-plan eviction from a cache clear.
-const upkeepInstanceQuery = safeSession + `SET NOCOUNT ON;
+var upkeepInstanceQuery = safeSession + `SET NOCOUNT ON;
 DECLARE @now datetime = GETDATE();
 ` + openAutoClose + `
 DECLARE @found bit = 0, @state nvarchar(60), @autoShrink bit = 0;
@@ -159,11 +162,17 @@ BEGIN CATCH
 END CATCH;
 
 /* MNT05 / MNT06 Events from the default trace (last 7 days): shrinks, cache clears and plan evictions,
-   file growth (with the slowest), auto-shrink (94, 95), severe errors */
-DECLARE @traceRunning bit = 0, @traceError nvarchar(2048), @tracePath nvarchar(260);
+   file growth (with the slowest), auto-shrink (94, 95), severe errors.
+   CHG01 and the change log (docs/phase5f-contract.md), from the same read of the whole trace: its oldest
+   and newest event, and the committed (EventSubClass 1) Object:Created, Object:Deleted and Object:Altered
+   events (46, 47, 164) of the mapped object types in user databases, not kakapo's own; an index only
+   created or dropped (its alters are rebuilds and reorganises), the database only altered. The oldest
+   event's row is kept with EventClass 0 when nothing else keeps it, so its time is known. */
+DECLARE @traceRunning bit = 0, @traceError nvarchar(2048), @tracePath nvarchar(260), @traceOldest datetime, @traceNewest datetime;
 DECLARE @trace TABLE (EventClass int, StartTime datetime, DatabaseName nvarchar(256), TextData nvarchar(400),
                       LoginName nvarchar(256), ApplicationName nvarchar(256), Duration bigint, Severity int,
-                      FileName nvarchar(256));
+                      FileName nvarchar(256), EventSubClass int, DatabaseID int, ObjectType int, ObjectID int,
+                      ObjectName nvarchar(256), TransactionID bigint, HostName nvarchar(256), Oldest datetime, Newest datetime);
 DECLARE @cmds TABLE (kind nvarchar(12) NOT NULL, database_name nvarchar(256) NULL, cnt int NOT NULL, last_at datetime NULL,
                      login_name nvarchar(256) NULL, app nvarchar(256) NULL, sample nvarchar(400) NULL);
 DECLARE @growth TABLE (cnt int NOT NULL, secs bigint NULL, log_grows int NULL, last_at datetime NULL,
@@ -178,11 +187,25 @@ BEGIN TRY
     IF @tracePath IS NOT NULL
     BEGIN
         SET @traceRunning = 1;
-        INSERT @trace (EventClass, StartTime, DatabaseName, TextData, LoginName, ApplicationName, Duration, Severity, FileName)
-        SELECT t.EventClass, t.StartTime, t.DatabaseName, CONVERT(nvarchar(400), t.TextData), t.LoginName, t.ApplicationName,
-               t.Duration, t.Severity, t.FileName
-        FROM sys.fn_trace_gettable(@tracePath, DEFAULT) t
-        WHERE t.StartTime >= DATEADD(DAY, -7, GETDATE()) AND t.EventClass IN (22, 92, 93, 94, 95, 116);
+        INSERT @trace (EventClass, StartTime, DatabaseName, TextData, LoginName, ApplicationName, Duration, Severity, FileName,
+                       EventSubClass, DatabaseID, ObjectType, ObjectID, ObjectName, TransactionID, HostName, Oldest, Newest)
+        SELECT CASE WHEN k.Kind = 0 THEN 0 ELSE x.EventClass END, x.StartTime, x.DatabaseName, CONVERT(nvarchar(400), x.TextData),
+               x.LoginName, x.ApplicationName, x.Duration, x.Severity, x.FileName,
+               x.EventSubClass, x.DatabaseID, x.ObjectType, x.ObjectID, x.ObjectName, x.TransactionID, x.HostName, x.Oldest, x.Newest
+        FROM (SELECT t.EventClass, t.StartTime, t.DatabaseName, t.TextData, t.LoginName, t.ApplicationName, t.Duration, t.Severity,
+                     t.FileName, t.EventSubClass, t.DatabaseID, t.ObjectType, t.ObjectID, t.ObjectName, t.TransactionID, t.HostName,
+                     MIN(t.StartTime) OVER () AS Oldest, MAX(t.StartTime) OVER () AS Newest
+              FROM sys.fn_trace_gettable(@tracePath, DEFAULT) t) AS x
+        CROSS APPLY (SELECT CASE
+            WHEN x.StartTime >= DATEADD(DAY, -7, GETDATE()) AND x.EventClass IN (22, 92, 93, 94, 95, 116) THEN 1
+            WHEN x.EventClass IN (46, 47, 164) AND x.EventSubClass = 1 AND x.DatabaseID > 4
+                 AND ISNULL(x.ApplicationName, N'') <> N'SQLMonitor'
+                 AND x.ObjectType IN (` + schemaObjectTypeList + `)
+                 AND NOT (x.EventClass = 164 AND x.ObjectType = 22601)
+                 AND (x.ObjectType <> 16964 OR x.EventClass = 164) THEN 2
+            WHEN x.StartTime = x.Oldest THEN 0 END) AS k (Kind)
+        WHERE k.Kind IS NOT NULL;
+        SELECT @traceOldest = MIN(Oldest), @traceNewest = MAX(Newest) FROM @trace;
 
         /* A FREEPROCCACHE with a plan handle (or a variable holding one) evicts one plan, not the cache */
         INSERT @cmds (kind, database_name, cnt, last_at, login_name, app, sample)
@@ -244,13 +267,45 @@ SELECT @found, @autoShrink,
        @bhOldest, ISNULL(@bhRows, 0), ISNULL(@jhRows, 0), ISNULL(@jhOldest, 0), @cleanupJob, @historyError,
        @traceRunning, @traceError,
        ISNULL(@dumps, 0), @dumpLast, @dumpFile, @dumpsError,
-       @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET());
+       @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET()),
+       DATEADD(MINUTE, -DATEPART(TZOFFSET, SYSDATETIMEOFFSET()), @traceOldest),
+       DATEADD(MINUTE, -DATEPART(TZOFFSET, SYSDATETIMEOFFSET()), @traceNewest),
+       CAST(ISNULL(SUSER_SNAME(), N'') AS nvarchar(256));
 SELECT name, fails, last_date, step_name, message FROM @jobs ORDER BY name;
 SELECT job, step, command FROM @shrinkJobs ORDER BY job, step;
 SELECT kind, database_name, cnt, last_at, login_name, app, sample FROM @cmds ORDER BY kind DESC, database_name;
 SELECT cnt, secs, log_grows, last_at, slowest_ms, slowest_file, slowest_at FROM @growth;
 SELECT database_name, cnt, last_at, sample FROM @errors ORDER BY database_name;
-SELECT name FROM @silent ORDER BY name;`
+SELECT name FROM @silent ORDER BY name;
+/* The DDL events, times in UTC with the server's offset now. Schema names, and an index's table, are
+   resolved for objects that still exist, in an online database the id still names (an AUTO_CLOSE one
+   other than this page's is not opened for it); a dropped object keeps its bare name. */
+DECLARE @toUtc int = -DATEPART(TZOFFSET, SYSDATETIMEOFFSET());
+SELECT DATEADD(MINUTE, @toUtc, t.StartTime), t.DatabaseID, t.DatabaseName, t.EventClass, t.EventSubClass, t.ObjectType,
+       CASE WHEN o.ok = 1 THEN OBJECT_SCHEMA_NAME(t.ObjectID, t.DatabaseID) END,
+       t.ObjectName,
+       CASE WHEN o.ok = 1 AND t.ObjectType = 22601 THEN OBJECT_NAME(t.ObjectID, t.DatabaseID) END,
+       t.TransactionID, t.LoginName, t.HostName, t.ApplicationName
+FROM @trace AS t
+OUTER APPLY (SELECT 1 AS ok
+             WHERE t.ObjectID IS NOT NULL
+               AND EXISTS (SELECT 1 FROM sys.databases AS d
+                           WHERE d.database_id = t.DatabaseID AND d.name = t.DatabaseName AND d.state = 0
+                             AND (d.is_auto_close_on = 0 OR d.name = @db))
+               AND (t.ObjectType = 22601 OR OBJECT_NAME(t.ObjectID, t.DatabaseID) = t.ObjectName)) AS o
+WHERE t.EventClass IN (46, 47, 164)
+ORDER BY t.StartTime, t.TransactionID;`
+
+// schemaObjectTypeList is the ObjectType codes the change log keeps (domain.SchemaObjectTypeCodes),
+// as the trace read's IN list.
+var schemaObjectTypeList = func() string {
+	codes := domain.SchemaObjectTypeCodes()
+	parts := make([]string, len(codes))
+	for i, c := range codes {
+		parts[i] = strconv.Itoa(c)
+	}
+	return strings.Join(parts, ", ")
+}()
 
 // staleStatsPredicate is the scan's MNT04 rule (and PerformanceTriage.sql's STA01, Apply-DoNow step 5):
 // statistics on user tables with 10,000 rows or more, at least 20% of them modified, not updated
@@ -322,6 +377,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		bhOldest                                      sql.NullTime
 		jhOldest                                      int
 		cleanupJob, historyErr                        sql.NullString
+		traceOldest, traceNewest                      sql.NullTime
 	)
 	if err := rows.Scan(&found, &f.AutoShrinkOn, &f.ServerName, &f.ProductVersion, &f.EngineEdition, &state,
 		&agentStatus, &agentStartup, &agentErr,
@@ -332,7 +388,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		&bhOldest, &f.BackupHistoryRows, &f.JobHistoryRows, &jhOldest, &cleanupJob, &historyErr,
 		&f.TraceRunning, &traceErr,
 		&f.Dumps, &dumpLast, &dumpFile, &dumpE,
-		&f.ServerNow, &f.UTCOffsetMinutes); err != nil {
+		&f.ServerNow, &f.UTCOffsetMinutes, &traceOldest, &traceNewest, &f.LoginName); err != nil {
 		return fmt.Errorf("read the upkeep facts of %s: %w", database, err)
 	}
 	if !found {
@@ -357,6 +413,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 	f.CleanupJob, f.HistoryError = cleanupJob.String, historyErr.String
 	f.TraceError = traceErr.String
 	f.DumpLast, f.DumpFile, f.DumpsError = naivePtr(dumpLast), dumpFile.String, dumpE.String
+	f.TraceOldestUTC, f.TraceNewestUTC = naivePtr(traceOldest), naivePtr(traceNewest)
 
 	// Failed jobs.
 	if err := nextResultSet(rows, "failed jobs"); err != nil {
@@ -463,6 +520,30 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 			return err
 		}
 		f.SilentAlerts = append(f.SilentAlerts, name)
+	}
+
+	// The DDL events of the default trace (docs/phase5f-contract.md).
+	if err := nextResultSet(rows, "schema changes"); err != nil {
+		return err
+	}
+	f.SchemaChanges = []domain.SchemaChangeFact{}
+	for rows.Next() {
+		var x domain.SchemaChangeFact
+		var at sql.NullTime
+		var dbID, class, sub, objType sql.NullInt32
+		var dbName, schema, name, table, login, host, program sql.NullString
+		var tx sql.NullInt64
+		if err := rows.Scan(&at, &dbID, &dbName, &class, &sub, &objType, &schema, &name, &table, &tx, &login, &host, &program); err != nil {
+			return err
+		}
+		if !at.Valid {
+			continue
+		}
+		x.At = naive(at.Time)
+		x.DatabaseID, x.Database, x.EventClass, x.SubClass, x.ObjectType = int(dbID.Int32), dbName.String, int(class.Int32), int(sub.Int32), int(objType.Int32)
+		x.Schema, x.Name, x.Table, x.TransactionID = schema.String, name.String, table.String, tx.Int64
+		x.Login, x.Host, x.Program = login.String, host.String, program.String
+		f.SchemaChanges = append(f.SchemaChanges, x)
 	}
 	return friendlyErrOrNil(rows.Err())
 }

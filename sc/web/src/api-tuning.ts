@@ -42,6 +42,7 @@ export interface TuningChange {
   changeType: string
   description: string
   byHand: boolean
+  onServer: boolean // phase 5f: seen on the server, read from the default trace
   serverLevel: boolean
   performance: boolean // can affect performance; only these are the default centre
 }

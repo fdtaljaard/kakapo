@@ -160,7 +160,19 @@ export interface Overview {
   database: DatabaseStatus // the chosen database, with its Query Store state
   cards: Card[] // always six, in this order: backups, setup, storage, upkeep, performance, design; about this database
   recentChanges: Change[] // this database only, newest first, at most 10
+  // Phase 5f: the line under Recent changes, how far back changes made outside kakapo are seen; absent
+  // when the instance could not be read (docs/phase5f-contract.md).
+  changeWindow?: ChangeWindow
   checkedAt: string
+}
+
+// Phase 5f: "running" (the trace's days), "gap" (the trace turned over between two openings), "off" (the
+// default trace is off), "unread" (no ALTER TRACE; copy holds the grant).
+export interface ChangeWindow {
+  state: "running" | "gap" | "off" | "unread"
+  text: string
+  days: number
+  copy?: string
 }
 
 export interface InstanceInfo {
@@ -450,12 +462,17 @@ export interface Change {
   object: string // "Query Store"
   changeType: string // "SETTING"
   description: string
-  result: string // "recorded by hand" for a change recorded by hand (phase 5c)
+  result: string // "recorded by hand" for a change recorded by hand (phase 5c); "seen on the server" (phase 5f)
+  // Phase 5f: a change seen on the server that names its objects (a deploy), ready to copy: the line and
+  // the objects, one per line.
+  copy?: string
 }
 
 // Phase 5c: a change made outside kakapo, recorded by hand (docs/phase5c-contract.md).
 export const changeTypes = ["PROCEDURE", "VIEW", "INDEX", "STATISTICS", "SETTING", "OTHER"] as const
 export const recordedByHand = "recorded by hand"
+// Phase 5f: a change kakapo read from SQL Server's default trace, made outside kakapo (docs/phase5f-contract.md).
+export const seenOnServer = "seen on the server"
 
 export interface RecordChangeInput {
   changedAt: string // server time "2026-11-03T14:20"; "" is now

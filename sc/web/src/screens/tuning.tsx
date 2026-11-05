@@ -256,6 +256,7 @@ function Controls({
               <SelectItem key={c.id} value={String(c.id)}>
                 {serverWhen(c.at)} · {c.object}
                 {c.byHand ? " (by hand)" : ""}
+                {c.onServer ? " (on the server)" : ""}
                 {c.serverLevel ? " (server)" : ""}
                 {c.performance ? "" : " (not a performance change)"}
               </SelectItem>

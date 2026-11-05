@@ -180,3 +180,79 @@ func TestListChangesSince(t *testing.T) {
 		t.Errorf("from the first: %d", len(got))
 	}
 }
+
+// The per-hour replace of a harvest (docs/phase5f-contract.md): one transaction, rows recomputed for
+// the window's hours replace the changes seen on the server there; older hours, other servers and
+// the other rows of the log are never touched; a row recomputed the same keeps its id.
+func TestReplaceSeenChanges(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, _ := st.InsertServer(ctx, domain.ServerInput{Name: "a", Host: "a", Auth: domain.AuthWindows}, domain.ConnectionInfo{})
+	b, _ := st.InsertServer(ctx, domain.ServerInput{Name: "b", Host: "b", Auth: domain.AuthWindows}, domain.ConnectionInfo{})
+
+	since := time.Date(2026, 11, 5, 4, 0, 0, 0, time.UTC)
+	seen := func(server int64, db string, at time.Time, object string) domain.Change {
+		return domain.Change{ServerID: server, Database: db, ChangedAt: at, Object: object, ChangeType: "PROCEDURE",
+			Description: "Procedure " + object + " altered by x", Result: domain.ChangeSeenOnServer}
+	}
+	old := seen(a.ID, "W", since.Add(-time.Hour), "dbo.Old") // before the window: kept
+	fix := domain.Change{ServerID: a.ID, Database: "W", ChangedAt: since.Add(time.Hour), Object: "Query Store", ChangeType: "SETTING",
+		Description: "d", Statement: "s", Result: "On, verified"} // a fix: kept
+	other := seen(b.ID, "W", since.Add(time.Hour), "dbo.P1") // another server: kept
+	ids := map[string]int64{}
+	for name, c := range map[string]domain.Change{"old": old, "fix": fix, "other": other} {
+		if ids[name], err = st.InsertChange(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p1 := seen(a.ID, "W", since.Add(time.Hour), "dbo.P1")
+	p2 := seen(a.ID, "X", since.Add(2*time.Hour), "dbo.P2")
+	if added, deleted, err := st.ReplaceSeenChanges(ctx, a.ID, since, []domain.Change{p1, p2}); err != nil || added != 2 || deleted != 0 {
+		t.Fatalf("first harvest: %d %d %v", added, deleted, err)
+	}
+	first, _ := st.ListChanges(ctx, a.ID, "W", 10)
+	// The same harvest again adds nothing and keeps the ids.
+	if added, deleted, err := st.ReplaceSeenChanges(ctx, a.ID, since, []domain.Change{p2, p1}); err != nil || added != 0 || deleted != 0 {
+		t.Fatalf("second harvest: %d %d %v", added, deleted, err)
+	}
+	again, _ := st.ListChanges(ctx, a.ID, "W", 10)
+	if len(first) != 3 || len(again) != 3 || first[0].ID != again[0].ID {
+		t.Errorf("W after two harvests: %+v / %+v", first, again)
+	}
+	// The hour recomputed as a deploy in W: dbo.P1 goes, the deploy comes; X's hour has nothing now.
+	deploy := domain.Change{ServerID: a.ID, Database: "W", ChangedAt: since.Add(time.Hour + 30*time.Minute), Object: "6 objects",
+		ChangeType: domain.ChangeTypeDeploy, Description: "Deploy by x", Statement: "Procedure dbo.P1 altered\nProcedure dbo.P3 created",
+		Result: domain.ChangeSeenOnServer}
+	if added, deleted, err := st.ReplaceSeenChanges(ctx, a.ID, since, []domain.Change{deploy}); err != nil || added != 1 || deleted != 2 {
+		t.Fatalf("recomputed: %d %d %v", added, deleted, err)
+	}
+	got, _ := st.ListChanges(ctx, a.ID, "W", 10)
+	if len(got) != 3 || got[0].ChangeType != domain.ChangeTypeDeploy || got[0].Statement != deploy.Statement || got[0].Result != domain.ChangeSeenOnServer ||
+		got[1].ID != ids["fix"] || got[2].ID != ids["old"] {
+		t.Errorf("W: %+v", got)
+	}
+	if x, _ := st.ListChanges(ctx, a.ID, "X", 10); len(x) != 0 {
+		t.Errorf("X: %+v", x)
+	}
+	if bb, _ := st.ListChanges(ctx, b.ID, "W", 10); len(bb) != 1 || bb[0].ID != ids["other"] {
+		t.Errorf("server b: %+v", bb)
+	}
+
+	// The setting that keeps the newest event seen.
+	if v, err := st.Setting(ctx, "schemachanges.seen.1"); err != nil || v != "" {
+		t.Errorf("unset: %q %v", v, err)
+	}
+	for _, v := range []string{"2026-11-05T05:00:00Z", "2026-11-05T06:00:00Z"} {
+		if err := st.SetSetting(ctx, "schemachanges.seen.1", v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, _ := st.Setting(ctx, "schemachanges.seen.1"); v != "2026-11-05T06:00:00Z" {
+		t.Errorf("setting %q", v)
+	}
+}

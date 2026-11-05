@@ -70,6 +70,13 @@ type UpkeepFacts struct {
 	TraceCommands []TraceCommand // shrinks, cache clears, plan evictions and auto-shrinks, one row per kind per database
 	Growth        *TraceGrowth   // this database's file growth events; nil when none
 	SevereErrors  []SevereErrors // severity 20+, one row per database
+	// CHG01 and the change log (docs/phase5f-contract.md), from the same read of the whole trace:
+	// its oldest and newest event (UTC) and its DDL events in user databases, for every database.
+	TraceOldestUTC *time.Time
+	TraceNewestUTC *time.Time
+	SchemaChanges  []SchemaChangeFact
+	// LoginName is SUSER_SNAME(): the login kakapo reads with, for the ALTER TRACE grant.
+	LoginName string
 
 	// MNT06: sys.dm_server_memory_dumps (VIEW SERVER STATE).
 	Dumps      int        // in the last 30 days
@@ -228,6 +235,7 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 	b.mnt04()
 	b.mnt05()
 	b.mnt06()
+	b.chg01()
 	if !f.IsExpress() {
 		b.mnt07()
 		b.mnt08()
@@ -879,7 +887,7 @@ func AvailableUpkeepFixes(f UpkeepFacts, findings []Finding) []Fix {
 		if x.FixID == "" {
 			continue
 		}
-		if isUpkeepAction(x.FixID) {
+		if isUpkeepAction(x.FixID) || x.FixID == FixEnableDefaultTrace {
 			// The registered actions (docs/phase4d-contract.md): one per finding (per shrink step),
 			// with the options the preview needs.
 			for _, fix := range upkeepActionFixes(f, x) {
