@@ -78,7 +78,7 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
                 return (
                   <TableRow key={c.id} className="hover:bg-transparent">
                     <TableCell className="pl-0 align-top">{formatWhen(c.changedAt, "row")}</TableCell>
-                    <TableCell className="align-top whitespace-normal break-words min-w-48">
+                    <TableCell className="align-top whitespace-normal wrap-anywhere min-w-48">
                       <div>
                         {c.description}
                         {byHand && <span className="text-muted-foreground"> (by hand)</span>}
@@ -106,7 +106,7 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell align-top whitespace-normal text-muted-foreground max-w-72">
+                    <TableCell className="hidden md:table-cell align-top whitespace-normal wrap-anywhere text-muted-foreground w-72 max-w-72">
                       {noResult ? "" : c.result}
                     </TableCell>
                   </TableRow>

@@ -448,7 +448,11 @@ func XEInstallDescription(server string, p FixPreview, pending []PendingConfig) 
 		case XEObject:
 			s += ": " + c.Target
 		case "Blocked process threshold":
-			s += "; blocked process threshold " + c.Current + " -> " + c.Target
+			if c.Current == c.Target {
+				s += "; blocked process threshold " + c.Target + " (already set)"
+			} else {
+				s += "; blocked process threshold " + c.Current + " -> " + c.Target
+			}
 		}
 	}
 	if pend := pendingWithout(pending, BlockedThresholdSetting); len(pend) > 0 {
@@ -556,7 +560,11 @@ func XERemoveDescription(server string, p FixPreview, pattern string, pending []
 	s := "Removed the event session kakapo on " + orQ(server) + "; its files stay in " + orQ(pattern)
 	for _, c := range p.Changes {
 		if c.Setting == "Blocked process threshold" {
-			s += "; blocked process threshold " + c.Current + " -> " + strings.TrimSuffix(c.Target, " (unchanged)")
+			if target := strings.TrimSuffix(c.Target, " (unchanged)"); target == c.Current {
+				s += "; blocked process threshold left at " + target
+			} else {
+				s += "; blocked process threshold " + c.Current + " -> " + target
+			}
 		}
 	}
 	if pend := pendingWithout(pending, BlockedThresholdSetting); len(pend) > 0 {

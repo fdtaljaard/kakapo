@@ -85,6 +85,11 @@ func TestInstallXESessionDefaults(t *testing.T) {
 		`C:\Program Files\Microsoft SQL Server\MSSQL16.SQL2022\MSSQL\Log\kakapo*.xel, 50 MB x 4, starts with SQL Server; blocked process threshold 0 (off) -> 5 s` {
 		t.Errorf("description %q", d)
 	}
+	// A threshold already at the target is named once, not "5 s -> 5 s".
+	same := FixPreview{Changes: []Drift{{Setting: "Blocked process threshold", Current: "5 s", Target: "5 s"}}}
+	if d := XEInstallDescription("SQL01", same, nil); !strings.HasSuffix(d, "; blocked process threshold 5 s (already set)") {
+		t.Errorf("unchanged threshold %q", d)
+	}
 }
 
 // The options change the statement; a threshold set by someone else is warned about and put back by the
@@ -243,6 +248,9 @@ func TestRemoveXESession(t *testing.T) {
 	p, _, _ = BuildRemoveXESessionFix(f, nil)
 	if !strings.Contains(p.Warnings[0], `kakapo*.xel. Delete them`) || p.Changes[1].Target != "5 s (unchanged)" {
 		t.Errorf("pattern / other session %q %+v", p.Warnings[0], p.Changes)
+	}
+	if d := XERemoveDescription("SQL01", p, f.Session.FilePattern(), nil); !strings.HasSuffix(d, "; blocked process threshold left at 5 s") {
+		t.Errorf("kept threshold %q", d)
 	}
 	if p, _, _ := BuildRemoveXESessionFix(f, map[string]string{OptionXEThreshold: "-3"}); len(p.Changes) != 0 || p.Statement != "" {
 		t.Errorf("bad threshold applicable %+v", p)
