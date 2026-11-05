@@ -167,6 +167,16 @@ type QueryTableFact struct {
 	OldestUpdate  *time.Time // server time, as SQL Server keeps it
 	MaxModPct     float64    // the highest modification_counter * 100 / rows of its statistics
 	Modifications int64
+	Updates       []QueryStatUpdateFact // its statistics updated in the last 8 days, oldest first
+}
+
+// QueryStatUpdateFact is one statistics object of a table and when it was last updated (phase 5j).
+type QueryStatUpdateFact struct {
+	Name    string
+	Index   bool      // an index's own statistics
+	Updated time.Time // server time, as SQL Server keeps it
+	Rows    int64
+	Sampled int64 // rows read; Rows when every row was read
 }
 
 // QueryDetail is the query's page (GET .../queries/{hash}).
@@ -180,6 +190,8 @@ type QueryDetail struct {
 	Source          string          `json:"source"`     // query-store, plan-cache, none
 	QueryStoreState string          `json:"queryStoreState"`
 	Summary         QuerySummary    `json:"summary"`
+	Verdict         *QueryVerdict   `json:"verdict"` // phase 5j; nil when it ran one way all week
+	Events          []QueryEvent    `json:"events"`  // plans begun and statistics updated in the window, oldest first
 	Explain         []ExplainLine   `json:"explain"`
 	Plans           []QueryPlan     `json:"plans"`
 	History         []QueryHour     `json:"history"`
@@ -228,6 +240,7 @@ type QueryPlan struct {
 	Fastest            bool                 `json:"fastest"` // the lowest average duration, of two or more that ran
 	LastCompile        *time.Time           `json:"lastCompile"`
 	LastRun            *time.Time           `json:"lastRun"`
+	FirstRun           *time.Time           `json:"firstRun"` // its first run in the window (phase 5j); Query Store only
 	EngineVersion      string               `json:"engineVersion"`
 	CompatibilityLevel int                  `json:"compatibilityLevel"`
 	Runs               int64                `json:"runs"`
@@ -450,13 +463,17 @@ func qUnbracket(s string) string {
 }
 
 // ShowplanTables are the tables of this database that the plans touch, once each, with the
-// indexes used on them: no temporary tables, table variables, worktables or system tables.
+// indexes used on them: no temporary tables, table variables, worktables or system tables. A plan
+// compiled before the database was restored or renamed names the database it had then (phase 5j):
+// when none of its objects names this database and they all name one other, that one is this.
 func ShowplanTables(database string, plans ...string) []ShowplanObject {
 	out := []ShowplanObject{}
 	at := map[string]int{}
 	for _, p := range plans {
-		for _, o := range ParseShowplan(p).Objects {
-			if !qShowplanTableOf(database, o) {
+		objs := ParseShowplan(p).Objects
+		here := qPlanDatabase(database, objs)
+		for _, o := range objs {
+			if !qShowplanTableOf(here, o) {
 				continue
 			}
 			key := strings.ToLower(o.Schema + "." + o.Table)
@@ -475,6 +492,30 @@ func ShowplanTables(database string, plans ...string) []ShowplanObject {
 		}
 	}
 	return out
+}
+
+// qPlanDatabase is the name this database has in a plan's objects: its own name when one object
+// names it, else the one other database every user table of the plan names (a restored copy).
+func qPlanDatabase(database string, objs []ShowplanObject) string {
+	other := ""
+	for _, o := range objs {
+		if o.Database == "" || !qShowplanTableOf(o.Database, o) {
+			continue
+		}
+		switch {
+		case strings.EqualFold(o.Database, database):
+			return database
+		case strings.EqualFold(o.Database, "tempdb"):
+		case other == "":
+			other = o.Database
+		case !strings.EqualFold(other, o.Database):
+			return database
+		}
+	}
+	if other == "" {
+		return database
+	}
+	return other
 }
 
 func qShowplanTableOf(database string, o ShowplanObject) bool {
@@ -502,7 +543,7 @@ func qContainsFold(list []string, s string) bool {
 
 // qQueryWaitWords are sp_QuickieStore's wait categories in the words a non-DBA reads.
 var qQueryWaitWords = map[string]string{
-	"CPU":               "waiting for a CPU (the server is busy)",
+	"CPU":               "waiting for its turn on a CPU (long runs take turns; or the server is busy)",
 	"Worker Thread":     "waiting for a worker thread (the server ran out of threads)",
 	"Lock":              "waiting for locks held by other sessions (blocking)",
 	"Latch":             "waiting on SQL Server's internal structures (latches)",
@@ -551,6 +592,8 @@ const (
 	// many times lower; either is enough (a plan may trade a little CPU for far fewer reads).
 	queryWorkRatio      = 1.5
 	queryPlanXMLMax     = 5 // plans whose XML the page carries (Save .sqlplan)
+	// queryParallelRatio: a plan whose CPU per run is this many times its time per run runs in parallel (5j).
+	queryParallelRatio = 1.5
 	queryLargeTableRows = 10_000_000
 )
 
@@ -684,6 +727,14 @@ func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 	d.Waits = qQueryWaits(f.Waits)
 	d.Statements = qProcStatements(f.Statements, f.QueryHash)
 	d.Tables = qQueryTables(f, d.Plans, canChange)
+	if d.Source == QueryDetailFromQueryStore {
+		qPlanFirstRuns(f, d.Plans)
+		d.Events = qQueryEvents(f, d)
+		d.Verdict = qQueryVerdict(f, d)
+	} else {
+		d.Events = []QueryEvent{}
+	}
+	d.Waits = qShownWaits(d.Waits)
 
 	for _, n := range []struct{ what, err string }{
 		{"Query Store", f.QueryStoreError}, {"History", f.HistoryError}, {"Waits", f.WaitsError},
@@ -1108,8 +1159,29 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 		}
 		add(fmt.Sprintf("It ran %s %s, %s each on average; the slowest run took %s.",
 			plural(s.Runs, "time", "times"), when, QueryDuration(s.AvgDurationMs), QueryDuration(s.MaxDurationMs)), nil)
-		add(fmt.Sprintf("Each run uses %s of CPU and reads %s pages (%s MB) from memory or disk.",
-			QueryDuration(s.AvgCPUMs), n0(s.AvgReads), kbAsMB(s.AvgReads*8)), nil)
+		if v := d.Verdict; v != nil {
+			add(fmt.Sprintf("Each run now uses %s of CPU and reads %s pages (%s MB) from memory or disk; before %s it used %s and read %s pages (%s MB).",
+				QueryDuration(v.Now.AvgCPUMs), n0(v.Now.AvgReads), kbAsMB(v.Now.AvgReads*8), qServerClock(v.Since, f),
+				QueryDuration(v.Before.AvgCPUMs), n0(v.Before.AvgReads), kbAsMB(v.Before.AvgReads*8)), nil)
+		} else {
+			add(fmt.Sprintf("Each run uses %s of CPU and reads %s pages (%s MB) from memory or disk.",
+				QueryDuration(s.AvgCPUMs), n0(s.AvgReads), kbAsMB(s.AvgReads*8)), nil)
+		}
+		// Parallel: the plan that cost the most uses more CPU than time.
+		var top *QueryPlan
+		for i := range d.Plans {
+			p := &d.Plans[i]
+			if p.Runs > 0 && (top == nil || p.AvgCPUMs*float64(p.Runs) > top.AvgCPUMs*float64(top.Runs)) {
+				top = p
+			}
+		}
+		if top != nil && top.AvgDurationMs >= 100 && top.AvgCPUMs >= queryParallelRatio*top.AvgDurationMs {
+			add(fmt.Sprintf("%s runs on several CPUs at once (in parallel), so its CPU per run (%s) is more than its time per run (%s).",
+				upperFirst(qPlanName(*top)), QueryDuration(top.AvgCPUMs), QueryDuration(top.AvgDurationMs)), nil)
+		}
+		if n := qStatements(d.Plans); n > 1 {
+			add(fmt.Sprintf("It is %d statements that differ only in the values typed into them: Query Store keeps them apart, kakapo counts them together.", n), nil)
+		}
 	}
 
 	// Archive before an index (IDX10, as QRY01 says it): the query reads much of a table that only
@@ -1190,20 +1262,23 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 		add(text, a)
 	case ran >= 5 && lowRun*2 >= ran:
 		add(fmt.Sprintf("It got %d plans, most of them used only a few times: SQL Server keeps compiling it again (a RECOMPILE hint, SET options that differ between connections, or statistics that change fast).", ran), nil)
-	case ran >= 2:
+	case ran >= 2 && d.Verdict == nil && qPlansAlike(d.Plans):
 		add(fmt.Sprintf("%s plans of similar speed: the plan is not the problem; the cost is in the query itself or its indexes.", qCountWord(ran)), nil)
 	case ran == 1 && d.Source == QueryDetailFromQueryStore:
 		add("One plan in 7 days: the plan is stable, so the cost is in the query itself or its indexes.", nil)
 	}
 	if forced != nil {
 		text := fmt.Sprintf("Plan %d is forced: SQL Server must use it.", forced.PlanID)
+		if qStatements(d.Plans) > 1 {
+			text = fmt.Sprintf("Plan %d is forced for one of its statements: SQL Server must use it there. It ran %s in 7 days.", forced.PlanID, plural(forced.Runs, "time", "times"))
+		}
 		var a *QueryAction
 		if forced.ForceFailures > 0 {
 			text += fmt.Sprintf(" Forcing it has failed %s (%s), so SQL Server may be compiling its own plan instead.",
 				plural(forced.ForceFailures, "time", "times"), orDash(strings.ToLower(forced.ForceFailureReason)))
 		}
 		for _, p := range d.Plans {
-			if p.PlanID != forced.PlanID && p.Source == QueryDetailFromQueryStore && p.Runs > 0 && forced.Runs > 0 &&
+			if p.PlanID != forced.PlanID && p.QueryID == forced.QueryID && p.Source == QueryDetailFromQueryStore && p.Runs > 0 && forced.Runs > 0 &&
 				forced.AvgDurationMs >= queryRegressionRatio*p.AvgDurationMs && forced.AvgDurationMs >= 10 {
 				text += fmt.Sprintf(" Plan %d ran faster (%s against %s): stop forcing plan %d.", p.PlanID, QueryDuration(p.AvgDurationMs), QueryDuration(forced.AvgDurationMs), forced.PlanID)
 				a = qFindAction(forced.Actions, "unforce-plan")
@@ -1268,6 +1343,9 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 	shown := 0
 	seen := map[string]bool{}
 	for _, p := range d.Plans {
+		if d.Verdict != nil && !qRanSince(p, d.Verdict.Since) {
+			continue
+		}
 		for _, mi := range p.MissingIndexes {
 			key := strings.ToLower(mi.Table + mi.Equality + mi.Inequality + mi.Included)
 			if seen[key] || shown == 2 {
@@ -1315,9 +1393,15 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 		totalMs := s.AvgDurationMs * float64(s.Runs)
 		top := d.Waits[0]
 		if totalMs > 0 && float64(waitMs) >= totalMs/4 && top.Pct >= 50 {
-			text := fmt.Sprintf("It waits more than it works: %s%% of its waiting time is spent %s.", n0(top.Pct), top.Words)
-			if strings.EqualFold(top.Category, "Lock") {
+			text := fmt.Sprintf("Most of its waiting (%s%%) is spent %s.", n0(top.Pct), top.Words)
+			switch {
+			case strings.EqualFold(top.Category, "Parallelism"):
+				text = fmt.Sprintf("Most of its waiting (%s%%) is its parallel threads waiting for each other: a sign that it reads a lot, not a cause; reading less removes it.", n0(top.Pct))
+			case strings.EqualFold(top.Category, "Lock"):
 				text += " Open Blocking from the Performance card to see who holds them."
+			}
+			if v := d.Verdict; v != nil && v.Now.DurationMs > 0 && v.Before.DurationMs >= queryNearlyAllRatio*v.Now.DurationMs {
+				text += " Nearly all of it is from before " + qServerClock(v.Since, f) + ", when its runs took far longer."
 			}
 			add(text, nil)
 		}

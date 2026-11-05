@@ -267,6 +267,8 @@ function barcodeDetail(db: string, hash: string): QueryDetail {
     source: "query-store",
     queryStoreState: "READ_WRITE",
     summary: { window: "7 days", runs: 11_240, avgDurationMs: 155.2, maxDurationMs: 41_200, avgCpuMs: 99.5, avgReads: 7_941, maxReads: 61_870, lastRun: hoursAgo(0.2) },
+    verdict: null,
+    events: [],
     explain,
     plans,
     history: hours([
@@ -369,7 +371,7 @@ function auditDetail(db: string, hash: string): QueryDetail {
     })
   }
   explain.push({
-    text: "It waits more than it works: 78% of its waiting time is spent waiting for locks held by other sessions (blocking). Open Blocking from the Performance card to see who holds them.",
+    text: "Most of its waiting (78%) is spent waiting for locks held by other sessions (blocking). Open Blocking from the Performance card to see who holds them.",
   })
   const detail: QueryDetail = {
     database: db,
@@ -381,6 +383,8 @@ function auditDetail(db: string, hash: string): QueryDetail {
     source: "query-store",
     queryStoreState: "READ_WRITE",
     summary: { window: "7 days", runs: 168, avgDurationMs: 64_000, maxDurationMs: 212_000, avgCpuMs: 19_100, avgReads: 2_904_118, maxReads: 2_931_775, lastRun: hoursAgo(1) },
+    verdict: null,
+    events: [],
     explain,
     plans: [p31],
     history: hours([{ id: 31, runs: 3, cpu: 19_100, avg: 64_000, reads: 2_904_118, from: 7 * 24, to: 0 }]),
@@ -430,6 +434,8 @@ function planCacheDetail(db: string, hash: string): QueryDetail {
     summary: evicted
       ? { window: "since the plan was cached", runs: 0, avgDurationMs: 0, maxDurationMs: 0, avgCpuMs: 0, avgReads: 0, maxReads: 0, lastRun: null }
       : { window: "since 06:10", runs: 412, avgDurationMs: 840, maxDurationMs: 9_100, avgCpuMs: 610, avgReads: 88_400, maxReads: 120_000, lastRun: hoursAgo(0.5) },
+    verdict: null,
+    events: [],
     explain: evicted
       ? [
           {

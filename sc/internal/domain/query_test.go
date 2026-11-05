@@ -195,7 +195,7 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 		"Its plan shows key lookups (the index used does not hold every column needed) and reads a table variable (no statistics, estimated as 1 row).",
 		"SQL Server suggests an index on dbo.StockUnit (LocationID, CreatedDate) that it estimates would cut this query's cost by 88%. Create the index",
 		"It reads dbo.StockUnit (4.2 M rows) whose statistics are 31 days old with 48% of rows changed. Update statistics on it.",
-		"It waits more than it works: 71% of its waiting time is spent waiting for locks held by other sessions (blocking).",
+		"Most of its waiting (71%) is spent waiting for locks held by other sessions (blocking).",
 		"In dbo.PickList, the statement on line 12 does 72% of the procedure's page reads; it is this query.",
 	}
 	text := explainTexts(d)

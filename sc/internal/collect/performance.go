@@ -245,7 +245,9 @@ DECLARE @state nvarchar(60), @err nvarchar(2048), @total bigint, @now datetimeof
 CREATE TABLE #top (query_hash binary(8) NOT NULL PRIMARY KEY, cpu bigint NOT NULL, execs bigint NOT NULL, reads bigint NOT NULL,
                    min_reads bigint NOT NULL, max_reads bigint NOT NULL, max_cpu bigint NOT NULL, elapsed bigint NOT NULL,
                    variants int NOT NULL, minutes int NOT NULL, plan_id bigint NULL, query_id bigint NULL, top_wait nvarchar(60) NULL,
-                   max_elapsed bigint NOT NULL, plans int NULL, low_run_plans int NULL, tempdb_kb bigint NULL, max_used_kb bigint NULL);
+                   max_elapsed bigint NOT NULL, plans int NULL, low_run_plans int NULL, tempdb_kb bigint NULL, max_used_kb bigint NULL,
+                   now_plan bigint NULL, since datetimeoffset NULL, since_shown datetimeoffset NULL,
+                   b_runs bigint NULL, b_cpu bigint NULL, n_runs bigint NULL, n_cpu bigint NULL);
 BEGIN TRY
     SELECT @state = CONVERT(nvarchar(60), actual_state_desc) FROM sys.database_query_store_options;
     IF @state IN (N'READ_WRITE', N'READ_ONLY')
@@ -287,6 +289,26 @@ BEGIN TRY
         CROSS APPLY (SELECT COUNT(*) AS plans, SUM(CASE WHEN y.execs < 5 THEN 1 ELSE 0 END) AS low_run_plans
                      FROM (SELECT x.plan_id, SUM(x.execs) AS execs FROM #rs x WHERE x.query_hash = t.query_hash GROUP BY x.plan_id) y) p;
 
+        -- Phase 5j: the plan in use (the one that ran last), when it began, and the runs and CPU before and since.
+        UPDATE t SET now_plan = r.plan_id
+        FROM #top t
+        CROSS APPLY (SELECT TOP (1) x.plan_id FROM #rs x WHERE x.query_hash = t.query_hash ORDER BY x.start_time DESC, x.cpu DESC) r;
+        UPDATE t SET since = s.since
+        FROM #top t
+        CROSS APPLY (SELECT MIN(x.start_time) AS since FROM #rs x WHERE x.query_hash = t.query_hash AND x.plan_id = t.now_plan) s;
+        UPDATE t SET since_shown = CASE WHEN qp.initial_compile_start_time >= t.since AND qp.initial_compile_start_time < DATEADD(HOUR, 1, t.since)
+                                        THEN qp.initial_compile_start_time ELSE t.since END
+        FROM #top t JOIN sys.query_store_plan AS qp ON qp.plan_id = t.now_plan;
+        UPDATE t SET b_runs = s.b_runs, b_cpu = s.b_cpu, n_runs = s.n_runs, n_cpu = s.n_cpu
+        FROM #top t
+        JOIN (SELECT x.query_hash,
+                     SUM(CASE WHEN x.start_time < w.since THEN x.execs ELSE 0 END) AS b_runs,
+                     SUM(CASE WHEN x.start_time < w.since THEN x.cpu ELSE 0 END) AS b_cpu,
+                     SUM(CASE WHEN x.start_time >= w.since THEN x.execs ELSE 0 END) AS n_runs,
+                     SUM(CASE WHEN x.start_time >= w.since THEN x.cpu ELSE 0 END) AS n_cpu
+              FROM #rs x JOIN #top w ON w.query_hash = x.query_hash
+              GROUP BY x.query_hash) s ON s.query_hash = t.query_hash;
+
         IF EXISTS (SELECT 1 FROM sys.all_columns WHERE object_id = OBJECT_ID(N'sys.query_store_runtime_stats') AND name = N'avg_tempdb_space_used')
             EXEC sys.sp_executesql N'/* kakapo */ UPDATE t SET tempdb_kb = x.kb
                 FROM #top t
@@ -324,7 +346,8 @@ SELECT CONVERT(varchar(18), t.query_hash, 1), t.cpu, t.execs, t.reads, t.min_rea
        CONVERT(bigint, DATALENGTH(p.query_plan) / 2),
        CASE WHEN DATALENGTH(p.query_plan) / 2 <= @limit THEN p.query_plan END,
        CONVERT(bigint, -1), CONVERT(bigint, -1), ISNULL(t.max_used_kb, -1), ISNULL(t.tempdb_kb, -1),
-       ISNULL(t.plans, 0), ISNULL(t.low_run_plans, 0), t.max_elapsed
+       ISNULL(t.plans, 0), ISNULL(t.low_run_plans, 0), t.max_elapsed,
+       CONVERT(datetime2, SWITCHOFFSET(t.since_shown, '+00:00')), ISNULL(t.b_runs, 0), ISNULL(t.b_cpu, 0), ISNULL(t.n_runs, 0), ISNULL(t.n_cpu, 0)
 FROM #top t
 LEFT JOIN sys.query_store_plan p ON p.plan_id = t.plan_id
 LEFT JOIN sys.query_store_query q ON q.query_id = t.query_id
@@ -403,7 +426,8 @@ SELECT CONVERT(varchar(18), q.query_hash, 1), q.cpu, q.execs, q.reads, q.min_rea
        CONVERT(bigint, DATALENGTH(p.PlanText) / 2),
        CASE WHEN DATALENGTH(p.PlanText) / 2 <= @limit THEN p.PlanText END,
        ISNULL(q.spills, -1), ISNULL(q.max_grant_kb, -1), ISNULL(q.max_used_kb, -1), CONVERT(bigint, -1),
-       ISNULL(q.plans, 0), ISNULL(q.low_run_plans, 0), q.max_elapsed
+       ISNULL(q.plans, 0), ISNULL(q.low_run_plans, 0), q.max_elapsed,
+       CONVERT(datetime2, NULL), CONVERT(bigint, 0), CONVERT(bigint, 0), CONVERT(bigint, 0), CONVERT(bigint, 0)
 FROM #topq q
 OUTER APPLY (SELECT CONVERT(nvarchar(max), tp.query_plan) AS PlanText
              FROM sys.dm_exec_text_query_plan(q.plan_handle, q.stmt_start, q.stmt_end) tp) p
@@ -663,11 +687,14 @@ func scanTopQueries(rows *sql.Rows) ([]domain.TopQuery, error) {
 		var hash, object, text, wait, plan sql.NullString
 		var minutes sql.NullInt32
 		var planChars sql.NullInt64
+		var since sql.NullTime
 		if err := rows.Scan(&hash, &q.CPU, &q.Execs, &q.Reads, &q.MinReads, &q.MaxReads, &q.MaxCPU, &q.Elapsed, &q.Variants, &minutes,
 			&object, &text, &wait, &planChars, &plan,
-			&q.Spills, &q.MaxGrantKB, &q.MaxUsedGrantKB, &q.TempdbKB, &q.Plans, &q.LowRunPlans, &q.MaxElapsed); err != nil {
+			&q.Spills, &q.MaxGrantKB, &q.MaxUsedGrantKB, &q.TempdbKB, &q.Plans, &q.LowRunPlans, &q.MaxElapsed,
+			&since, &q.BeforeRuns, &q.BeforeCPU, &q.NowRuns, &q.NowCPU); err != nil {
 			return nil, err
 		}
+		q.Since = naivePtr(since)
 		q.QueryHash, q.ObjectName, q.Text, q.TopWait = hash.String, object.String, text.String, wait.String
 		q.Minutes = int(minutes.Int32)
 		q.Plan = plan.String

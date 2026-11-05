@@ -16,7 +16,9 @@ export interface QueryDetail {
   source: QueryDetailSource
   queryStoreState: string // READ_WRITE | READ_ONLY | OFF | ERROR | "" when not read
   summary: QuerySummary
-  explain: ExplainLine[] // plain sentences, the first thing on the page
+  verdict: QueryVerdict | null // phase 5j: the plan in use against the runs before; null when it ran one way all week
+  events: QueryEvent[] // plans begun and statistics updated in the window, oldest first
+  explain: ExplainLine[] // plain sentences
   plans: QueryPlan[] // the plan in use first
   history: QueryHour[] // newest first; Query Store only
   waits: QueryWait[] // Query Store, SQL Server 2017 and later
@@ -35,6 +37,36 @@ export interface QuerySummary {
   avgReads: number
   maxReads: number
   lastRun: string | null
+}
+
+// Phase 5j (docs/phase5j-contract.md): is it still a problem? The plan in use since it began against
+// the runs before, with 5c's verdict words.
+export interface QueryVerdict {
+  verdict: "faster" | "slower" | "same" | "too few"
+  headline: string
+  since: string // UTC
+  planId: number
+  before: QueryPeriod
+  now: QueryPeriod
+  changed: QueryEvent[]
+  toDo: string
+}
+
+export interface QueryPeriod {
+  label: string
+  runs: number
+  avgDurationMs: number
+  avgCpuMs: number
+  avgReads: number
+  cpuMs: number
+  durationMs: number
+}
+
+export interface QueryEvent {
+  at: string // UTC
+  kind: "plan" | "statistics"
+  planId?: number
+  text: string
 }
 
 export interface ExplainLine {
@@ -61,6 +93,7 @@ export interface QueryPlan {
   fastest: boolean // the lowest average duration, of two or more plans that ran
   lastCompile: string | null
   lastRun: string | null
+  firstRun?: string | null // its first run in the window (Query Store)
   engineVersion: string
   compatibilityLevel: number
   runs: number

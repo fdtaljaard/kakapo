@@ -268,13 +268,16 @@ const queryTablesInsert = `INSERT @t (schema_name, table_name, object_id, rows, 
                      WHERE st.object_id = o.id) AS s;`
 
 // queryTablesQuery runs inside the database with @tables, an XML list <t s="schema" n="table"/>:
-// per table whether it exists, its rows and its statistics' age. Result sets: one row (error,
-// server time), the tables.
+// per table whether it exists, its rows and its statistics' age; and each statistics object of
+// those tables updated in the last 8 days (phase 5j: what changed), with whether it is an index's
+// and how many rows it read. Result sets: one row (error, server time), the tables, the updates.
 var queryTablesQuery = Tag(`SET NOCOUNT ON;
 DECLARE @err nvarchar(2048), @now datetime = GETDATE();
 DECLARE @names TABLE (schema_name nvarchar(128) NOT NULL, table_name nvarchar(128) NOT NULL);
 DECLARE @t TABLE (schema_name nvarchar(128) NOT NULL, table_name nvarchar(128) NOT NULL, object_id int NULL, rows bigint NULL, stats int NULL,
                   oldest datetime NULL, max_mod_pct float NULL, max_mod bigint NULL);
+DECLARE @u TABLE (schema_name nvarchar(128) NOT NULL, table_name nvarchar(128) NOT NULL, stats_name nvarchar(128) NOT NULL, is_index bit NOT NULL,
+                  updated datetime NOT NULL, rows bigint NULL, sampled bigint NULL);
 BEGIN TRY
     INSERT @names (schema_name, table_name)
     SELECT DISTINCT x.t.value('@s', 'nvarchar(128)'), x.t.value('@n', 'nvarchar(128)')
@@ -284,6 +287,13 @@ BEGIN TRY
         ` + strings.ReplaceAll(queryTablesInsert, "{rows}", queryTablesRowsDMV) + `
     ELSE
         ` + strings.ReplaceAll(queryTablesInsert, "{rows}", queryTablesRowsPartitions) + `
+    INSERT @u (schema_name, table_name, stats_name, is_index, updated, rows, sampled)
+    SELECT t.schema_name, t.table_name, st.name, CASE WHEN i.index_id IS NULL THEN 0 ELSE 1 END, sp.last_updated, sp.rows, sp.rows_sampled
+    FROM @t AS t
+    JOIN sys.stats AS st ON st.object_id = t.object_id
+    LEFT JOIN sys.indexes AS i ON i.object_id = st.object_id AND i.index_id = st.stats_id AND st.auto_created = 0 AND st.user_created = 0
+    CROSS APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS sp
+    WHERE sp.last_updated >= DATEADD(DAY, -8, @now);
 END TRY
 BEGIN CATCH
     SET @err = ERROR_MESSAGE();
@@ -291,7 +301,9 @@ END CATCH;
 SELECT @err, @now;
 SELECT schema_name, table_name, CASE WHEN object_id IS NULL THEN 0 ELSE 1 END, ISNULL(rows, 0), ISNULL(stats, 0), oldest, ISNULL(max_mod_pct, 0),
        ISNULL(max_mod, 0)
-FROM @t ORDER BY schema_name, table_name;`)
+FROM @t ORDER BY schema_name, table_name;
+SELECT schema_name, table_name, stats_name, is_index, updated, ISNULL(rows, 0), ISNULL(sampled, 0)
+FROM @u ORDER BY updated, schema_name, table_name, stats_name;`)
 
 // planForcingQuery runs inside the database with @plan: Query Store's state, the plan's query and
 // hash, and every plan of that query with its forcing and its runs and duration over 7 days, for
@@ -603,7 +615,27 @@ func ReadTableStatistics(ctx context.Context, db *sql.DB, database string, table
 			return nil, time.Time{}, err
 		}
 		t.OldestUpdate = naivePtr(oldest)
+		t.Updates = []domain.QueryStatUpdateFact{}
 		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, friendlyError(err)
+	}
+	if err := nextResultSet(rows, "statistics updates"); err != nil {
+		return nil, time.Time{}, err
+	}
+	for rows.Next() {
+		var schema, table string
+		var u domain.QueryStatUpdateFact
+		if err := rows.Scan(&schema, &table, &u.Name, &u.Index, &u.Updated, &u.Rows, &u.Sampled); err != nil {
+			return nil, time.Time{}, err
+		}
+		u.Updated = naive(u.Updated)
+		for i := range out {
+			if out[i].Schema == schema && out[i].Table == table {
+				out[i].Updates = append(out[i].Updates, u)
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, time.Time{}, friendlyError(err)

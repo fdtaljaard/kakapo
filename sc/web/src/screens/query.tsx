@@ -9,8 +9,11 @@ import { StillRunningNotice } from "@/components/fix-progress"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
 import { formatMs, formatWhole } from "@/components/query/format"
+import { HistoryChart } from "@/components/query/history-chart"
 import { PlanSays, PlansTable } from "@/components/query/plans"
 import { ExplainList, HistoryTable, StatementsTable, TablesTable, WaitsList } from "@/components/query/sections"
+import { shownPlans } from "@/components/query/plan-order"
+import { PlanTimeline, VerdictCard } from "@/components/query/verdict"
 import { CopyFallback, StatementBlock } from "@/components/statement-block"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -21,11 +24,13 @@ import { formatWhen } from "@/lib/format"
 import { cardPath, databasePagePath, instancePath } from "@/lib/paths"
 import { useCopy } from "@/lib/use-copy"
 
-// "/instances/:id/databases/:db/queries/:hash" (docs/phase4c-contract.md, part 1): one costly query
-// of a QRY01 finding, read live. The plain sentences first, each with the fix it names; then the plans
-// (in use, forced, fastest), what the plans say (warnings, compiled parameters, the suggested index),
-// the history by hour, the waits, every statement of its procedure and the tables it reads. Every action
-// opens the fix dialog with its options; Copy for the vendor hands the whole page over as text.
+// "/instances/:id/databases/:db/queries/:hash" (docs/phase4c-contract.md, part 1; phase5j-contract.md):
+// one costly query of a QRY01 finding, read live. First whether it still needs attention (the plan in
+// use against the runs before it began, what changed, what to do) and the query text; then the history
+// as one chart; then "How it works", folded when the query got faster: the plain sentences, each with the
+// fix it names, the plans as a timeline (every plan and what it says behind "Show all plans"), the waits,
+// every statement of its procedure and the tables it reads. Every action opens the fix dialog with its
+// options; Copy for the vendor hands the whole page over as text.
 export function QueryScreen() {
   const params = useParams()
   const id = Number(params.id)
@@ -170,7 +175,7 @@ function SummaryLine({ detail: d }: { detail: QueryDetail }) {
         {d.source === "plan-cache" && s.window ? ` (${s.window})` : ""} · as of {formatWhen(d.capturedAt)}
         {d.serverName ? ` · ${d.serverName}` : ""}
       </p>
-      {s.runs > 0 && (
+      {s.runs > 0 && !d.verdict && (
         <dl className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
           <Fact label="Runs" value={formatWhole(s.runs)} />
           <Fact label="Average" value={formatMs(s.avgDurationMs)} />
@@ -192,16 +197,30 @@ function Fact({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+function Section({ title, note, more, children }: { title: string; note?: string; more?: ReactNode; children: ReactNode }) {
   return (
     <section className="grid gap-3 min-w-0" aria-label={title}>
-      <div className="grid gap-0.5">
-        <h2 className="font-medium">{title}</h2>
-        {note && <p className="text-sm text-muted-foreground">{note}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="grid gap-0.5 min-w-0">
+          <h2 className="font-medium">{title}</h2>
+          {note && <p className="text-sm text-muted-foreground">{note}</p>}
+        </div>
+        {more}
       </div>
       {children}
     </section>
   )
+}
+
+// A link that shows or hides the detail under it ("Show hours", "Show all plans", "Show waits").
+function useShow(): [boolean, (label: string) => ReactNode] {
+  const [shown, setShown] = useState(false)
+  const toggle = (label: string) => (
+    <button type="button" className="text-sm text-primary hover:underline" onClick={() => setShown((x) => !x)} aria-expanded={shown}>
+      {shown ? `Hide ${label}` : `Show ${label}`}
+    </button>
+  )
+  return [shown, toggle]
 }
 
 function QueryBody({
@@ -213,34 +232,29 @@ function QueryBody({
   loading: boolean
   onAction: (a: QueryAction) => void
 }) {
+  const v = d.verdict
+  const [open, setOpen] = useState(!v || v.verdict !== "faster")
+  const [hoursShown, hoursToggle] = useShow()
+  const [plansShown, plansToggle] = useShow()
+  const [waitsShown, waitsToggle] = useShow()
+  const timeline = shownPlans(d)
+  const hidden = d.plans.length - timeline.length
   return (
     <div className={loading ? "grid gap-6 opacity-60 transition-opacity" : "grid gap-6"}>
-      <Section title="What it means">
-        <ExplainList detail={d} onAction={onAction} />
-      </Section>
-
-      {d.text && <StatementBlock label="Query text" text={d.text} />}
-
-      <Section
-        title="Plans"
-        note="Every plan SQL Server kept for this query. Forcing a plan makes SQL Server use it; removing one from the cache makes the next run compile a fresh one."
-      >
-        <PlansTable detail={d} onAction={onAction} />
-      </Section>
-
-      {d.plans.length > 0 && (
-        <Section title="What the plan says">
-          <PlanSays detail={d} onAction={onAction} />
-        </Section>
-      )}
+      {v ? <VerdictCard verdict={v} text={d.text} /> : d.text && <StatementBlock label="Query text" text={d.text} />}
 
       {d.history.length > 0 ? (
-        <Section title="History" note="Runs per hour over the last 7 days, newest first, with the plan that ran.">
-          <HistoryTable hours={d.history} />
+        <Section
+          title="Over time"
+          note="Each bar is one hour of the last 7 days. Top: the CPU it used. Bottom: how many times it ran."
+          more={hoursToggle("hours")}
+        >
+          <HistoryChart detail={d} />
+          {hoursShown && <HistoryTable hours={d.history} />}
         </Section>
       ) : (
         d.source !== "query-store" && (
-          <Section title="History">
+          <Section title="Over time">
             <p className="rounded-xl border border-dashed p-4 text-muted-foreground">
               No history: it comes from Query Store, which has nothing on this query in {d.database}.
             </p>
@@ -248,9 +262,56 @@ function QueryBody({
         )
       )}
 
+      <details className="rounded-xl border p-4 min-w-0" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+        <summary className="flex cursor-pointer flex-wrap items-baseline gap-x-2">
+          <h2 className="font-medium">How it works</h2>
+          <span className="text-sm text-muted-foreground">what SQL Server did with this query, step by step</span>
+        </summary>
+        <div className="mt-4 grid gap-6">
+      <Section title="What it means">
+        <ExplainList detail={d} onAction={onAction} />
+      </Section>
+
+      {v && timeline.length > 0 ? (
+        <Section
+          title="The plans SQL Server used"
+          note="A plan is the recipe SQL Server picks to run a query: which tables to read first and which indexes to use. When the data, its statistics or its indexes change, it can pick a new one."
+        >
+          <PlanTimeline detail={d} />
+          <p className="text-sm text-muted-foreground">
+            {hidden > 0 ? `${hidden} more ${hidden === 1 ? "plan" : "plans"} ran under five times or not at all this week. ` : ""}
+            {plansToggle("all plans")}
+          </p>
+          {plansShown && (
+            <>
+              <PlansTable detail={d} onAction={onAction} />
+              <PlanSays detail={d} onAction={onAction} />
+            </>
+          )}
+        </Section>
+      ) : (
+        <>
+          <Section
+            title="Plans"
+            note="Every plan SQL Server kept for this query. Forcing a plan makes SQL Server use it; removing one from the cache makes the next run compile a fresh one."
+          >
+            <PlansTable detail={d} onAction={onAction} />
+          </Section>
+          {d.plans.length > 0 && (
+            <Section title="What the plan says">
+              <PlanSays detail={d} onAction={onAction} />
+            </Section>
+          )}
+        </>
+      )}
+
       {d.waits.length > 0 && (
-        <Section title="Waits" note="Where the time went when the query was not working, over the last 7 days.">
-          <WaitsList detail={d} />
+        <Section
+          title="Where it waited"
+          note="Its waiting over the last 7 days, added up over every thread, so it can be more than its time. What it means above says what it tells."
+          more={waitsToggle("waits")}
+        >
+          {waitsShown && <WaitsList detail={d} />}
         </Section>
       )}
 
@@ -268,6 +329,9 @@ function QueryBody({
           <TablesTable detail={d} onAction={onAction} />
         </Section>
       )}
+
+        </div>
+      </details>
 
       {d.notes.length > 0 && (
         <Alert>

@@ -226,6 +226,14 @@ type TopQuery struct {
 	// five times (item 19).
 	Plans       int
 	LowRunPlans int
+
+	// Phase 5j (Query Store only): when the plan in use began (UTC; nil when unknown), and the runs
+	// and CPU (microseconds) before and since, every plan together.
+	Since      *time.Time
+	BeforeRuns int64
+	BeforeCPU  int64
+	NowRuns    int64
+	NowCPU     int64
 }
 
 // Query sources of QRY01.
@@ -1544,6 +1552,17 @@ func (b *perfBuild) qry01() {
 		}
 		rare := q.Execs > 0 && q.Execs <= 10 && sharePct >= 5
 
+		// Phase 5j: the plan in use against the runs before it began (5c's TuningVerdict). A query
+		// that got faster stays in the list as Info, not a thing to do.
+		faster := ""
+		if q.Since != nil && q.BeforeRuns > 0 && q.NowRuns > 0 {
+			before, now := float64(q.BeforeCPU)/float64(q.BeforeRuns)/1000, float64(q.NowCPU)/float64(q.NowRuns)/1000
+			if TuningVerdict(q.BeforeRuns, q.NowRuns, before, now) == VerdictFaster {
+				at := q.Since.Add(time.Duration(f.UTCOffsetMinutes) * time.Minute).Format("2 Jan 15:04")
+				faster = fmt.Sprintf("Faster since %s: %s of CPU a run, was %s. Nothing to do. ", at, QueryDuration(now), QueryDuration(before))
+			}
+		}
+
 		share := pct1(sharePct)
 		s := "Uses " + share + "% of all query CPU on the server: "
 		if f.QuerySource == QuerySourceQueryStore {
@@ -1665,13 +1684,17 @@ func (b *perfBuild) qry01() {
 		if varies || conversion != "" || len(flags) > 0 || waits || q.Variants >= 50 || spills || grant || unstable || archiveFirst {
 			sev = SeverityLow
 		}
+		if faster != "" {
+			s, sev = faster+s, SeverityInfo
+			do = "Nothing: it got faster. Open the query to see what changed."
+		}
 		object := q.ObjectName
 		if object == "" {
 			object = f.Database
 		}
 		b.add("QRY01", sev, WhenDecideFirst, EffortModerate, clock, object, s, qry01Why, do, ev)
 		// The archive fix, as IDX10's finding carries it: only for a table with a date column.
-		if archiveFirst && archive.DateCol != "" {
+		if archiveFirst && archive.DateCol != "" && faster == "" {
 			b.findings[len(b.findings)-1].FixID = FixArchiveTable
 		}
 	}

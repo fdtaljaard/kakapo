@@ -1201,3 +1201,23 @@ func TestAvailablePerformanceFixes(t *testing.T) {
 		t.Errorf("no findings: %+v", got)
 	}
 }
+
+// Phase 5j: a query whose plan in use is faster than the runs before it began stays as Info, said
+// first; one that did not get faster keeps its severity.
+func TestPerformanceQRY01Faster(t *testing.T) {
+	since := time.Date(2026, 11, 4, 13, 34, 0, 0, time.UTC)
+	q := TopQuery{QueryHash: "0xDE", Text: "SELECT * FROM v ORDER BY Barcode", CPU: 24400000000, Execs: 343, Reads: 605000000,
+		MinReads: 8504, MaxReads: 3416696, MaxCPU: 193000000, Elapsed: 4100000000, Variants: 4, Minutes: 9200,
+		Since: &since, BeforeRuns: 255, BeforeCPU: 255 * 95600000, NowRuns: 88, NowCPU: 88 * 10000}
+	_, fs, _ := runPerf(qsFacts(q))
+	x := one(t, fs, "QRY01")
+	if x.Severity != SeverityInfo || !strings.HasPrefix(x.Finding, "Faster since 4 Nov 15:34: 10 ms of CPU a run, was 96 s. Nothing to do. Uses ") ||
+		x.DoThis != "Nothing: it got faster. Open the query to see what changed." {
+		t.Errorf("faster %+v", x)
+	}
+	q.NowCPU = 88 * 95000000
+	_, fs, _ = runPerf(qsFacts(q))
+	if x := one(t, fs, "QRY01"); x.Severity != SeverityLow || strings.HasPrefix(x.Finding, "Faster") {
+		t.Errorf("same %+v", x)
+	}
+}
