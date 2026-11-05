@@ -45,9 +45,11 @@ func benignValues() string {
 // their timeouts (PRS02), the load per database (SRV04), this database's missing index suggestions,
 // the CPU history of the last four hours (WRK08) and the database's READ COMMITTED SNAPSHOT setting.
 // Every area is read in its own TRY, so a missing permission gives that area's error column, not a
-// failed read. SELECTs only. Result sets: one row of facts, then the waits, the head blockers, the
-// open transactions, the idle sessions with a transaction, the load per database, the missing
-// indexes, the CPU history and the largest memory grants held now.
+// failed read. SELECTs only. The head blockers (ACT01), the schedulers and the memory grants (PRS01)
+// are the live fragment the load strip runs too (live.go, docs/phase5i-contract.md). Result sets: one
+// row of facts (the live columns last), then the waits, the open transactions, the idle sessions with
+// a transaction, the load per database, the missing indexes, the CPU history, and the live fragment's
+// two: the head blockers and the largest memory grants held now.
 //
 // Source: DarlingData sp_PressureDetector/sp_PressureDetector.sql 3930-3960 (MIT): the scheduler
 // monitor ring buffer XPaths and the other-processes arithmetic of WRK08.
@@ -100,35 +102,6 @@ BEGIN CATCH
     SET @countersError = ERROR_MESSAGE();
 END CATCH;
 
-/* ACT01 Head blockers right now, across the instance; a blocker blocked only by itself (its own parallel threads,
-   blocking_session_id = session_id) is still a head blocker */
-DECLARE @blockers TABLE (session_id int NOT NULL, blocked int NOT NULL, longest_sec bigint NOT NULL, database_name nvarchar(128) NULL,
-                         login_name nvarchar(128) NULL, host_name nvarchar(128) NULL, program_name nvarchar(128) NULL,
-                         status nvarchar(30) NULL, open_tran int NULL, last_stmt nvarchar(4000) NULL, self_blocked bit NOT NULL);
-DECLARE @blockingError nvarchar(2048);
-IF @vss = 0 SET @blockingError = @noVss;
-ELSE
-BEGIN TRY
-    INSERT @blockers (session_id, blocked, longest_sec, database_name, login_name, host_name, program_name, status, open_tran, last_stmt, self_blocked)
-    SELECT s.session_id, b.Blocked, b.LongestSec, b.DbName, s.login_name, s.host_name, s.program_name, s.status, s.open_transaction_count,
-           LEFT(q.text, 4000),
-           CASE WHEN EXISTS (SELECT 1 FROM sys.dm_exec_requests r3 WHERE r3.session_id = b.Blocker AND r3.blocking_session_id = r3.session_id)
-                THEN 1 ELSE 0 END
-    FROM (SELECT r.blocking_session_id AS Blocker, COUNT(*) AS Blocked, MAX(r.wait_time) / 1000 AS LongestSec,
-                 MAX(DB_NAME(r.database_id)) AS DbName
-          FROM sys.dm_exec_requests r
-          WHERE r.blocking_session_id > 0 AND r.blocking_session_id <> r.session_id
-          GROUP BY r.blocking_session_id) b
-    JOIN sys.dm_exec_sessions s ON s.session_id = b.Blocker
-    OUTER APPLY (SELECT TOP (1) t.text FROM sys.dm_exec_connections c CROSS APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) t
-                 WHERE c.session_id = s.session_id) q
-    WHERE NOT EXISTS (SELECT 1 FROM sys.dm_exec_requests r2
-                      WHERE r2.session_id = b.Blocker AND r2.blocking_session_id > 0 AND r2.blocking_session_id <> r2.session_id);
-END TRY
-BEGIN CATCH
-    SET @blockingError = ERROR_MESSAGE();
-END CATCH;
-
 /* ACT02 Transactions open more than 5 minutes in this database; WRK07 sessions sleeping with one, instance-wide */
 DECLARE @open TABLE (session_id int NOT NULL, login_name nvarchar(128) NULL, host_name nvarchar(128) NULL, program_name nvarchar(128) NULL,
                      status nvarchar(30) NULL, minutes int NOT NULL, started datetime NULL, log_bytes bigint NULL, last_stmt nvarchar(4000) NULL);
@@ -165,57 +138,7 @@ BEGIN CATCH
     SET @transError = ERROR_MESSAGE();
 END CATCH;
 
-/* PRS01 Worker threads and schedulers right now (sp_PressureDetector's reads) */
-DECLARE @maxWorkers int, @curWorkers int, @online int, @runnable int, @busy int, @maxRunnable int, @offline int,
-        @workQueue bigint, @affinity nvarchar(60), @schedError nvarchar(2048);
-IF @vss = 0 SET @schedError = @noVss;
-ELSE
-BEGIN TRY
-    SELECT @maxWorkers  = MAX(osi.max_workers_count),
-           @curWorkers  = SUM(CASE WHEN dos.status = N'VISIBLE ONLINE' THEN dos.current_workers_count ELSE 0 END),
-           @online      = SUM(CASE WHEN dos.status = N'VISIBLE ONLINE' THEN 1 ELSE 0 END),
-           @runnable    = SUM(CASE WHEN dos.status = N'VISIBLE ONLINE' THEN dos.runnable_tasks_count ELSE 0 END),
-           @busy        = SUM(CASE WHEN dos.status = N'VISIBLE ONLINE' AND dos.runnable_tasks_count > 0 THEN 1 ELSE 0 END),
-           @maxRunnable = MAX(CASE WHEN dos.status = N'VISIBLE ONLINE' THEN dos.runnable_tasks_count ELSE 0 END),
-           @offline     = SUM(CASE WHEN dos.status = N'VISIBLE OFFLINE' THEN 1 ELSE 0 END),
-           @workQueue   = SUM(CASE WHEN dos.status = N'VISIBLE ONLINE' THEN CONVERT(bigint, dos.work_queue_count) ELSE 0 END),
-           @affinity    = MAX(CONVERT(nvarchar(60), osi.affinity_type_desc))
-    FROM sys.dm_os_schedulers AS dos
-    CROSS JOIN sys.dm_os_sys_info AS osi;
-END TRY
-BEGIN CATCH
-    SET @schedError = ERROR_MESSAGE();
-END CATCH;
-
-/* PRS01 Memory grants: waiting now, and forced since the restart; PRS02 grant timeouts since the restart (error 8645);
-   the three largest grants held right now, read only when queries wait for memory (sp_PressureDetector's read) */
-DECLARE @gWaiting bigint, @gGranted bigint, @gForced bigint, @gTimeouts bigint, @grantsError nvarchar(2048);
-DECLARE @holders TABLE (session_id int NOT NULL, granted_kb bigint NULL, requested_kb bigint NULL, wait_ms bigint NULL, stmt nvarchar(200) NULL);
-IF @vss = 0 SET @grantsError = @noVss;
-ELSE
-BEGIN TRY
-    SELECT @gWaiting = SUM(CONVERT(bigint, waiter_count)), @gGranted = SUM(CONVERT(bigint, grantee_count)),
-           @gForced = SUM(CONVERT(bigint, forced_grant_count))
-    FROM sys.dm_exec_query_resource_semaphores
-    WHERE max_target_memory_kb IS NOT NULL;
-
-    SELECT @gTimeouts = SUM(CONVERT(bigint, ISNULL(timeout_error_count, 0)))
-    FROM sys.dm_exec_query_resource_semaphores;
-
-    IF @gWaiting > 0
-        INSERT @holders (session_id, granted_kb, requested_kb, wait_ms, stmt)
-        SELECT TOP (3) mg.session_id, mg.granted_memory_kb, mg.requested_memory_kb, mg.wait_time_ms,
-               LEFT(SUBSTRING(t.text, ISNULL(r.statement_start_offset, 0) / 2 + 1, 200), 200)
-        FROM sys.dm_exec_query_memory_grants AS mg
-        LEFT JOIN sys.dm_exec_requests AS r ON r.session_id = mg.session_id AND r.request_id = mg.request_id
-        OUTER APPLY sys.dm_exec_sql_text(mg.sql_handle) AS t
-        WHERE mg.granted_memory_kb IS NOT NULL AND mg.session_id <> @@SPID
-        ORDER BY mg.granted_memory_kb DESC, mg.session_id;
-END TRY
-BEGIN CATCH
-    SET @grantsError = ERROR_MESSAGE();
-END CATCH;
-
+` + liveFragment + `
 /* SRV04 Which databases use the server: query CPU from cached plans, disk reads since the restart */
 DECLARE @load TABLE (db_id int NOT NULL, cpu bigint NOT NULL, read_bytes bigint NOT NULL);
 DECLARE @loadError nvarchar(2048);
@@ -291,21 +214,18 @@ SELECT @found,
        @state, @started, DATEDIFF(HOUR, @started, @now),
        @waitsError,
        ISNULL(@deadlocks, 0), ISNULL(@batches, 0), ISNULL(@compiles, 0), ISNULL(@recompiles, 0), @countersError,
-       @blockingError, @transError,
-       @maxWorkers, @curWorkers, @online, @runnable, @busy, @maxRunnable, @offline, @workQueue, @affinity, @schedError,
-       @gWaiting, @gGranted, @gForced, @grantsError,
+       @transError,
        @loadError, @missingError,
-       @rcsi, ISNULL(@gTimeouts, 0), @cpuError,
-       @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET());
+       @rcsi, @cpuError,
+       @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET()),
+       ` + liveColumns + `;
 SELECT wait_type, wait_ms, signal_ms, tasks, max_ms FROM @waits ORDER BY wait_ms DESC;
-SELECT session_id, blocked, longest_sec, database_name, login_name, host_name, program_name, status, open_tran, last_stmt, self_blocked
-FROM @blockers ORDER BY longest_sec DESC, session_id;
 SELECT session_id, login_name, host_name, program_name, status, minutes, started, log_bytes, last_stmt FROM @open ORDER BY started, session_id;
 SELECT session_id, login_name, host_name, program_name, minutes, implicit FROM @idle ORDER BY began, session_id;
 SELECT db_id, ISNULL(DB_NAME(db_id), N'database ' + CONVERT(nvarchar(10), db_id)), cpu, read_bytes FROM @load ORDER BY cpu DESC, read_bytes DESC;
 SELECT statement, equality, inequality, included, uses, impact, score, last_seek FROM @missing ORDER BY score DESC;
 SELECT at, sql_pct, idle_pct FROM @cpu ORDER BY at;
-SELECT session_id, granted_kb, requested_kb, wait_ms, stmt FROM @holders ORDER BY granted_kb DESC, session_id;`)
+` + liveResultSets)
 
 // planLimitChars is the size of plan XML the app still reads for warnings: 2 MB of text.
 const planLimitChars = 2 * 1024 * 1024
@@ -537,26 +457,22 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 		return errors.New("SQL Server returned no performance facts")
 	}
 	var (
-		found, rcsi                                         bool
-		state, waitsErr, countersErr, blockingErr, transErr sql.NullString
-		affinity, schedErr, grantsErr, loadErr, missingErr  sql.NullString
-		cpuErr                                              sql.NullString
-		started                                             sql.NullTime
-		uptime                                              sql.NullInt32
-		maxW, curW, online, runnable, busy, maxRun, offline sql.NullInt32
-		workQueue, gWaiting, gGranted, gForced              sql.NullInt64
-		deadlocks, batches, compiles, recompiles, gTimeouts int64
+		found, rcsi                              bool
+		state, waitsErr, countersErr, transErr   sql.NullString
+		loadErr, missingErr, cpuErr              sql.NullString
+		started                                  sql.NullTime
+		uptime                                   sql.NullInt32
+		deadlocks, batches, compiles, recompiles int64
+		live                                     liveRow
 	)
-	if err := rows.Scan(&found, &f.ServerName, &f.ProductVersion, &f.EngineEdition,
+	if err := rows.Scan(append([]any{&found, &f.ServerName, &f.ProductVersion, &f.EngineEdition,
 		&state, &started, &uptime,
 		&waitsErr,
 		&deadlocks, &batches, &compiles, &recompiles, &countersErr,
-		&blockingErr, &transErr,
-		&maxW, &curW, &online, &runnable, &busy, &maxRun, &offline, &workQueue, &affinity, &schedErr,
-		&gWaiting, &gGranted, &gForced, &grantsErr,
+		&transErr,
 		&loadErr, &missingErr,
-		&rcsi, &gTimeouts, &cpuErr,
-		&f.ServerNow, &f.UTCOffsetMinutes); err != nil {
+		&rcsi, &cpuErr,
+		&f.ServerNow, &f.UTCOffsetMinutes}, live.dest()...)...); err != nil {
 		return fmt.Errorf("read the performance facts of %s: %w", database, err)
 	}
 	if !found {
@@ -570,18 +486,9 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 	f.UptimeHours = int(uptime.Int32)
 	f.WaitsError = waitsErr.String
 	f.Deadlocks, f.Batches, f.Compiles, f.Recompiles, f.CountersError = deadlocks, batches, compiles, recompiles, countersErr.String
-	f.BlockingError, f.TransactionsError = blockingErr.String, transErr.String
-	f.SchedulersError = schedErr.String
-	if f.SchedulersError == "" {
-		f.Schedulers = &domain.SchedulerLoad{MaxWorkers: int(maxW.Int32), CurrentWorkers: int(curW.Int32), OnlineSchedulers: int(online.Int32),
-			RunnableTasks: int(runnable.Int32), BusySchedulers: int(busy.Int32), MaxRunnable: int(maxRun.Int32),
-			OfflineSchedulers: int(offline.Int32), WorkQueue: workQueue.Int64, AffinityManual: strings.EqualFold(affinity.String, "MANUAL")}
-	}
-	f.GrantsError = grantsErr.String
-	if f.GrantsError == "" {
-		f.Grants = &domain.MemoryGrants{Waiting: gWaiting.Int64, Granted: gGranted.Int64, Forced: gForced.Int64, Timeouts: gTimeouts,
-			Holders: []domain.GrantHolder{}}
-	}
+	f.TransactionsError = transErr.String
+	// ACT01 and PRS01: the live fragment's values, read as the load strip reads them.
+	live.apply(f)
 	f.LoadError, f.MissingIndexError = loadErr.String, missingErr.String
 	f.CPUHistoryError = cpuErr.String
 
@@ -596,23 +503,6 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 			return err
 		}
 		f.Waits = append(f.Waits, w)
-	}
-
-	// Head blockers.
-	if err := nextResultSet(rows, "blockers"); err != nil {
-		return err
-	}
-	f.Blockers = []domain.Blocker{}
-	for rows.Next() {
-		var x domain.Blocker
-		var dbName, login, host, program, status, last sql.NullString
-		var openTran sql.NullInt32
-		if err := rows.Scan(&x.Session, &x.Blocked, &x.LongestSec, &dbName, &login, &host, &program, &status, &openTran, &last, &x.SelfBlocked); err != nil {
-			return err
-		}
-		x.Database, x.Login, x.Host, x.Program, x.Status = dbName.String, login.String, host.String, program.String, status.String
-		x.OpenTran, x.LastStatement = int(openTran.Int32), last.String
-		f.Blockers = append(f.Blockers, x)
 	}
 
 	// Open transactions in this database.
@@ -695,21 +585,9 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 		f.CPUHistory = append(f.CPUHistory, x)
 	}
 
-	// The largest memory grants held right now, when queries wait for memory.
-	if err := nextResultSet(rows, "memory grant holders"); err != nil {
+	// The head blockers and the largest memory grants held now (the live fragment's result sets).
+	if err := scanLiveSets(rows, f); err != nil {
 		return err
-	}
-	for rows.Next() {
-		var x domain.GrantHolder
-		var granted, requested, wait sql.NullInt64
-		var stmt sql.NullString
-		if err := rows.Scan(&x.Session, &granted, &requested, &wait, &stmt); err != nil {
-			return err
-		}
-		x.GrantedKB, x.RequestedKB, x.WaitMs, x.Statement = granted.Int64, requested.Int64, wait.Int64, stmt.String
-		if f.Grants != nil {
-			f.Grants.Holders = append(f.Grants.Holders, x)
-		}
 	}
 	return friendlyErrOrNil(rows.Err())
 }

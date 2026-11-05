@@ -476,9 +476,8 @@ func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *Deadlo
 		return c, b.findings, b.checks(def.ID, nil, nil)
 	}
 
-	b.prs01()
+	b.live()
 	b.prs02()
-	b.act01()
 	b.act02()
 	if f.WaitsError != "" {
 		b.skip(waitsNotRead+f.WaitsError, "WRK01", "WRK02", "WRK05")
@@ -542,6 +541,22 @@ func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *Deadlo
 	}
 	c.Facts = b.facts()
 	return c, b.findings, checks
+}
+
+// LiveFindings are the live checks' findings, PRS01 and ACT01, ranked: the rules the card runs, from
+// the one function the card calls too (docs/phase5i-contract.md, section 3), so the load strip's minute
+// refresh and the card never disagree.
+func LiveFindings(f PerformanceFacts) []Finding {
+	b := &perfBuild{f: f, findings: []Finding{}, notes: map[string]string{}, skipped: map[string]bool{}}
+	b.live()
+	RankFindings(b.findings)
+	return b.findings
+}
+
+// live runs the live checks: pressure now (PRS01) and blocking now (ACT01).
+func (b *perfBuild) live() {
+	b.prs01()
+	b.act01()
 }
 
 type perfBuild struct {

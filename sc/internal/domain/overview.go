@@ -135,7 +135,10 @@ type Overview struct {
 	// ChangeWindow is the line under Recent changes (docs/phase5f-contract.md); nil when the
 	// instance could not be read.
 	ChangeWindow *ChangeWindow `json:"changeWindow,omitempty"`
-	CheckedAt    time.Time     `json:"checkedAt"`
+	// RedFlags are the cards' findings that are badly wrong right now (docs/phase5i-contract.md,
+	// section 3), built from the findings above with no read of their own.
+	RedFlags  RedFlags  `json:"redFlags"`
+	CheckedAt time.Time `json:"checkedAt"`
 }
 
 // UptimeDays is the time since start in days, to one decimal.

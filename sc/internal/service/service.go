@@ -18,11 +18,12 @@ type Service struct {
 	store *store.Store
 	creds cred.Store
 	runs  *runRegistry // the long fixes running in the background (docs/phase4f-contract.md)
+	loads *loadCache   // the load strip's comparisons (docs/phase5i-contract.md)
 }
 
 // New builds the service.
 func New(st *store.Store, creds cred.Store) *Service {
-	return &Service{store: st, creds: creds, runs: newRunRegistry()}
+	return &Service{store: st, creds: creds, runs: newRunRegistry(), loads: newLoadCache()}
 }
 
 // ListServers returns the registered servers. An empty list means first run.

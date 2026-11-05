@@ -18,7 +18,8 @@ const recentChanges = 10
 // state (stored as a snapshot, as the database list does), its setup, backup, storage, upkeep and
 // performance facts (each card stored as a card read, the storage samples kept; neither the CHECKDB
 // room estimate nor the deadlock report is run here), the six cards about it and its latest changes,
-// with the changes made outside kakapo harvested from the default trace first.
+// with the changes made outside kakapo harvested from the default trace first, and the red flags
+// among the cards' findings.
 // A successful read also updates the server's last build, edition and check time.
 func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (domain.Overview, error) {
 	if strings.TrimSpace(dbName) == "" {
@@ -48,6 +49,8 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	}
 	setupDef, _ := domain.FindCardDef(domain.CardSetup)
 	card, findings, checks := domain.BuildSetupCard(setup, setupDef)
+	// Every card's findings, for the red flags (docs/phase5i-contract.md, section 3): no new read.
+	all := map[domain.CardID][]domain.Finding{domain.CardSetup: findings}
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
@@ -58,6 +61,7 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	}
 	backupsDef, _ := domain.FindCardDef(domain.CardBackups)
 	card, findings, checks = domain.BuildBackupsCard(backups, backupsDef)
+	all[domain.CardBackups] = findings
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
@@ -72,12 +76,14 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	}
 	storageDef, _ := domain.FindCardDef(domain.CardStorage)
 	card, findings, checks = domain.BuildStorageCard(storage, storageDef, lastRoom, trend)
+	all[domain.CardStorage] = findings
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
 	upkeep := readUpkeepFacts(ctx, db, *d)
 	upkeepDef, _ := domain.FindCardDef(domain.CardUpkeep)
 	card, findings, checks = domain.BuildUpkeepCard(upkeep, upkeepDef)
+	all[domain.CardUpkeep] = findings
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
@@ -99,6 +105,7 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		return domain.Overview{}, err
 	}
 	card, findings, checks = domain.BuildPerformanceCard(performance, performanceDef, lastDeadlocks, lastBlocking)
+	all[domain.CardPerformance] = withStoredReports(findings, lastDeadlocks, lastBlocking)
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
@@ -122,8 +129,22 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		Cards:         domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance),
 		RecentChanges: changes,
 		ChangeWindow:  window,
+		RedFlags:      domain.BuildRedFlags(all),
 		CheckedAt:     checkedAt,
 	}, nil
+}
+
+// withStoredReports are the Performance card's findings with DLK01's and BLK01's from the stored
+// deadlock report and blocking history, as the card page shows them.
+func withStoredReports(findings []domain.Finding, deadlocks *domain.DeadlockReport, blocking *domain.BlockingHistory) []domain.Finding {
+	out := append([]domain.Finding{}, findings...)
+	if deadlocks != nil {
+		out = append(out, deadlocks.Findings...)
+	}
+	if blocking != nil {
+		out = append(out, blocking.Findings...)
+	}
+	return out
 }
 
 // ListChanges returns the latest changes made on one database of a server through the app,

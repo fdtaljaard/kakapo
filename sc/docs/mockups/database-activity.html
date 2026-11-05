@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kakapo mockup: the database page's load strip and red flags</title>
+<!--
+  Mockup, revision 2 (2026-11-05, after Francois's feedback): one compact strip above the cards.
+  The load now against the selected days, and red flags only (the most severe findings the cards already
+  rank, plus blocking now). No status words, no costliest queries, no change comparison: those stay in the
+  tuning report and the Performance card.
+  The numbers are made up, shaped like a real Query Store with 15-minute intervals.
+  Hover the bars. Switch 7 / 14 / 30 days: the band is the range of those days at each hour.
+  The switch at the bottom shows the strip with red flags and without.
+  Colours: one series (blue; a bar above the band is full blue, inside it light blue), the band neutral grey,
+  status colours only on the red flags, always with an icon and words. Validated with the dataviz skill's
+  validate_palette.js.
+-->
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page: #fafafa; --card: #ffffff; --border: #e5e5e5; --fg: #171717; --fg2: #52514e; --muted: #898781;
+    --base: #c3c2b7; --bar: #2a78d6; --bar-soft: #86b6ef; --band: #ecebe6; --band-line: #a3a29c;
+    --good: #0ca30c; --serious: #ec835a; --crit: #d03b3b; --flag-bg: #fdf1f0;
+    font-family: "Geist", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --page: #0a0a0a; --card: #1a1a19; --border: #2c2c2a; --fg: #f0efec; --fg2: #c3c2b7; --muted: #898781;
+      --base: #383835; --bar: #3987e5; --bar-soft: #1c5cab; --band: #2a2a28; --band-line: #6b6a65; --flag-bg: #2a1a19;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root { background: var(--page); color: var(--fg); font-size: 14px; line-height: 1.45; min-height: 100vh; }
+  .page { max-width: 1120px; margin: 0 auto; padding: 20px 20px 48px; display: grid; gap: 16px; }
+  .crumbs { color: var(--muted); font-size: 13px; }
+  .crumbs b { color: var(--fg); font-weight: 500; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .btn { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; padding: 3px 9px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+
+  .strip { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: grid; gap: 10px; min-width: 0; }
+  .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; }
+  .top .title { font-weight: 600; }
+  .fig { display: inline-flex; align-items: baseline; gap: 6px; }
+  .fig b { font-size: 17px; font-weight: 600; }
+  .fig .n { color: var(--muted); font-size: 12px; }
+  .grow { flex: 1 1 auto; }
+  .live { color: var(--muted); font-size: 12px; }
+  .live i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 5px; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--fg2); padding: 3px 9px; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: var(--fg); color: var(--card); }
+
+  .plot { position: relative; display: flex; align-items: stretch; border-bottom: 1px solid var(--base); height: 64px; }
+  .col { position: relative; flex: 1 1 0; min-width: 0; }
+  .col .band { position: absolute; left: 0; right: 0; background: var(--band); }
+  .col .med { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid var(--band-line); }
+  .col .bar { position: absolute; bottom: 0; left: 1px; right: 1px; border-radius: 2px 2px 0 0; background: var(--bar-soft); }
+  .col .bar.out { background: var(--bar); }
+  .col .bar.now { background: transparent; border: 1.5px solid var(--bar); border-bottom: 0; }
+  .now-line { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--muted); pointer-events: none; }
+  .axis { position: relative; height: 16px; color: var(--muted); font-size: 11px; }
+  .axis span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
+  .key { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .key span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 11px; height: 9px; border-radius: 2px; display: inline-block; }
+
+  .flags { display: grid; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .flag { display: flex; align-items: flex-start; gap: 8px; }
+  .flag .ic { flex: none; width: 18px; height: 18px; border-radius: 50%; color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .flag .txt { flex: 1 1 auto; min-width: 0; }
+  .flag .txt b { font-weight: 600; }
+  .flag .src { color: var(--muted); font-size: 12px; }
+  .ok { color: var(--fg2); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .ok .ic { width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: #fff; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; opacity: .45; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; height: 110px; }
+  .demo { color: var(--muted); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--card); font-size: 12px; padding: 5px 8px; border-radius: 6px; max-width: 280px; display: none; z-index: 10; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<div class="page">
+
+  <div class="crumbs">Instances / SQL-PROD01 / <b>OrdersDB</b></div>
+  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    <div><h1>OrdersDB</h1><div class="sub">SQL-PROD01 · SQL Server 2022 · checked 10:38</div></div>
+    <div><button class="btn" style="padding:6px 12px;font-size:13px">Check again</button></div>
+  </div>
+
+  <!-- ===================== THE STRIP ===================== -->
+  <section class="strip" aria-label="Load and red flags">
+    <div class="top">
+      <span class="title">Load now</span>
+      <span class="fig" title="CPU this database's queries used in the last 30 minutes"><b>1.7</b> of 8 cores <span class="n">usual 0.8–1.2</span></span>
+      <span class="fig"><b>171k</b> queries an hour <span class="n">usual 150k–180k</span></span>
+      <span class="fig" title="Threads waiting on average, mostly parallelism"><b>11</b> threads waiting <span class="n">usual 6–9</span></span>
+      <span class="grow"></span>
+      <span class="live"><i></i>10:41 · every minute</span>
+      <div class="seg" role="group" aria-label="Compare with">
+        <button data-d="7" class="on">7 days</button><button data-d="14">14 days</button><button data-d="30">30 days</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="plot" id="plot"></div>
+      <div class="axis" id="axis"></div>
+      <div class="key">
+        <span><span class="sw" style="background:var(--bar-soft)"></span>today</span>
+        <span><span class="sw" style="background:var(--bar)"></span>today, above the usual range</span>
+        <span><span class="sw" style="background:var(--band)"></span><span id="bandKey">range of the last 7 working days at that hour</span></span>
+      </div>
+    </div>
+
+    <div class="flags" id="flags"></div>
+  </section>
+
+  <div class="demo">Mockup only:
+    <button class="btn" id="withFlags">With red flags</button><button class="btn" id="noFlags">No red flags</button>
+  </div>
+
+  <div class="cards">
+    <div class="card"><b>Setup</b></div><div class="card"><b>Backups</b></div><div class="card"><b>Storage</b></div>
+    <div class="card"><b>Upkeep</b></div><div class="card"><b>Performance</b></div><div class="card"><b>Design</b></div>
+  </div>
+</div>
+<div id="tip"></div>
+</div>
+
+<script>
+// ---- made-up data, shaped like a real Query Store ----
+const N = [.12,.12,.13,.12,.12,.30,.32,.38,.90,1.0,1.02,1.05,.85,.90,.92,.90,.86,.40,.32,.30,.22,.16,.14,.18];
+const rnd = (s) => { const x = Math.sin(s * 9301 + 49297) * 233280; return x - Math.floor(x); };
+// a working day's hours: day d's factor, with noise
+const dayHours = (d, f) => N.map((v, h) => v * f * (0.8 + rnd(d * 31 + h) * 0.4));
+const past = Array.from({ length: 22 }, (_, d) => dayHours(d + 1, d === 3 ? 0.25 : 0.85 + rnd(d) * 0.35)); // 22 working days back (30 calendar days)
+const today = N.map((v, h) => h > 10 ? null : v * (h >= 9 ? 1.65 : 1) * (0.9 + rnd(500 + h) * 0.2));
+const NOW_H = 10; // 10:41, the hour in progress
+
+const tip = document.getElementById("tip");
+const showTip = (e, t) => { tip.textContent = t; tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 12, innerWidth - 290) + "px"; tip.style.top = (e.clientY + 14) + "px"; };
+const hideTip = () => { tip.style.display = "none"; };
+const f2 = (v) => v.toFixed(v < 1 ? 2 : 1);
+const median = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+function draw(days) {
+  const n = { 7: 5, 14: 10, 30: 22 }[days]; // working days inside the window
+  // days that were barely used are left out of the range (day 4 back ran a quarter of the usual)
+  const used = past.slice(0, n).filter(d => d.reduce((a, b) => a + b, 0) > 0.5 * median(past.slice(0, n).map(x => x.reduce((a, b) => a + b, 0))));
+  const lo = N.map((_, h) => Math.min(...used.map(d => d[h]))), hi = N.map((_, h) => Math.max(...used.map(d => d[h])));
+  const md = N.map((_, h) => median(used.map(d => d[h])));
+  const top = Math.max(...hi, ...today.filter(v => v !== null)) * 1.08;
+  const pct = (v) => (v / top * 100) + "%";
+  const plot = document.getElementById("plot"), axis = document.getElementById("axis");
+  plot.innerHTML = ""; axis.innerHTML = "";
+  N.forEach((_, h) => {
+    // mockup: before 09:00 today was ordinary, so draw it at the median; from 09:00 it is busier
+    const v = today[h] === null ? null : h < 9 ? md[h] * (0.96 + rnd(700 + h) * 0.08) : today[h], col = document.createElement("div");
+    col.className = "col";
+    col.innerHTML = `<div class="band" style="bottom:${pct(lo[h])};height:${pct(hi[h] - lo[h])}"></div><div class="med" style="bottom:${pct(md[h])}"></div>`;
+    if (v !== null) col.innerHTML += `<div class="bar ${h === NOW_H ? "now" : v > hi[h] ? "out" : ""}" style="height:${pct(v)}"></div>`;
+    const hh = String(h).padStart(2, "0") + ":00";
+    const t = v === null ? `${hh}: not yet · usual ${f2(lo[h])}–${f2(hi[h])} cores`
+      : `${hh}${h === NOW_H ? " (so far)" : ""}: ${f2(v)} cores busy · usual ${f2(lo[h])}–${f2(hi[h])}, median ${f2(md[h])}`;
+    col.onmousemove = (e) => showTip(e, t); col.onmouseleave = hideTip;
+    plot.appendChild(col);
+  });
+  plot.insertAdjacentHTML("beforeend", `<div class="now-line" style="left:${(10.68 / 24 * 100)}%"></div>`);
+  [0, 6, 12, 18].forEach(h => { const s = document.createElement("span"); s.style.left = (h / 24 * 100) + "%"; if (h === 0) s.style.transform = "none"; s.textContent = String(h).padStart(2, "0") + ":00"; axis.appendChild(s); });
+  const left = n - used.length;
+  document.getElementById("bandKey").textContent = `range of the last ${used.length} working days at that hour` + (left ? ` (${left} barely used, left out)` : "");
+}
+
+const FLAGS = [
+  { sev: "crit", icon: "!", text: "<b>Blocking now:</b> 14 sessions have waited 6 minutes behind session 83 (OrdersApp on APP01), which holds a lock on dbo.OrderLine and is doing nothing.", src: "Performance · ACT01", btn: "Open the chain" },
+  { sev: "serious", icon: "!", text: "<b>Low disk space:</b> the log drive L: has 3.1 GB free (4%), and the log file can grow by 8 GB.", src: "Storage · STO01", btn: "Open" },
+  { sev: "serious", icon: "!", text: "<b>Deadlocks:</b> 41 in the last 7 days, 23 of them between dbo.GetOrders and dbo.PostInvoice.", src: "Performance · DLK01", btn: "Open" },
+];
+function flags(on) {
+  const el = document.getElementById("flags");
+  el.innerHTML = on
+    ? FLAGS.map(f => `<div class="flag"><span class="ic" style="background:var(--${f.sev})" aria-label="${f.sev === "crit" ? "Critical" : "High"}">${f.icon}</span><span class="txt">${f.text} <span class="src">${f.src}</span></span><button class="btn">${f.btn}</button></div>`).join("")
+      + `<div class="src" style="padding-left:26px">and 1 more: <a href="#" style="color:inherit">Failed backup job last night</a></div>`
+    : `<div class="ok"><span class="ic">✓</span>No red flags: nothing blocked, no deadlocks or failures above the cards' limits, space and backups fine.</div>`;
+}
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".seg button").forEach(x => x.classList.toggle("on", x === b)); draw(+b.dataset.d);
+});
+document.getElementById("withFlags").onclick = () => flags(true);
+document.getElementById("noFlags").onclick = () => flags(false);
+draw(7); flags(true);
+</script>
+</body>
+</html>

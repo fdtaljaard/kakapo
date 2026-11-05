@@ -2277,6 +2277,8 @@ function buildOverview(srv: Server, db: DatabaseStatus): Overview {
     cards: buildCards(info, db),
     // Phase 5c: the tuning fixture's change and the changes recorded by hand (api-tuning.mock.ts).
     recentChanges: withRecordedChanges(changesFor(srv, db.name, 10), srv.id, db.name),
+    // Phase 5i: the mock has no load route, so no red flags either.
+    redFlags: { flags: [], more: 0, rest: [] },
     checkedAt: now(),
   }
 }

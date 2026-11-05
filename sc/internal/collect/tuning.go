@@ -16,6 +16,18 @@ import (
 // column, the 2017 wait view behind its OBJECT_ID guard, every batch tagged. Times are the server's
 // clock: SWITCHOFFSET to the server's current UTC offset, rounded down to the hour, as the toolkit.
 
+// queryStoreHoursTable and queryStoreHours are the hour bucket the tuning report and the load strip
+// share (docs/phase5i-contract.md, section 2), so an hour is bucketed one way only: #int holds every
+// Query Store interval that ends after @from (a datetimeoffset), with its start on the server's clock
+// (SWITCHOFFSET to @offset, the server's current UTC offset) and the hour it falls in, rounded down.
+const queryStoreHoursTable = `CREATE TABLE #int (interval_id bigint NOT NULL PRIMARY KEY, local_start datetime NOT NULL, hour_start datetime NOT NULL);`
+
+const queryStoreHours = `INSERT #int (interval_id, local_start, hour_start)
+    SELECT i.runtime_stats_interval_id, CONVERT(datetime, SWITCHOFFSET(i.start_time, @offset)),
+           DATEADD(HOUR, DATEDIFF(HOUR, 0, CONVERT(datetime, SWITCHOFFSET(i.start_time, @offset))), 0)
+    FROM sys.query_store_runtime_stats_interval AS i
+    WHERE i.end_time > @from;`
+
 // tuningRegressionRule is the toolkit's rule 4 (TuningReport.sql, result 4) with domain's
 // thresholds, so the read and the domain test share one set of numbers: the newest plan (by first
 // seen, then plan id) ran at least 50 times and uses at least 1.5 x the CPU per run of the previous
@@ -41,7 +53,7 @@ DECLARE @state nvarchar(60), @interval int, @waitCapture nvarchar(60), @oldest d
         @regErr nvarchar(2048), @failErr nvarchar(2048),
         @offset int = DATEPART(TZOFFSET, SYSDATETIMEOFFSET()), @now datetime = GETDATE(),
         @from datetimeoffset = DATEADD(DAY, -@days, SYSDATETIMEOFFSET());
-CREATE TABLE #int (interval_id bigint NOT NULL PRIMARY KEY, local_start datetime NOT NULL, hour_start datetime NOT NULL);
+` + queryStoreHoursTable + `
 CREATE TABLE #rs (interval_id bigint NOT NULL, plan_id bigint NOT NULL, exec_type tinyint NOT NULL, execs bigint NOT NULL, cpu float NOT NULL,
                   reads float NOT NULL, duration float NOT NULL, last_run datetime NULL);
 CREATE TABLE #hours (hour_start datetime NOT NULL PRIMARY KEY, execs bigint NULL, cpu bigint NULL, reads bigint NULL, duration bigint NULL,
@@ -77,11 +89,7 @@ END CATCH;
 /* Hours: every plan's runtime per interval in the window, summed per hour of the server's clock */
 IF @aboutErr IS NULL
 BEGIN TRY
-    INSERT #int (interval_id, local_start, hour_start)
-    SELECT i.runtime_stats_interval_id, CONVERT(datetime, SWITCHOFFSET(i.start_time, @offset)),
-           DATEADD(HOUR, DATEDIFF(HOUR, 0, CONVERT(datetime, SWITCHOFFSET(i.start_time, @offset))), 0)
-    FROM sys.query_store_runtime_stats_interval AS i
-    WHERE i.end_time > @from;
+    ` + queryStoreHours + `
 
     INSERT #rs (interval_id, plan_id, exec_type, execs, cpu, reads, duration, last_run)
     SELECT rs.runtime_stats_interval_id, rs.plan_id, rs.execution_type, rs.count_executions,

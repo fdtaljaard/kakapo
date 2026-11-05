@@ -163,7 +163,28 @@ export interface Overview {
   // Phase 5f: the line under Recent changes, how far back changes made outside kakapo are seen; absent
   // when the instance could not be read (docs/phase5f-contract.md).
   changeWindow?: ChangeWindow
+  // Phase 5i: the cards' findings that are badly wrong right now (docs/phase5i-contract.md, section 3).
+  redFlags: RedFlags
   checkedAt: string
+}
+
+// Phase 5i: a finding the cards already raise that is a red flag. to is where its button goes, under the
+// database page ("blocking", "cards/storage"); rank orders the flags (lower first).
+export interface RedFlag {
+  checkId: string
+  card: CardID
+  severity: Severity
+  sentence: string
+  object: string
+  to: string
+  rank: number
+}
+
+// The first three flags, how many more, and those others in order.
+export interface RedFlags {
+  flags: RedFlag[]
+  more: number
+  rest: RedFlag[]
 }
 
 // Phase 5f: "running" (the trace's days), "gap" (the trace turned over between two openings), "off" (the
