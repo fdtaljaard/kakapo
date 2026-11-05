@@ -50,7 +50,8 @@ var tuningRegressionRule = fmt.Sprintf("n.rn = 1 AND n.execs >= %d AND o.cpu_ms 
 var tuningReportQuery = Tag(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @interval int, @waitCapture nvarchar(60), @oldest datetime,
         @aboutErr nvarchar(2048), @hoursErr nvarchar(2048), @waitErr nvarchar(2048), @topErr nvarchar(2048),
-        @regErr nvarchar(2048), @failErr nvarchar(2048),
+        @regErr nvarchar(2048), @failErr nvarchar(2048), @focusErr nvarchar(2048),
+        @rest nvarchar(max), @line nvarchar(max), @p bigint, @n int = 0, @t1 int, @t2 int, @started datetime, @fn int, @pattern nvarchar(4000), @needle nvarchar(4000),
         @offset int = DATEPART(TZOFFSET, SYSDATETIMEOFFSET()), @now datetime = GETDATE(),
         @from datetimeoffset = DATEADD(DAY, -@days, SYSDATETIMEOFFSET());
 ` + queryStoreHoursTable + `
@@ -67,6 +68,7 @@ CREATE TABLE #pp (query_id bigint NOT NULL, plan_id bigint NOT NULL, execs bigin
 CREATE TABLE #reg (query_id bigint NOT NULL, old_plan bigint NOT NULL, old_cpu_ms float NOT NULL, old_execs bigint NOT NULL, new_plan bigint NOT NULL,
                    new_cpu_ms float NOT NULL, new_execs bigint NOT NULL, first_seen datetime NOT NULL);
 CREATE TABLE #fail (query_id bigint NOT NULL, aborted bigint NOT NULL, exceptions bigint NOT NULL, first_failed datetime NULL, last_failed datetime NULL);
+` + tuningFocusTables + `
 
 /* About: Query Store's state, interval and the oldest interval it holds */
 BEGIN TRY
@@ -158,6 +160,8 @@ BEGIN CATCH
     SET @topErr = ERROR_MESSAGE();
 END CATCH;
 
+` + tuningFocusArea + `
+
 /* Plan regressions: queries with more than one plan in the window; the newest plan against the one before */
 IF @aboutErr IS NULL AND @hoursErr IS NULL AND @topErr IS NULL
 BEGIN TRY
@@ -202,7 +206,7 @@ BEGIN CATCH
 END CATCH;
 
 SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)), @state, ISNULL(@interval, 0), @waitCapture, @oldest, @now, @offset,
-       @aboutErr, @hoursErr, @waitErr, @topErr, @regErr, @failErr;
+       @aboutErr, @hoursErr, @waitErr, @topErr, @regErr, @failErr, @focusErr;
 SELECT h.hour_start, ISNULL(h.execs, 0), ISNULL(h.cpu, 0), ISNULL(h.reads, 0), ISNULL(h.duration, 0), ISNULL(h.aborted, 0), ISNULL(h.exceptions, 0),
        ISNULL(w.parallel_sec, 0), ISNULL(w.lock_sec, 0), ISNULL(w.cpu_sec, 0), ISNULL(w.other_sec, 0)
 FROM #hours AS h
@@ -236,7 +240,8 @@ SELECT f.query_id, CONVERT(varchar(18), q.query_hash, 1),
 FROM #fail AS f
 JOIN sys.query_store_query AS q ON q.query_id = f.query_id
 JOIN sys.query_store_query_text AS qt ON qt.query_text_id = q.query_text_id
-ORDER BY f.aborted + f.exceptions DESC;`)
+ORDER BY f.aborted + f.exceptions DESC;
+` + tuningFocusResults)
 
 // serverClockQuery reads the server's clock and its UTC offset, to place a time given in server
 // time (a change recorded by hand).
@@ -246,15 +251,18 @@ var serverClockQuery = Tag(`SELECT GETDATE(), DATEPART(TZOFFSET, SYSDATETIMEOFFS
 // two, as the toolkit's README warns.
 const tuningReadTimeout = 3 * time.Minute
 
-// TuningReport reads the tuning report's facts of one database over the last days (1 to 30). An
-// area that cannot be read carries its reason in the facts; the error is for a batch that could
+// TuningReport reads the tuning report's facts of one database over the last days (1 to 30), and the
+// numbers of the object the centred change touched when focus follows one (docs/phase5h-contract.md).
+// An area that cannot be read carries its reason in the facts; the error is for a batch that could
 // not run at all.
-func TuningReport(ctx context.Context, db *sql.DB, database string, days int) (domain.TuningFacts, error) {
-	f := domain.TuningFacts{Database: database, Days: days}
+func TuningReport(ctx context.Context, db *sql.DB, database string, days int, focus domain.TuningFocusTarget) (domain.TuningFacts, error) {
+	f := domain.TuningFacts{Database: database, Days: days, Focus: focus}
 	ctx, cancel := context.WithTimeout(ctx, tuningReadTimeout)
 	defer cancel()
-	q := Tag(safeSession + "EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt, N'@days int', @days = @days;")
-	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", tuningReportQuery), sql.Named("days", days))
+	q := Tag(safeSession + "EXEC " + domain.QuoteName(database) +
+		".sys.sp_executesql @stmt, N'@days int, @focusKind nvarchar(10), @names nvarchar(max)', @days = @days, @focusKind = @focusKind, @names = @names;")
+	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", tuningReportQuery), sql.Named("days", days),
+		sql.Named("focusKind", focus.Kind), sql.Named("names", focus.FocusNames()))
 	if err != nil {
 		return f, friendlyError(err)
 	}
@@ -265,16 +273,16 @@ func TuningReport(ctx context.Context, db *sql.DB, database string, days int) (d
 		}
 		return f, errors.New("SQL Server returned nothing from Query Store")
 	}
-	var state, waitCapture, aboutErr, hoursErr, waitErr, topErr, regErr, failErr sql.NullString
+	var state, waitCapture, aboutErr, hoursErr, waitErr, topErr, regErr, failErr, focusErr sql.NullString
 	var oldest sql.NullTime
 	var now time.Time
 	if err := rows.Scan(&f.ServerName, &state, &f.IntervalMinutes, &waitCapture, &oldest, &now, &f.UTCOffsetMinutes,
-		&aboutErr, &hoursErr, &waitErr, &topErr, &regErr, &failErr); err != nil {
+		&aboutErr, &hoursErr, &waitErr, &topErr, &regErr, &failErr, &focusErr); err != nil {
 		return f, fmt.Errorf("read the tuning report of %s: %w", database, err)
 	}
 	f.QueryStoreState, f.WaitCapture, f.OldestInterval, f.ServerNow = state.String, waitCapture.String, naivePtr(oldest), naive(now)
 	f.AboutError, f.HoursError, f.WaitsError = aboutErr.String, hoursErr.String, waitErr.String
-	f.ShapesError, f.RegressionsError, f.FailuresError = topErr.String, regErr.String, failErr.String
+	f.ShapesError, f.RegressionsError, f.FailuresError, f.FocusError = topErr.String, regErr.String, failErr.String, focusErr.String
 
 	if err := nextResultSet(rows, "hours"); err != nil {
 		return f, err
@@ -346,7 +354,61 @@ func TuningReport(ctx context.Context, db *sql.DB, database string, days int) (d
 		fl.ObjectName, fl.Text, fl.FirstFailed, fl.LastFailed = object.String, text.String, naivePtr(first), naivePtr(last)
 		f.Failures = append(f.Failures, fl)
 	}
+	if err := readTuningFocus(rows, &f); err != nil {
+		return f, err
+	}
 	return f, friendlyErrOrNil(rows.Err())
+}
+
+// readTuningFocus reads the focus area's three result sets: the objects, their hours, and a view's or
+// an index's queries.
+func readTuningFocus(rows *sql.Rows, f *domain.TuningFacts) error {
+	if err := nextResultSet(rows, "focus objects"); err != nil {
+		return err
+	}
+	f.FocusItems = []domain.TuningFocusItemFact{}
+	for rows.Next() {
+		var it domain.TuningFocusItemFact
+		var objectID sql.NullInt64
+		var created, modified, last, started sql.NullTime
+		var hash, table sql.NullString
+		var indexFound, usageRow int
+		if err := rows.Scan(&it.N, &objectID, &created, &modified, &hash, &table, &indexFound, &usageRow, &it.Seeks, &it.Scans, &it.Lookups,
+			&it.Updates, &last, &started); err != nil {
+			return err
+		}
+		it.ObjectID, it.QueryHash, it.Table = objectID.Int64, hash.String, table.String
+		it.Created, it.Modified, it.LastUse, it.ServerStart = naivePtr(created), naivePtr(modified), naivePtr(last), naivePtr(started)
+		it.IndexFound, it.UsageRow = indexFound == 1, usageRow == 1
+		f.FocusItems = append(f.FocusItems, it)
+	}
+	if err := nextResultSet(rows, "focus hours"); err != nil {
+		return err
+	}
+	f.FocusHours = []domain.TuningFocusHourFact{}
+	for rows.Next() {
+		var h domain.TuningFocusHourFact
+		var hash sql.NullString
+		if err := rows.Scan(&h.N, &hash, &h.Hour, &h.CPU, &h.Runs); err != nil {
+			return err
+		}
+		h.QueryHash, h.Hour = hash.String, naive(h.Hour)
+		f.FocusHours = append(f.FocusHours, h)
+	}
+	if err := nextResultSet(rows, "focus queries"); err != nil {
+		return err
+	}
+	f.FocusQueries = []domain.TuningFocusQueryFact{}
+	for rows.Next() {
+		var q domain.TuningFocusQueryFact
+		var object, text sql.NullString
+		if err := rows.Scan(&q.N, &q.QueryHash, &object, &text); err != nil {
+			return err
+		}
+		q.ObjectName, q.Text = object.String, text.String
+		f.FocusQueries = append(f.FocusQueries, q)
+	}
+	return nil
 }
 
 // ServerClock reads the server's clock (GETDATE, kept naive) and its offset from UTC in minutes.

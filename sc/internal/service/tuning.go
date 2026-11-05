@@ -49,21 +49,41 @@ func (s *Service) TuningReport(ctx context.Context, serverID int64, dbName strin
 		return domain.TuningReport{}, newError(KindConflict, "the tuning report reads Query Store, which needs SQL Server 2016 or later; %s runs %s",
 			srv.Name, domain.ProductName(major))
 	}
-	f, err := collect.TuningReport(ctx, db, d.Name, days)
+	// The changes come first, so the read can follow the object of the change it centres on
+	// (docs/phase5h-contract.md): read with a day to spare on this machine's clock, chosen on it, then
+	// kept to the window on the server's clock once the read has it.
+	window := time.Duration(days) * 24 * time.Hour
+	all, err := s.store.ListChangesSince(ctx, serverID, d.Name, time.Now().UTC().Add(-window-24*time.Hour))
+	if err != nil {
+		return domain.TuningReport{}, err
+	}
+	focus := domain.TuningFocusTarget{}
+	if c := domain.TuningCentreChange(changesSince(all, time.Now().UTC().Add(-window)), changeID); c != nil {
+		focus = domain.TuningFocusFor(*c)
+	}
+	f, err := collect.TuningReport(ctx, db, d.Name, days, focus)
 	if err != nil {
 		return domain.TuningReport{}, newError(KindUnreachable, "could not read Query Store of %s on %s: %v", d.Name, srv.Name, err)
 	}
 
 	// The window in UTC, as the change log keeps its times: the server's clock less its offset.
-	since := f.ServerNow.Add(-time.Duration(f.UTCOffsetMinutes) * time.Minute).Add(-time.Duration(days) * 24 * time.Hour)
-	changes, err := s.store.ListChangesSince(ctx, serverID, d.Name, since)
-	if err != nil {
-		return domain.TuningReport{}, err
-	}
+	since := f.ServerNow.Add(-time.Duration(f.UTCOffsetMinutes) * time.Minute).Add(-window)
+	changes := changesSince(all, since)
 	if changeID > 0 && !hasChange(changes, changeID) {
 		return domain.TuningReport{}, newError(KindNotFound, "change %d is not in the last %d days of %s", changeID, days, d.Name)
 	}
 	return domain.BuildTuningReport(f, changes, domain.TuningOptions{ChangeID: changeID, Business: business, CanChange: d.CanFix()}), nil
+}
+
+// changesSince are the changes at or after since (UTC).
+func changesSince(changes []domain.Change, since time.Time) []domain.Change {
+	out := []domain.Change{}
+	for _, c := range changes {
+		if !c.ChangedAt.Before(since) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func hasChange(changes []domain.Change, id int64) bool {

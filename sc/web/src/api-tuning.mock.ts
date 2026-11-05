@@ -3,6 +3,9 @@ import type {
   HourClass,
   TileTone,
   TuningChange,
+  TuningFocus,
+  TuningFocusNumbers,
+  TuningFocusRow,
   TuningHour,
   TuningLine,
   TuningQuery,
@@ -19,6 +22,9 @@ import type { FeatureMock } from "./api.mock"
 // queries got a new plan 40 minutes after the change; dbo.USP_AUDIT started failing. The browser's clock is
 // the server's. POST .../changes records a change by hand, which then shows as a marker and in Recent
 // changes until the page is reloaded. Set localStorage "mock.tuningFails" to "1" to see the 502.
+// Phase 5h: two more changes seen on the server earlier in the week, each with "Did it help": procedure
+// dbo.USP_PICKING altered three working days ago at 11:10 (20 ms per run before, 8 ms after: faster), and index
+// IX_StockUnit_Barcode created two working days ago at 09:40, which two queries use (22 ms to 0.9 ms per run).
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const reportPath = /^\/api\/servers\/(\d+)\/databases\/([^/?]+)\/tuning(?:\?(.*))?$/
@@ -40,12 +46,22 @@ const weekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6
 
 // The fixture's change: the last working day before today, 14:20.
 function fixtureChangeAt(): Date {
+  return workingDaysAgo(1, 14, 20)
+}
+
+// A working day n working days before today, at a time.
+function workingDaysAgo(n: number, hour: number, minute: number): Date {
   const d = new Date()
-  d.setHours(14, 20, 0, 0)
-  do d.setDate(d.getDate() - 1)
-  while (weekend(d))
+  d.setHours(hour, minute, 0, 0)
+  for (let i = 0; i < n; i++) {
+    do d.setDate(d.getDate() - 1)
+    while (weekend(d))
+  }
   return d
 }
+
+const procedureChangeId = 502
+const indexChangeId = 503
 
 interface MockChange {
   id: number
@@ -56,6 +72,7 @@ interface MockChange {
   changeType: string
   description: string
   byHand: boolean
+  onServer?: boolean
 }
 
 const recorded: MockChange[] = []
@@ -72,7 +89,29 @@ function changesFor(serverId: number, database: string): MockChange[] {
     description: "Statistics on dbo.StockUnit updated with FULLSCAN",
     byHand: false,
   }
-  return [fixture, ...recorded.filter((c) => c.serverId === serverId && c.database === database)].sort(
+  const procedure: MockChange = {
+    id: procedureChangeId,
+    serverId,
+    database,
+    at: workingDaysAgo(3, 11, 10),
+    object: "dbo.USP_PICKING",
+    changeType: "PROCEDURE",
+    description: "Procedure dbo.USP_PICKING altered by CLIENT\\dev on DEV-PC07 (Microsoft SQL Server Management Studio)",
+    byHand: false,
+    onServer: true,
+  }
+  const index: MockChange = {
+    id: indexChangeId,
+    serverId,
+    database,
+    at: workingDaysAgo(2, 9, 40),
+    object: "dbo.StockUnit.IX_StockUnit_Barcode",
+    changeType: "INDEX",
+    description: "Index dbo.StockUnit.IX_StockUnit_Barcode created by CLIENT\\dba on SQL-ADMIN (Microsoft SQL Server Management Studio)",
+    byHand: false,
+    onServer: true,
+  }
+  return [fixture, procedure, index, ...recorded.filter((c) => c.serverId === serverId && c.database === database)].sort(
     (a, b) => b.at.getTime() - a.at.getTime(),
   )
 }
@@ -93,7 +132,7 @@ function asChange(c: MockChange): Change {
     object: c.object,
     changeType: c.changeType,
     description: c.description,
-    result: c.byHand ? recordedByHand : "Updated, statistics now 0 days old",
+    result: c.byHand ? recordedByHand : c.onServer ? "seen on the server" : "Updated, statistics now 0 days old",
   }
 }
 
@@ -312,6 +351,7 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
     parallelThreads: round(h.parSec / 3600, 2),
     lockThreads: round(h.lockSec / 3600, 2),
     failed: h.cls === "business" && h.at > fixtureAt ? 2 : 0,
+    coresBusy: round(h.cpuMs / 3_600_000, 3),
   }))
 
   // The same hour, before and after.
@@ -351,7 +391,7 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
     changeType: c.changeType,
     description: c.description,
     byHand: c.byHand,
-    onServer: false,
+    onServer: !!c.onServer,
     serverLevel: false,
     performance: c.byHand || !["CHECK", "KILL", "JOB", "ALERT", "CLEAR", "ARCHIVE"].includes(c.changeType),
   }))
@@ -396,7 +436,9 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
   ]
 
   const qs = queries(!!centre)
+  const focus = centre ? mockFocus(centre, database, hours, outHours, before, nowHours) : null
   const explain: TuningLine[] = []
+  if (focus?.sentence) explain.push({ text: focus.sentence, queryHash: focus.queryHash || undefined, copy: focus.copy })
   const since = centre ? "since the change" : "in the latest hour"
   if (cpuB !== null && cpuN !== null) {
     const p = Math.round(((cpuN - cpuB) / cpuB) * 100)
@@ -469,8 +511,10 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
     explain,
     notes: [],
     handover: "",
+    focus,
   }
   report.handover = [
+    ...(focus ? [focus.copy.split("\n\n").slice(1).join("\n\n"), ""] : []),
     `Tuning report for ${database} on ${report.serverName}`,
     `Centred on ${report.centre.label}.`,
     `Now: ${nowLabel}.\nBefore: ${beforeLabel}.`,
@@ -485,6 +529,116 @@ function buildReport(serverId: number, database: string, params: URLSearchParams
     ...qs.map((q) => `- ${q.name} (${q.queryHash}): ${q.cpuBeforeMs ?? "-"} ms -> ${q.cpuNowMs ?? "-"} ms; ${q.runsBefore} -> ${q.runsNow} runs; ${q.verdict}`),
   ].join("\n")
   return report
+}
+
+// "Did it help": the procedure's or the index's own hours, from the fixture's hours (the procedure runs 40% of the
+// executions, each index query 5%), compared over the report's Before and Now.
+function mockFocus(centre: MockChange, database: string, hours: Hour[], outHours: TuningHour[], before: Hour[], nowHours: Hour[]): TuningFocus | null {
+  if (centre.id !== procedureChangeId && centre.id !== indexChangeId) return null
+  const isIndex = centre.id === indexChangeId
+  const after = (h: Hour) => h.at.getTime() >= floorHour(centre.at).getTime()
+  const queries = isIndex
+    ? [
+        { hash: "0x3E1A77C09B2D4F60", text: "SELECT su.ID, su.Qty FROM dbo.StockUnit su WHERE su.Barcode = @code", share: 0.05 },
+        { hash: "0x9C40E2B7D1A35F08", text: "UPDATE dbo.StockUnit SET Qty = Qty - @q WHERE Barcode = @code", share: 0.05 },
+      ]
+    : [{ hash: "0x8F3A2C11D07B9E45", text: "", share: 0.4 }]
+  const ms = (h: Hour) => (isIndex ? (after(h) ? 0.9 : 22) : after(h) ? 8 : 20)
+  const runsOf = (h: Hour, share: number) => Math.round(h.execs * share)
+  const sums = (hs: Hour[], share: number) => {
+    const runs = hs.reduce((n, h) => n + runsOf(h, share), 0)
+    const cpu = hs.reduce((n, h) => n + runsOf(h, share) * ms(h), 0)
+    return { runs, cpu, hours: hs.length }
+  }
+  const numbers = (x: { runs: number; cpu: number; hours: number }): TuningFocusNumbers => ({
+    runs: x.runs,
+    hours: x.hours,
+    cpuPerRunMs: x.runs ? round(x.cpu / x.runs, 2) : null,
+    runsPerHour: x.hours ? round(x.runs / x.hours, 1) : null,
+    cpuPerHourMs: x.hours ? round(x.cpu / x.hours, 1) : null,
+  })
+  const share = queries.reduce((n, q) => n + q.share, 0)
+  const b = numbers(sums(before, share))
+  const n = numbers(sums(nowHours, share))
+  const fmt = (v: number | null) => (v === null ? "-" : `${v.toFixed(1)} ms`)
+  const pct = b.cpuPerRunMs && n.cpuPerRunMs ? Math.round(((b.cpuPerRunMs - n.cpuPerRunMs) / b.cpuPerRunMs) * 100) : 0
+  const runsClause = `${isIndex ? "they run" : "it runs"} about as often (${Math.round(n.runsPerHour ?? 0)} runs an hour against ${Math.round(b.runsPerHour ?? 0)})`
+  const sentence = isIndex
+    ? `Since index IX_StockUnit_Barcode was created on dbo.StockUnit on ${when(centre.at)}, the 2 queries that use it take ${fmt(n.cpuPerRunMs)} of CPU per run instead of ${fmt(b.cpuPerRunMs)} (${pct}% less) over ${n.hours} business hours, and ${runsClause}: the change made them cheaper. It was used 1,840 times (1,840 seeks); SQL Server also updates it on every write to dbo.StockUnit (320 updates so far).`
+    : `Since procedure dbo.USP_PICKING was altered on ${when(centre.at)}, it uses ${fmt(n.cpuPerRunMs)} of CPU per run instead of ${fmt(b.cpuPerRunMs)} (${pct}% less) over ${n.hours} business hours, and ${runsClause}: the change made it cheaper.`
+  const focusHours: TuningHour[] = hours.map((h, i) => {
+    const runs = runsOf(h, share)
+    return {
+      ...outHours[i],
+      noData: runs === 0,
+      executions: runs,
+      cpuPerExecMs: runs ? ms(h) : 0,
+      readsPerExec: 0,
+      durationPerExecMs: 0,
+      parallelThreads: 0,
+      lockThreads: 0,
+      failed: 0,
+      coresBusy: round((runs * ms(h)) / 3_600_000, 3),
+    }
+  })
+  const rows: TuningFocusRow[] = isIndex
+    ? queries.map((q) => {
+        const qb = numbers(sums(before, q.share))
+        const qn = numbers(sums(nowHours, q.share))
+        return {
+          name: `the ad hoc query "${q.text.slice(0, 60)}"`,
+          queryHash: q.hash,
+          text: q.text,
+          found: true,
+          note: "",
+          runsBefore: qb.runs,
+          runsNow: qn.runs,
+          cpuBeforeMs: qb.cpuPerRunMs,
+          cpuNowMs: qn.cpuPerRunMs,
+          runsPerHourBefore: qb.runsPerHour ?? 0,
+          runsPerHourNow: qn.runsPerHour ?? 0,
+          verdict: "faster",
+          impactMsPerHour: -round((qb.cpuPerHourMs ?? 0) - (qn.cpuPerHourMs ?? 0), 1),
+        }
+      })
+    : []
+  const block = [
+    `Did it help ${centre.object}?`,
+    `- ${sentence}`,
+    `- CPU per run: ${fmt(b.cpuPerRunMs)} -> ${fmt(n.cpuPerRunMs)} (${b.runs} runs -> ${n.runs} runs); faster`,
+    `- Runs per business hour: ${Math.round(b.runsPerHour ?? 0)} -> ${Math.round(n.runsPerHour ?? 0)}`,
+    `- CPU per business hour: ${fmt(b.cpuPerHourMs)} -> ${fmt(n.cpuPerHourMs)}`,
+  ].join("\n")
+  return {
+    changeId: centre.id,
+    kind: isIndex ? "index" : "module",
+    type: centre.changeType,
+    object: centre.object,
+    found: true,
+    verdict: "faster",
+    sentence: nowHours.length >= 2 ? sentence : "",
+    before: b,
+    now: n,
+    hours: focusHours,
+    index: isIndex
+      ? {
+          table: "dbo.StockUnit",
+          index: "IX_StockUnit_Barcode",
+          used: true,
+          seeks: 1840,
+          scans: 0,
+          lookups: 0,
+          updates: 320,
+          lastUse: stamp(new Date()),
+          since: stamp(centre.at),
+          serverStarted: stamp(new Date(Date.now() - 40 * 24 * HOUR)),
+        }
+      : undefined,
+    queryHash: queries[0].hash,
+    rows,
+    notes: isIndex ? ["A query that reaches the table only through a view or a nested call is not followed."] : [],
+    copy: `${centre.object} in ${database}\nQuery hash of its costliest statement: ${queries[0].hash}\n\n${block}`,
+  }
 }
 
 export const mockTuning: FeatureMock = async (method, path, init) => {

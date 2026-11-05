@@ -143,6 +143,14 @@ type TuningFacts struct {
 
 	FailuresError string
 	Failures      []QueryFailureFact
+
+	// The changed object's own numbers (docs/phase5h-contract.md): what the read followed, and what it
+	// found.
+	Focus        TuningFocusTarget
+	FocusError   string
+	FocusItems   []TuningFocusItemFact
+	FocusHours   []TuningFocusHourFact
+	FocusQueries []TuningFocusQueryFact
 }
 
 // TuningHourFact is one hour of the database in Query Store (server clock, on the hour), every plan
@@ -366,6 +374,9 @@ type TuningReport struct {
 	Explain          []TuningLine       `json:"explain"`
 	Notes            []string           `json:"notes"`
 	Handover         string             `json:"handover"`
+	// Focus is "Did it help {object}?" (docs/phase5h-contract.md); nil when the centred change is not
+	// followed.
+	Focus *TuningFocus `json:"focus"`
 }
 
 // TuningChange is a change in the window, as a marker and a choice of the page's select.
@@ -426,6 +437,7 @@ type TuningHour struct {
 	ParallelThreads   float64 `json:"parallelThreads"`
 	LockThreads       float64 `json:"lockThreads"`
 	Failed            int64   `json:"failed"`
+	CoresBusy         float64 `json:"coresBusy"` // the cores this database's queries kept busy on average (5h)
 }
 
 // TuningSameHour is one business hour of the day of the change beside the same hour on the working
@@ -575,19 +587,10 @@ func BuildTuningReport(f TuningFacts, changes []Change, opt TuningOptions) Tunin
 	hours := tBuildHours(f, bh, changeHours)
 
 	var centre *tChange
-	switch {
-	case opt.ChangeID == TuningChangeNone:
-	case opt.ChangeID > 0:
+	if c := TuningCentreChange(changes, opt.ChangeID); c != nil {
 		for i := range tcs {
-			if tcs[i].c.ID == opt.ChangeID {
+			if tcs[i].c.ID == c.ID {
 				centre = &tcs[i]
-			}
-		}
-	default:
-		for i := range tcs {
-			if IsPerformanceChange(tcs[i].c) {
-				centre = &tcs[i]
-				break
 			}
 		}
 	}
@@ -613,7 +616,8 @@ func BuildTuningReport(f TuningFacts, changes []Change, opt TuningOptions) Tunin
 
 	for _, h := range hours {
 		th := TuningHour{Hour: tStamp(h.at), Class: h.class, Complete: h.complete, InProgress: h.inProgress, Change: h.chg,
-			NoData: !h.has, Window: window[h.at], Executions: h.f.Executions, Failed: h.f.Aborted + h.f.Exceptions}
+			NoData: !h.has, Window: window[h.at], Executions: h.f.Executions, Failed: h.f.Aborted + h.f.Exceptions,
+			CoresBusy: roundHalfAway(CoresBusy(h.f.CPU, time.Hour), 3)}
 		if h.f.Executions > 0 {
 			e := float64(h.f.Executions)
 			th.CPUPerExecMs = roundHalfAway(float64(h.f.CPU)/e/1000, 3)
@@ -673,6 +677,7 @@ func BuildTuningReport(f TuningFacts, changes []Change, opt TuningOptions) Tunin
 	for _, n := range []struct{ what, err string }{
 		{"Query Store settings", f.AboutError}, {"Hour by hour", f.HoursError}, {"Waits", f.WaitsError},
 		{"What is expensive", f.ShapesError}, {"Plan regressions", f.RegressionsError}, {"Failures", f.FailuresError},
+		{"Did it help", f.FocusError},
 	} {
 		if n.err != "" {
 			r.Notes = append(r.Notes, n.what+": could not be read: "+n.err)
@@ -683,6 +688,16 @@ func BuildTuningReport(f TuningFacts, changes []Change, opt TuningOptions) Tunin
 	}
 
 	r.Explain = tExplain(f, &r, centre, latest, bs, ns, hours, bh, tcs, opt.CanChange)
+	// The changed object's sentence comes first, before the database's headline.
+	r.Focus = tBuildFocus(focusInput{f: f, r: &r, centre: centre, hours: hours, before: before, now: now,
+		tooEarly: centre != nil && ns.hours < TuningSameDayMinHours})
+	if r.Focus != nil && r.Focus.Sentence != "" {
+		l := TuningLine{Text: r.Focus.Sentence, Copy: r.Focus.Copy}
+		if r.Focus.Kind != FocusDeploy && (r.Focus.Verdict == VerdictFaster || r.Focus.Verdict == VerdictSlower || r.Focus.Verdict == VerdictSame) {
+			l.QueryHash = r.Focus.QueryHash
+		}
+		r.Explain = append([]TuningLine{l}, r.Explain...)
+	}
 	for i := range r.Queries {
 		q := &r.Queries[i]
 		q.Copy = tQueryCopy(r.Database, q.Name, q.QueryHash, q.Text, tQueryNumbers(*q))
@@ -1403,6 +1418,9 @@ func tLookAgain(changeAt time.Time, bh BusinessHours, changed map[time.Time]bool
 // table, then the plan regressions and failures, as one plain-text block.
 func TuningHandover(r TuningReport) string {
 	var b strings.Builder
+	if r.Focus != nil {
+		b.WriteString(fFocusBlock(*r.Focus) + "\n\n")
+	}
 	head := "Tuning report for " + r.Database
 	if r.ServerName != "" {
 		head += " on " + r.ServerName

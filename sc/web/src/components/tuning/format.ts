@@ -1,3 +1,5 @@
+import type { Verdict } from "@/api-tuning"
+
 // Times and numbers of the tuning report. The report's times are the server's clock without a zone
 // ("2026-11-03T14:00:00"): new Date() reads them as local wall-clock time, so formatting them here shows
 // exactly what the server's clock said, whatever the browser's zone.
@@ -47,4 +49,22 @@ export function signedPct(p: number | null): string {
   if (p === null) return ""
   if (p === 0) return "0%"
   return `${p > 0 ? "+" : "−"}${Math.abs(p)}%`
+}
+
+// "0.4 cores busy", "0.03 cores busy", "1 core busy" (phase 5h).
+export function coresText(cores: number): string {
+  if (cores <= 0) return "no cores busy"
+  if (cores < 0.01) return "under 0.01 cores busy"
+  const v = cores < 0.1 ? cores.toFixed(2) : one.format(cores)
+  return `${v} ${v === "1.0" ? "core" : "cores"} busy`
+}
+
+// The verdict word's colour (per query, and phase 5h's object).
+export const verdictColour: Record<Verdict, string> = {
+  faster: "text-emerald-700 dark:text-emerald-400",
+  slower: "text-red-700 dark:text-red-400",
+  same: "text-muted-foreground",
+  new: "text-sky-700 dark:text-sky-400",
+  gone: "text-sky-700 dark:text-sky-400",
+  "too few": "text-muted-foreground",
 }

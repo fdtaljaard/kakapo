@@ -1,11 +1,11 @@
 import type { QueryAction } from "@/api-queries"
-import type { TuningFailure, TuningQuery, TuningRegression, TuningReport, TuningSameHour, Verdict } from "@/api-tuning"
+import type { TuningFailure, TuningQuery, TuningRegression, TuningReport, TuningSameHour } from "@/api-tuning"
 import { ActionButton } from "@/components/query/action-button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
 import { CopyButton, InvestigateLink } from "./explain"
-import { formatCount, serverWhen, signedPct, tuningMs } from "./format"
+import { formatCount, serverWhen, signedPct, tuningMs, verdictColour } from "./format"
 
 // "Same hour, before and after": each business hour of the day of the change beside the same hour on the
 // working days before (their CPU summed over their runs, executions per day).
@@ -64,15 +64,6 @@ export function SameHourTable({ rows, day }: { rows: TuningSameHour[]; day: stri
       </Table>
     </div>
   )
-}
-
-const verdictColour: Record<Verdict, string> = {
-  faster: "text-emerald-700 dark:text-emerald-400",
-  slower: "text-red-700 dark:text-red-400",
-  same: "text-muted-foreground",
-  new: "text-sky-700 dark:text-sky-400",
-  gone: "text-sky-700 dark:text-sky-400",
-  "too few": "text-muted-foreground",
 }
 
 function impactText(q: TuningQuery): string {

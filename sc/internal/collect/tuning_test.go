@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -36,9 +37,9 @@ func TestTuningReadTaggedAndReadOnly(t *testing.T) {
 		}
 	}
 	q := tuningReportQuery
-	// Each area in its own TRY: about, hours, waits, top shapes, regressions, failures.
-	if n := strings.Count(q, "BEGIN TRY"); n != 6 {
-		t.Errorf("%d TRY blocks, want 6", n)
+	// Each area in its own TRY: about, hours, waits, top shapes, did it help (5h), regressions, failures.
+	if n := strings.Count(q, "BEGIN TRY"); n != 7 {
+		t.Errorf("%d TRY blocks, want 7", n)
 	}
 	// The 2017 wait view only behind its guard, and only inside a nested batch, so SQL Server 2016
 	// compiles the read; Query Store itself behind the 2016 guard.
@@ -49,11 +50,16 @@ func TestTuningReadTaggedAndReadOnly(t *testing.T) {
 	if strings.Contains(outside, "query_store_wait_stats AS") || strings.Contains(outside, "wait_stats_capture_mode_desc") {
 		t.Error("a 2017 column or view is read outside its nested batch")
 	}
-	// Query Store views and the database's own catalogue only: no DMV, no instance view.
+	// Query Store views and the database's own catalogue only: no instance view, and no DMV but the two
+	// a followed index needs (its use, and when SQL Server started), inside the focus area.
+	outsideFocus := strings.Replace(q, tuningFocusArea, "", 1)
 	for _, v := range []string{"sys.dm_", "msdb.", "master."} {
-		if strings.Contains(q, v) {
+		if strings.Contains(outsideFocus, v) {
 			t.Errorf("the read touches %s", v)
 		}
+	}
+	if dm := regexp.MustCompile(`sys\.dm_\w+`).FindAllString(tuningFocusArea, -1); strings.Join(dm, ",") != "sys.dm_os_sys_info,sys.dm_db_index_usage_stats" {
+		t.Errorf("the focus area reads %v", dm)
 	}
 	// The execution-weighted sums, and kakapo's own statements left out of the queries.
 	if !strings.Contains(q, "rs.avg_cpu_time * rs.count_executions") || !strings.Contains(q, "NOT LIKE N'%"+KakapoTag+"%'") {
@@ -81,7 +87,7 @@ func TestTuningReportLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	f, err := TuningReport(context.Background(), db, dbName, 7)
+	f, err := TuningReport(context.Background(), db, dbName, 7, domain.TuningFocusTarget{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,5 +118,64 @@ func withoutNestedBatches(q string) string {
 			j++
 		}
 		q = q[min(j+1, len(q)):]
+	}
+}
+
+// The focus area (docs/phase5h-contract.md, section 2): in its own TRY after Top shapes and guarded on
+// @topErr, the names one parameter split without STRING_SPLIT, every LIKE with COLLATE DATABASE_DEFAULT
+// on both sides, the plan text read only for an index and only for the plans of the queries whose text
+// names its table, and no second read of query_store_runtime_stats.
+func TestTuningFocusArea(t *testing.T) {
+	q, a := tuningReportQuery, tuningFocusArea
+	top, focus, reg := strings.Index(q, "/* Top shapes"), strings.Index(q, a), strings.Index(q, "/* Plan regressions")
+	if top < 0 || focus < top || reg < focus {
+		t.Fatalf("the focus area is not between Top shapes and Plan regressions: %d %d %d", top, focus, reg)
+	}
+	if strings.Count(a, "BEGIN TRY") != 1 || !strings.Contains(a, "SET @focusErr = ERROR_MESSAGE()") ||
+		!strings.Contains(a, "IF @focusKind <> N'' AND @aboutErr IS NULL AND @hoursErr IS NULL AND @topErr IS NULL\nBEGIN TRY") {
+		t.Error("the focus area is not its own TRY guarded on @focusKind and @topErr")
+	}
+	if strings.Contains(strings.ToUpper(q), "STRING_SPLIT") || !strings.Contains(a, "CHARINDEX(NCHAR(10), @rest)") {
+		t.Error("the names are not split with CHARINDEX")
+	}
+	if strings.Contains(a, "query_store_runtime_stats") || !strings.Contains(a, "JOIN #rs AS r ON r.plan_id = p.plan_id") {
+		t.Error("the focus area reads query_store_runtime_stats again")
+	}
+	for _, line := range strings.Split(a, "\n") {
+		if strings.Contains(line, " LIKE ") && strings.Count(line, "COLLATE DATABASE_DEFAULT") != 2 {
+			t.Errorf("a LIKE without COLLATE DATABASE_DEFAULT on both sides: %s", strings.TrimSpace(line))
+		}
+	}
+	if strings.Count(a, " LIKE ") != 4 {
+		t.Errorf("%d LIKEs in the focus area, want 4 (the view or the table, two statements left out, the plan)", strings.Count(a, " LIKE "))
+	}
+	// The plan text: only an index's candidates (#fcand: the queries whose text names the table, in the
+	// window), Table and Index adjacent, [ escaped; never CONVERT.
+	plan := a[strings.Index(a, "p.query_plan"):]
+	plan = plan[:strings.Index(plan, ";")]
+	if strings.Count(a, "query_plan") != 1 || !strings.Contains(a, "FROM #fcand AS c") || !strings.Contains(plan, `N'Table="[[]' + `) ||
+		!strings.Contains(plan, `N']" ' END + N'Index="[[]' + `) || strings.Contains(a, "CONVERT(nvarchar(max), p.query_plan") {
+		t.Errorf("plan match: %s", plan)
+	}
+	if !strings.Contains(a, "WHERE f.object_id IS NOT NULL AND (@focusKind = N'view' OR f.index_id IS NOT NULL)") || !strings.Contains(a, "FROM #ftext AS t") ||
+		!strings.Contains(a, "WHERE t.head COLLATE DATABASE_DEFAULT NOT LIKE N'CREATE%INDEX%'") ||
+		!strings.Contains(a, "JOIN #plans AS p ON p.query_id = q.query_id\n            WHERE t.head") {
+		t.Error("the candidates are not an index's queries in the window")
+	}
+	if !strings.Contains(a, focusLikeName("f.tbl")) || focusLikeName("x") != "REPLACE(REPLACE(REPLACE(x, N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')" {
+		t.Error("names in a LIKE pattern are not escaped")
+	}
+	// The texts are read once, a binary prefilter before the LIKE in the database's collation.
+	if !strings.Contains(a, "CASE WHEN CHARINDEX(@needle COLLATE Latin1_General_BIN2, UPPER(qt.query_sql_text) COLLATE Latin1_General_BIN2) = 0 THEN 0") ||
+		strings.Count(a, "sys.query_store_query_text") != 1 {
+		t.Error("the query texts are not read once with the prefilter first")
+	}
+	// A module's runs are its most-run statement's, per hour.
+	if !strings.Contains(a, "SELECT x.n, NULL, x.hour_start, CONVERT(bigint, SUM(x.cpu)), MAX(x.execs)") || !strings.Contains(a, "GROUP BY fq.n, i.hour_start, fq.query_id") {
+		t.Error("a module's runs are not its most-run statement's")
+	}
+	// The batch's parameters.
+	if !strings.Contains(q, "@names") || strings.Contains(q, "' + @names") {
+		t.Error("the names are not one parameter")
 	}
 }

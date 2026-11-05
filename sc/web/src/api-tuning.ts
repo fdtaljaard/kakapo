@@ -33,6 +33,7 @@ export interface TuningReport {
   explain: TuningLine[] // the plain sentences, the first thing on the page
   notes: string[] // what could not be read, and why
   handover: string // Copy for IT
+  focus: TuningFocus | null // phase 5h: "Did it help {object}?"; null when the centred change is not followed
 }
 
 export interface TuningChange {
@@ -86,6 +87,7 @@ export interface TuningHour {
   parallelThreads: number
   lockThreads: number
   failed: number
+  coresBusy: number // phase 5h: the cores this database's queries kept busy on average in the hour
 }
 
 export interface TuningHourCell {
@@ -158,6 +160,64 @@ export interface TuningLine {
   queryHash?: string
   copy?: string
   recordChange?: boolean
+}
+
+// Phase 5h (docs/phase5h-contract.md): the changed object's own numbers before and now. A procedure, function or
+// trigger is followed by its object_id, a view by the queries that name it, an index by the queries whose plan uses
+// it, a deploy by each of its procedures, functions and triggers (one row each).
+export interface TuningFocus {
+  changeId: number
+  kind: "module" | "view" | "index" | "deploy"
+  type: string // PROCEDURE, FUNCTION, TRIGGER, VIEW, INDEX, DEPLOY
+  object: string
+  found: boolean
+  verdict: Verdict | "" // "" when there is nothing to judge
+  sentence: string // "" when "too early to say" stands for it
+  before: TuningFocusNumbers
+  now: TuningFocusNumbers
+  hours: TuningHour[] // the object's own: cpuPerExecMs is its CPU per run, executions its runs
+  index?: TuningIndexUse
+  queryHash: string // Investigate: the costliest statement
+  rows: TuningFocusRow[] // a deploy's objects, or the queries that name a view or use an index
+  notes: string[]
+  copy: string
+}
+
+export interface TuningFocusNumbers {
+  runs: number
+  hours: number
+  cpuPerRunMs: number | null
+  runsPerHour: number | null
+  cpuPerHourMs: number | null
+}
+
+export interface TuningIndexUse {
+  table: string
+  index: string
+  used: boolean
+  seeks: number
+  scans: number
+  lookups: number
+  updates: number
+  lastUse: string
+  since: string // the later of SQL Server's start and the change
+  serverStarted: string
+}
+
+export interface TuningFocusRow {
+  name: string
+  queryHash: string
+  text: string
+  found: boolean
+  note: string // "not found", "dropped and created again on …"
+  runsBefore: number
+  runsNow: number
+  cpuBeforeMs: number | null
+  cpuNowMs: number | null
+  runsPerHourBefore: number
+  runsPerHourNow: number
+  verdict: Verdict | ""
+  impactMsPerHour: number
 }
 
 export interface TuningOptions {

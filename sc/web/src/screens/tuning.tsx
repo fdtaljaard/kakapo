@@ -11,6 +11,7 @@ import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
 import { CopyFallback } from "@/components/statement-block"
 import { ExplainList, Tiles } from "@/components/tuning/explain"
+import { FocusSection } from "@/components/tuning/focus"
 import { serverDate, serverDay, serverWhen } from "@/components/tuning/format"
 import { HourChart } from "@/components/tuning/hour-chart"
 import { RecordChangeForm } from "@/components/tuning/record-change-form"
@@ -31,7 +32,9 @@ import { cn } from "@/lib/utils"
 // a change of the log (the latest by default, or none: the latest complete business hour). The sentences
 // first, each with its buttons; then the four tiles, the hours as CSS bars, the same hour before and after,
 // the costly queries with a verdict each, what may have broken, and what could not be read. Reads only;
-// Copy for IT hands the tiles, sentences and per-query table over as text.
+// Copy for IT hands the tiles, sentences and per-query table over as text. Phase 5h: when the centred change
+// touched a procedure, view, index or deploy, "Did it help {object}?" comes before the tiles, with the object's
+// own numbers and chart, and its sentence and block lead the sentences and Copy for IT.
 export function TuningScreen() {
   const params = useParams()
   const id = Number(params.id)
@@ -337,6 +340,8 @@ function Body({
       <Section title="What it means">
         <ExplainList report={r} serverId={serverId} onAction={onAction} onRecordChange={onRecordChange} />
       </Section>
+
+      <FocusSection report={r} serverId={serverId} />
 
       <Section
         title="Is it better than before?"
