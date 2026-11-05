@@ -240,7 +240,7 @@ const planLimitChars = 2 * 1024 * 1024
 // pages used (avg_tempdb_space_used, 2017 and later) and the largest memory used
 // (max_query_max_used_memory), each version-dependent column read only when it exists. Result
 // sets: one row (actual_state_desc, error, total CPU), then the top 5.
-var queryStoreTopQuery = Tag(`SET NOCOUNT ON;
+var queryStoreTopQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @err nvarchar(2048), @total bigint, @now datetimeoffset = SYSDATETIMEOFFSET();
 CREATE TABLE #top (query_hash binary(8) NOT NULL PRIMARY KEY, cpu bigint NOT NULL, execs bigint NOT NULL, reads bigint NOT NULL,
                    min_reads bigint NOT NULL, max_reads bigint NOT NULL, max_cpu bigint NOT NULL, elapsed bigint NOT NULL,

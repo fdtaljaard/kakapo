@@ -23,7 +23,7 @@ import (
 // hour from @from: executions and CPU summed over plans, as 5c); Waits (per hour, every category but
 // Idle and User Wait, which are sleeping and WAITFOR rather than load, summed, 2017 and later); Now (the interval in progress and the one before it: executions, CPU
 // and waits, and their start). Result sets: one row (about, now and the area errors), the hours.
-var loadQuery = Tag(`SET NOCOUNT ON;
+var loadQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @interval int, @oldest datetime, @newest datetime, @cpuCount int,
         @aboutErr nvarchar(2048), @cpuErr nvarchar(2048), @hoursErr nvarchar(2048), @waitErr nvarchar(2048), @nowErr nvarchar(2048),
         @offset int = DATEPART(TZOFFSET, SYSDATETIMEOFFSET()), @now datetime = GETDATE(),

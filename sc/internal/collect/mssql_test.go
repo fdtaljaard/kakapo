@@ -42,3 +42,20 @@ func TestConnString(t *testing.T) {
 		})
 	}
 }
+
+// untagged is a read batch without the tags TagStatements puts after each statement's keyword, as the
+// tests that read the SQL text expect it.
+func untagged(q string) string { return strings.ReplaceAll(q, " "+KakapoTag, "") }
+
+// Phase 5k: every statement of a read batch carries the tag after its first keyword, once, so Query
+// Store's text of each statement has it; a keyword inside a line is left alone.
+func TestTagStatements(t *testing.T) {
+	in := "SET NOCOUNT ON;\nSELECT a FROM b;\n    INSERT #t (x)\n    SELECT TOP (1) x FROM y WHERE z = 'SELECT';\nWITH c AS (SELECT 1 AS n)\nUPDATE t SET n = 1;\nDELETE #t;\nselect lower;"
+	want := "/* kakapo */ SET NOCOUNT ON;\nSELECT /* kakapo */ a FROM b;\n    INSERT /* kakapo */ #t (x)\n    SELECT /* kakapo */ TOP (1) x FROM y WHERE z = 'SELECT';\nWITH /* kakapo */ c AS (SELECT 1 AS n)\nUPDATE /* kakapo */ t SET n = 1;\nDELETE /* kakapo */ #t;\nselect lower;"
+	if got := TagStatements(in); got != want {
+		t.Errorf("tagged:\n%s", got)
+	}
+	if got := TagStatements(TagStatements(in)); got != want {
+		t.Errorf("twice:\n%s", got)
+	}
+}

@@ -97,7 +97,7 @@ func indexFactsBatch(database string) string {
 func IndexFacts(ctx context.Context, db *sql.DB, database, schema, table string) (domain.IndexFacts, error) {
 	f := domain.IndexFacts{Database: database, Schema: schema, Table: table, Columns: []domain.TableColumn{}, Indexes: []domain.ExistingIndex{}}
 	rows, err := db.QueryContext(ctx, indexFactsBatch(database),
-		sql.Named("stmt", Tag(indexFactsQuery)), sql.Named("schema", schema), sql.Named("table", table))
+		sql.Named("stmt", TagStatements(indexFactsQuery)), sql.Named("schema", schema), sql.Named("table", table))
 	if err != nil {
 		return f, friendlyError(err)
 	}

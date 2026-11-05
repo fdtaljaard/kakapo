@@ -541,7 +541,7 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 }
 
 func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *domain.StorageFacts) error {
-	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", Tag(storageDatabaseQuery)))
+	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", TagStatements(storageDatabaseQuery)))
 	if err != nil {
 		return friendlyError(err)
 	}
@@ -696,7 +696,7 @@ func inDatabaseQuoted(database string) string {
 // The string is SQL Server's error when that block failed; the error is for a read that could not
 // run at all.
 func GrowingTables(ctx context.Context, db *sql.DB, database string) ([]domain.GrowingTable, string, error) {
-	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", Tag(growingTablesQuery)))
+	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", TagStatements(growingTablesQuery)))
 	if err != nil {
 		return nil, "", friendlyError(err)
 	}

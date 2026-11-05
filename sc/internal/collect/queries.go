@@ -26,7 +26,7 @@ import (
 // TempDB use per plan (avg_tempdb_space_used) only when the column exists. Result sets: one row
 // (state, errors, text, object id, object name, compatibility level), the plans, the hours, the
 // waits.
-var queryDetailStoreQuery = Tag(`SET NOCOUNT ON;
+var queryDetailStoreQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @qsErr nvarchar(2048), @histErr nvarchar(2048), @waitErr nvarchar(2048),
         @now datetimeoffset = SYSDATETIMEOFFSET(), @since datetimeoffset, @text nvarchar(max), @objid int, @compat int;
 SET @since = DATEADD(DAY, -7, @now);
@@ -271,7 +271,7 @@ const queryTablesInsert = `INSERT @t (schema_name, table_name, object_id, rows, 
 // per table whether it exists, its rows and its statistics' age; and each statistics object of
 // those tables updated in the last 8 days (phase 5j: what changed), with whether it is an index's
 // and how many rows it read. Result sets: one row (error, server time), the tables, the updates.
-var queryTablesQuery = Tag(`SET NOCOUNT ON;
+var queryTablesQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @err nvarchar(2048), @now datetime = GETDATE();
 DECLARE @names TABLE (schema_name nvarchar(128) NOT NULL, table_name nvarchar(128) NOT NULL);
 DECLARE @t TABLE (schema_name nvarchar(128) NOT NULL, table_name nvarchar(128) NOT NULL, object_id int NULL, rows bigint NULL, stats int NULL,
@@ -309,7 +309,7 @@ FROM @u ORDER BY updated, schema_name, table_name, stats_name;`)
 // hash, and every plan of that query with its forcing and its runs and duration over 7 days, for
 // the force-plan and unforce-plan previews and their read-back. Result sets: one row (state,
 // error, found, query id, query hash), the plans.
-var planForcingQuery = Tag(`SET NOCOUNT ON;
+var planForcingQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @err nvarchar(2048), @found bit = 0, @qid bigint, @hash varchar(18),
         @since datetimeoffset = DATEADD(DAY, -7, SYSDATETIMEOFFSET());
 CREATE TABLE #fp (plan_id bigint NOT NULL PRIMARY KEY, query_id bigint NOT NULL, forced bit NOT NULL, last_run datetimeoffset NULL,

@@ -445,7 +445,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 
 func readSetupDatabase(ctx context.Context, db *sql.DB, database string, f *domain.SetupFacts) error {
 	q := Tag(safeSession + "EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt;")
-	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", Tag(setupDatabaseQuery)))
+	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", TagStatements(setupDatabaseQuery)))
 	if err != nil {
 		return friendlyError(err)
 	}

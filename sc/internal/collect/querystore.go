@@ -190,7 +190,7 @@ FROM sys.database_query_store_options;`
 
 	q := Tag(safeSession + "EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt;")
 	var o domain.QueryStoreOptions
-	err := db.QueryRowContext(ctx, q, sql.Named("stmt", Tag(inner))).Scan(
+	err := db.QueryRowContext(ctx, q, sql.Named("stmt", TagStatements(inner))).Scan(
 		&o.ActualState, &o.DesiredState, &o.ReadonlyReason, &o.CurrentStorageMb, &o.MaxStorageMb,
 		&o.CaptureMode, &o.WaitStatsCaptureMode, &o.IntervalLengthMinutes, &o.StaleQueryThresholdDays,
 		&o.FlushIntervalSeconds, &o.MaxPlansPerQuery, &o.SizeBasedCleanupMode)

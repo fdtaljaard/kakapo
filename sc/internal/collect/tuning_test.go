@@ -36,7 +36,7 @@ func TestTuningReadTaggedAndReadOnly(t *testing.T) {
 			t.Errorf("%s query runs an untagged nested batch", name)
 		}
 	}
-	q := tuningReportQuery
+	q := untagged(tuningReportQuery)
 	// Each area in its own TRY: about, hours, waits, top shapes, did it help (5h), regressions, failures.
 	if n := strings.Count(q, "BEGIN TRY"); n != 7 {
 		t.Errorf("%d TRY blocks, want 7", n)
@@ -126,7 +126,7 @@ func withoutNestedBatches(q string) string {
 // on both sides, the plan text read only for an index and only for the plans of the queries whose text
 // names its table, and no second read of query_store_runtime_stats.
 func TestTuningFocusArea(t *testing.T) {
-	q, a := tuningReportQuery, tuningFocusArea
+	q, a := untagged(tuningReportQuery), tuningFocusArea
 	top, focus, reg := strings.Index(q, "/* Top shapes"), strings.Index(q, a), strings.Index(q, "/* Plan regressions")
 	if top < 0 || focus < top || reg < focus {
 		t.Fatalf("the focus area is not between Top shapes and Plan regressions: %d %d %d", top, focus, reg)

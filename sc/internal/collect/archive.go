@@ -331,7 +331,7 @@ func ArchiveFacts(ctx context.Context, db *sql.DB, database, schema, table strin
 
 func readArchiveTable(ctx context.Context, db *sql.DB, f *domain.ArchiveFacts) error {
 	rows, err := db.QueryContext(ctx, inDatabaseWithTable(f.Database),
-		sql.Named("stmt", Tag(archiveTableQuery)), sql.Named("schema", f.Schema), sql.Named("table", f.Table))
+		sql.Named("stmt", TagStatements(archiveTableQuery)), sql.Named("schema", f.Schema), sql.Named("table", f.Table))
 	if err != nil {
 		return friendlyError(err)
 	}
@@ -404,7 +404,7 @@ func readArchiveTable(ctx context.Context, db *sql.DB, f *domain.ArchiveFacts) e
 func ArchiveTarget(ctx context.Context, db *sql.DB, database, schema, table string) (domain.ArchiveTarget, error) {
 	t := domain.ArchiveTarget{Database: database, Schema: schema, Table: table, Columns: []domain.ArchiveColumn{}}
 	rows, err := db.QueryContext(ctx, inDatabaseWithTable(database),
-		sql.Named("stmt", Tag(archiveTargetQuery)), sql.Named("schema", schema), sql.Named("table", table))
+		sql.Named("stmt", TagStatements(archiveTargetQuery)), sql.Named("schema", schema), sql.Named("table", table))
 	if err != nil {
 		return t, friendlyError(err)
 	}
@@ -536,7 +536,7 @@ func firstError(err error, text string) string {
 // and say why; tables that cannot be read are an error.
 func ListTables(ctx context.Context, db *sql.DB, database string) (domain.TableList, error) {
 	out := domain.TableList{Database: database, Tables: []domain.TableListing{}}
-	rows, err := db.QueryContext(ctx, inDatabase(database), sql.Named("stmt", Tag(listTablesQuery)))
+	rows, err := db.QueryContext(ctx, inDatabase(database), sql.Named("stmt", TagStatements(listTablesQuery)))
 	if err != nil {
 		return out, friendlyError(err)
 	}

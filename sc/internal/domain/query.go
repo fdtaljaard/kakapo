@@ -590,10 +590,10 @@ const (
 	queryForceMinRuns = 10
 	// queryWorkRatio: the faster plan does less work when its CPU or its pages read per run are this
 	// many times lower; either is enough (a plan may trade a little CPU for far fewer reads).
-	queryWorkRatio      = 1.5
-	queryPlanXMLMax     = 5 // plans whose XML the page carries (Save .sqlplan)
+	queryWorkRatio  = 1.5
+	queryPlanXMLMax = 5 // plans whose XML the page carries (Save .sqlplan)
 	// queryParallelRatio: a plan whose CPU per run is this many times its time per run runs in parallel (5j).
-	queryParallelRatio = 1.5
+	queryParallelRatio  = 1.5
 	queryLargeTableRows = 10_000_000
 )
 

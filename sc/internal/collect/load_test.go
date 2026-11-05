@@ -24,7 +24,7 @@ func TestLoadReadTaggedAndReadOnly(t *testing.T) {
 			t.Errorf("%s query runs an untagged nested batch", name)
 		}
 	}
-	q := loadQuery
+	q := untagged(loadQuery)
 	// About, the cores, hours, waits, now.
 	if n := strings.Count(q, "BEGIN TRY"); n != 5 {
 		t.Errorf("%d TRY blocks, want 5", n)
@@ -48,7 +48,7 @@ func TestLoadReadTaggedAndReadOnly(t *testing.T) {
 		}
 	}
 	// The hour is bucketed one way only: the tuning report and the load run the same fragment.
-	for name, b := range map[string]string{"load": loadQuery, "tuning": tuningReportQuery} {
+	for name, b := range map[string]string{"load": untagged(loadQuery), "tuning": untagged(tuningReportQuery)} {
 		if !strings.Contains(b, queryStoreHoursTable) || !strings.Contains(b, queryStoreHours) {
 			t.Errorf("the %s read does not use the shared hour fragment", name)
 		}

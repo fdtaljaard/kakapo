@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -122,4 +123,18 @@ func Tag(batch string) string {
 		return batch
 	}
 	return KakapoTag + " " + batch
+}
+
+// statementStart is a statement Query Store keeps on its own line: SELECT, INSERT, UPDATE, DELETE,
+// MERGE or WITH at the start of a line, upper case as kakapo writes them, not yet tagged.
+var statementStart = regexp.MustCompile(`(?m)^([ \t]*)(SELECT|INSERT|UPDATE|DELETE|MERGE|WITH)\b( /\* kakapo \*/)?`)
+
+// TagStatements tags a read batch that runs inside a user database (EXEC [db].sys.sp_executesql
+// @stmt) and each statement in it (phase 5k). Query Store keeps the text of each statement of a batch
+// from the statement's first keyword, so the batch's leading tag reaches only its first statement and
+// kakapo's other statements showed among the costliest and the changed queries. A comment after the
+// keyword is part of the statement's text. Only kakapo's own reads: never a fix or a job command,
+// whose statements are real work.
+func TagStatements(batch string) string {
+	return Tag(statementStart.ReplaceAllString(batch, "${1}${2} "+KakapoTag))
 }

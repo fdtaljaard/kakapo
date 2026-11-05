@@ -47,7 +47,7 @@ var tuningRegressionRule = fmt.Sprintf("n.rn = 1 AND n.execs >= %d AND o.cpu_ms 
 // The totals per interval are avg_* x count_executions, summed, then divided by the summed runs:
 // the execution-weighted average, never an average of averages.
 // Source: DarlingData sp_QuickieStore.sql 12415-12470 (MIT)
-var tuningReportQuery = Tag(`SET NOCOUNT ON;
+var tuningReportQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @state nvarchar(60), @interval int, @waitCapture nvarchar(60), @oldest datetime,
         @aboutErr nvarchar(2048), @hoursErr nvarchar(2048), @waitErr nvarchar(2048), @topErr nvarchar(2048),
         @regErr nvarchar(2048), @failErr nvarchar(2048), @focusErr nvarchar(2048),

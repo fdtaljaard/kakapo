@@ -555,7 +555,7 @@ func runDate(v int) time.Time {
 
 // ReadStaleStats reads the out-of-date statistics inside a database (MNT04), SELECTs only.
 func ReadStaleStats(ctx context.Context, db *sql.DB, database string) ([]domain.StaleStat, error) {
-	rows, err := db.QueryContext(ctx, inDatabase(database), sql.Named("stmt", Tag(staleStatsQuery)))
+	rows, err := db.QueryContext(ctx, inDatabase(database), sql.Named("stmt", TagStatements(staleStatsQuery)))
 	if err != nil {
 		return nil, friendlyError(err)
 	}
@@ -583,7 +583,7 @@ func ReadStaleStats(ctx context.Context, db *sql.DB, database string) ([]domain.
 // read-back. SELECTs only.
 func ReadStaleStatsCount(ctx context.Context, db *sql.DB, database string) (int, error) {
 	var n int
-	if err := db.QueryRowContext(ctx, inDatabase(database), sql.Named("stmt", Tag(staleStatsCountQuery))).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, inDatabase(database), sql.Named("stmt", TagStatements(staleStatsCountQuery))).Scan(&n); err != nil {
 		return 0, friendlyError(err)
 	}
 	return n, nil

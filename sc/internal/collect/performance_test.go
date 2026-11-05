@@ -116,7 +116,7 @@ var likeLiterals = regexp.MustCompile(`LIKE N'[^']*'`)
 // and table variables. The noise patterns QRY01 filters on ('ALTER INDEX%', 'UPDATE STATISTICS%')
 // are LIKE patterns, not statements, and are left out of the scan.
 func TestPerformanceReadsOnlySelect(t *testing.T) {
-	for name, q := range map[string]string{"instance": performanceInstanceQuery, "query store": queryStoreTopQuery,
+	for name, q := range map[string]string{"instance": performanceInstanceQuery, "query store": untagged(queryStoreTopQuery),
 		"plan cache": planCacheTopQuery, "deadlocks": deadlockQuery} {
 		upper := strings.ToUpper(likeLiterals.ReplaceAllString(q, "LIKE N''"))
 		for _, verb := range []string{"ALTER ", "DROP ", "TRUNCATE ", "DBCC ", "CREATE INDEX", "SP_CONFIGURE", "KILL ", "MERGE "} {
