@@ -248,6 +248,10 @@ CREATE TABLE #top (query_hash binary(8) NOT NULL PRIMARY KEY, cpu bigint NOT NUL
                    max_elapsed bigint NOT NULL, plans int NULL, low_run_plans int NULL, tempdb_kb bigint NULL, max_used_kb bigint NULL,
                    now_plan bigint NULL, since datetimeoffset NULL, since_shown datetimeoffset NULL,
                    b_runs bigint NULL, b_cpu bigint NULL, n_runs bigint NULL, n_cpu bigint NULL);
+CREATE TABLE #mv (query_hash binary(8) NOT NULL PRIMARY KEY, plan_id bigint NOT NULL, query_id bigint NOT NULL, since datetimeoffset NOT NULL,
+                  first_run datetimeoffset NOT NULL, b_runs bigint NOT NULL, b_cpu bigint NOT NULL, n_runs bigint NOT NULL, n_cpu bigint NOT NULL);
+DECLARE @chg TABLE (schema_name sysname NOT NULL, name sysname NOT NULL, type char(2) NOT NULL, created datetime NOT NULL,
+                    modified datetime NOT NULL, ref_name sysname NULL);
 BEGIN TRY
     SELECT @state = CONVERT(nvarchar(60), actual_state_desc) FROM sys.database_query_store_options;
     IF @state IN (N'READ_WRITE', N'READ_ONLY')
@@ -334,10 +338,40 @@ BEGIN TRY
                              WHERE r.query_hash = t.query_hash
                              GROUP BY ws.wait_category_desc
                              ORDER BY SUM(ws.total_query_wait_time_ms) DESC) w;';
+
+        -- Phase 5k: every query shape whose plan in use (the one that ran last) began in the window and that
+        -- ran at least 20 times (5c's TuningMinRuns) before and since, with its runs and CPU on each side.
+        WITH lastp AS (SELECT query_hash, plan_id, ROW_NUMBER() OVER (PARTITION BY query_hash ORDER BY start_time DESC, cpu DESC) AS rn
+                       FROM #rs),
+             sincep AS (SELECT l.query_hash, l.plan_id, MIN(r.start_time) AS since
+                        FROM lastp AS l JOIN #rs AS r ON r.query_hash = l.query_hash AND r.plan_id = l.plan_id
+                        WHERE l.rn = 1
+                        GROUP BY l.query_hash, l.plan_id)
+        INSERT #mv (query_hash, plan_id, query_id, since, first_run, b_runs, b_cpu, n_runs, n_cpu)
+        SELECT s.query_hash, s.plan_id, MAX(CASE WHEN r.plan_id = s.plan_id THEN r.query_id END), s.since, MIN(r.start_time),
+               SUM(CASE WHEN r.start_time < s.since THEN r.execs ELSE 0 END), SUM(CASE WHEN r.start_time < s.since THEN r.cpu ELSE 0 END),
+               SUM(CASE WHEN r.start_time >= s.since THEN r.execs ELSE 0 END), SUM(CASE WHEN r.start_time >= s.since THEN r.cpu ELSE 0 END)
+        FROM sincep AS s JOIN #rs AS r ON r.query_hash = s.query_hash
+        GROUP BY s.query_hash, s.plan_id, s.since
+        HAVING SUM(CASE WHEN r.start_time < s.since THEN r.execs ELSE 0 END) >= 20
+           AND SUM(CASE WHEN r.start_time >= s.since THEN r.execs ELSE 0 END) >= 20;
     END;
 END TRY
 BEGIN CATCH
     SET @err = ERROR_MESSAGE();
+END CATCH;
+-- Phase 5k: the tables, views and modules changed in the last 8 days (server time), one row per view or
+-- module that references each (none: one row), to say what changed just before a query got a new plan.
+-- Its own TRY: a failure here leaves the top queries as they are.
+BEGIN TRY
+    INSERT @chg (schema_name, name, type, created, modified, ref_name)
+    SELECT SCHEMA_NAME(o.schema_id), o.name, o.type, o.create_date, o.modify_date, OBJECT_NAME(d.referencing_id)
+    FROM sys.objects AS o
+    LEFT JOIN sys.sql_expression_dependencies AS d ON d.referenced_id = o.object_id AND d.referencing_id <> o.object_id
+    WHERE o.is_ms_shipped = 0 AND o.type IN ('U', 'V', 'P', 'FN', 'IF', 'TF', 'TR') AND o.modify_date >= DATEADD(DAY, -8, GETDATE());
+END TRY
+BEGIN CATCH
+    DELETE @chg;
 END CATCH;
 SELECT @state, @err, @total;
 SELECT CONVERT(varchar(18), t.query_hash, 1), t.cpu, t.execs, t.reads, t.min_reads, t.max_reads, t.max_cpu, t.elapsed, t.variants, t.minutes,
@@ -352,7 +386,19 @@ FROM #top t
 LEFT JOIN sys.query_store_plan p ON p.plan_id = t.plan_id
 LEFT JOIN sys.query_store_query q ON q.query_id = t.query_id
 LEFT JOIN sys.query_store_query_text qt ON qt.query_text_id = q.query_text_id
-ORDER BY t.cpu DESC;`)
+ORDER BY t.cpu DESC;
+SELECT CONVERT(varchar(18), m.query_hash, 1),
+       CONVERT(datetime2, SWITCHOFFSET(CASE WHEN p.initial_compile_start_time >= m.since AND p.initial_compile_start_time < DATEADD(HOUR, 1, m.since)
+                                            THEN p.initial_compile_start_time ELSE m.since END, '+00:00')),
+       DATEDIFF(MINUTE, m.first_run, @now), m.b_runs, m.b_cpu, m.n_runs, m.n_cpu,
+       CASE WHEN q.object_id > 0 THEN OBJECT_SCHEMA_NAME(q.object_id) + N'.' + OBJECT_NAME(q.object_id) END,
+       LEFT(qt.query_sql_text, 300)
+FROM #mv m
+LEFT JOIN sys.query_store_plan p ON p.plan_id = m.plan_id
+LEFT JOIN sys.query_store_query q ON q.query_id = m.query_id
+LEFT JOIN sys.query_store_query_text qt ON qt.query_text_id = q.query_text_id
+ORDER BY m.query_hash;
+SELECT schema_name, name, RTRIM(type), created, modified, ISNULL(ref_name, N'') FROM @chg ORDER BY modified, schema_name, name;`)
 
 // planCacheTopQuery is the triage's section 0 for one database (PerformanceTriage.sql): the top 300
 // query shapes in the plan cache by total CPU, the top 5 of those whose plan belongs to this
@@ -447,7 +493,7 @@ func PerformanceFacts(ctx context.Context, db *sql.DB, database string) (domain.
 	if f.State != "ONLINE" {
 		return f, nil
 	}
-	state, total, top, err := readQueryStoreTop(ctx, db, database)
+	state, total, top, err := readQueryStoreTop(ctx, db, database, &f)
 	f.QueryStoreState = state
 	if err != nil {
 		f.QueryStoreError = err.Error()
@@ -618,7 +664,7 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 
 // readQueryStoreTop reads Query Store's top 5 inside the database: its state, the CPU of every
 // query in the window, and the top 5. An error says why Query Store could not be read.
-func readQueryStoreTop(ctx context.Context, db *sql.DB, database string) (string, int64, []domain.TopQuery, error) {
+func readQueryStoreTop(ctx context.Context, db *sql.DB, database string, f *domain.PerformanceFacts) (string, int64, []domain.TopQuery, error) {
 	q := Tag(safeSession + "EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt, N'@limit bigint', @limit = @limit;")
 	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", queryStoreTopQuery), sql.Named("limit", int64(planLimitChars)))
 	if err != nil {
@@ -646,7 +692,70 @@ func readQueryStoreTop(ctx context.Context, db *sql.DB, database string) (string
 	if qsErr.String != "" {
 		return state.String, 0, nil, errors.New(qsErr.String)
 	}
+	// Phase 5k: what changed. A part that fails is said in the facts; the top queries stand.
+	if err := nextResultSet(rows, "plan changes"); err != nil {
+		f.MoversError = err.Error()
+		return state.String, total.Int64, top, nil
+	}
+	if f.Movers, err = scanPlanMovers(rows); err != nil {
+		f.MoversError = err.Error()
+		return state.String, total.Int64, top, nil
+	}
+	if err := nextResultSet(rows, "changed objects"); err != nil {
+		f.MoversError = err.Error()
+		return state.String, total.Int64, top, nil
+	}
+	if f.Changed, err = scanChangedObjects(rows); err != nil {
+		f.MoversError = err.Error()
+	}
 	return state.String, total.Int64, top, nil
+}
+
+// scanPlanMovers reads the batch's third result set (phase 5k): the query shapes whose plan in use
+// began in the window, with their runs and CPU before and since.
+func scanPlanMovers(rows *sql.Rows) ([]domain.PlanMoverFact, error) {
+	out := []domain.PlanMoverFact{}
+	for rows.Next() {
+		var m domain.PlanMoverFact
+		var since sql.NullTime
+		var minutes sql.NullInt32
+		var object, text sql.NullString
+		if err := rows.Scan(&m.QueryHash, &since, &minutes, &m.BeforeRuns, &m.BeforeCPU, &m.NowRuns, &m.NowCPU, &object, &text); err != nil {
+			return nil, err
+		}
+		if since.Valid {
+			m.Since = naive(since.Time)
+		}
+		m.Minutes, m.ObjectName, m.Text = int(minutes.Int32), object.String, text.String
+		out = append(out, m)
+	}
+	return out, friendlyErrOrNil(rows.Err())
+}
+
+// scanChangedObjects reads the batch's fourth result set (phase 5k): the objects changed in the last 8
+// days, in the server's clock.
+func scanChangedObjects(rows *sql.Rows) ([]domain.ChangedObjectFact, error) {
+	out := []domain.ChangedObjectFact{}
+	at := map[string]int{}
+	for rows.Next() {
+		var c domain.ChangedObjectFact
+		var ref string
+		if err := rows.Scan(&c.Schema, &c.Name, &c.Type, &c.Created, &c.Modified, &ref); err != nil {
+			return nil, err
+		}
+		key := c.Schema + "." + c.Name
+		i, ok := at[key]
+		if !ok {
+			c.Created, c.Modified, c.Referenced = naive(c.Created), naive(c.Modified), []string{}
+			i = len(out)
+			at[key] = i
+			out = append(out, c)
+		}
+		if ref = strings.TrimSpace(ref); ref != "" {
+			out[i].Referenced = append(out[i].Referenced, ref)
+		}
+	}
+	return out, friendlyErrOrNil(rows.Err())
 }
 
 // readPlanCacheTop reads the plan cache's top 5 for the database, as PerformanceTriage.sql does.

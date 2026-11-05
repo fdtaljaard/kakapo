@@ -179,7 +179,7 @@ func (f StorageFacts) TempdbGrowthMB() int64 {
 func (d CardDetail) MarshalJSON() ([]byte, error) {
 	type plain CardDetail
 	if d.Card.ID != CardPerformance {
-		d.Blocking = nil
+		d.Blocking, d.Trend = nil, nil
 	}
 	if d.Card.ID == CardSetup || d.Card.ID == CardUpkeep {
 		// The cards with fixes always say which are available, [] when none.
@@ -196,13 +196,14 @@ func (d CardDetail) MarshalJSON() ([]byte, error) {
 	if d.Card.ID == CardPerformance {
 		// The Performance card always says what the last deadlock report and the last blocking
 		// history found, null before a run.
-		last, blocking := d.Deadlocks, d.Blocking
-		d.Deadlocks, d.Blocking = nil, nil
+		last, blocking, trend := d.Deadlocks, d.Blocking, d.Trend
+		d.Deadlocks, d.Blocking, d.Trend = nil, nil, nil
 		return json.Marshal(struct {
 			plain
-			Deadlocks *DeadlockReport  `json:"deadlocks"`
-			Blocking  *BlockingHistory `json:"blockingHistory"`
-		}{plain(d), last, blocking})
+			Deadlocks *DeadlockReport   `json:"deadlocks"`
+			Blocking  *BlockingHistory  `json:"blockingHistory"`
+			Trend     *PerformanceTrend `json:"trend"`
+		}{plain(d), last, blocking, trend})
 	}
 	run := d.CheckdbRun
 	d.CheckdbRun = nil

@@ -81,6 +81,14 @@ type PerformanceFacts struct {
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
+	// Phase 5k (docs/phase5k-contract.md): the queries that got a new plan in the 7 days and the
+	// objects changed in 8 (QRY01's batch, Query Store only), and the hours of the days before (the
+	// load strip's read, nil when it was not read).
+	Movers      []PlanMoverFact
+	Changed     []ChangedObjectFact
+	MoversError string
+	Load        *LoadFacts
+
 	Error string // nothing could be read at all
 }
 
@@ -373,12 +381,12 @@ var wrk01Why = map[string]string{
 }
 
 var wrk01Do = map[string]string{
-	waitPAR:     "Usually tuned with MAXDOP and cost threshold for parallelism (INS04, INS05). If those are fine, look at the biggest queries (WRK04) and missing indexes (WRK03).",
+	waitPAR:     "Usually tuned with MAXDOP and cost threshold for parallelism (INS04, INS05). If those are fine, look at the biggest queries (QRY01) and missing indexes (WRK03).",
 	waitIO:      "Often caused by large scans from missing indexes (WRK03) or too little memory (INS02/INS03), not only slow disks. Compare with storage latency (STO09).",
 	waitLOG:     "Check log write latency (STO09). Fast storage for log files helps, as does the application batching many tiny transactions.",
 	waitLOCK:    "Find the blocking queries: ACT01 shows who blocks whom right now, and the Design card's lock waits per table show where it has been all week. Long transactions, missing indexes and large updates are the usual causes.",
-	waitCPU:     "Find and tune the most CPU-expensive queries (WRK04) and check signal waits (WRK02).",
-	waitMEM:     "Usually large sorts or hashes from poor plans or out-of-date statistics (MNT04, WRK04). Also check max server memory.",
+	waitCPU:     "Find and tune the most CPU-expensive queries (QRY01) and check signal waits (WRK02).",
+	waitMEM:     "Usually large sorts or hashes from poor plans or out-of-date statistics (MNT04, QRY01). Also check max server memory.",
 	waitNET:     "Usually the application processes rows one at a time or fetches far more rows than it needs. Talk to the developers; it is rarely the network.",
 	waitPLATCH:  "Check TempDB data files (TMP01, TMP02).",
 	waitTHREAD:  "Usually caused by heavy blocking or too much parallelism. Escalate to a DBA.",
@@ -393,7 +401,7 @@ var wrk01Do = map[string]string{
 // SRV07, ACT01, ACT02, ACT03), verbatim; PRS01's, QRY01's source note and DLK01's in the same voice.
 const (
 	wrk02Why        = "Signal wait is time a query was ready to run but had no free CPU. A high share means the server is short of CPU."
-	wrk02Do         = "Tune the most CPU-expensive queries (WRK04), check MAXDOP and cost threshold (INS04, INS05), and confirm the VM has enough CPU and is not over-committed on its host."
+	wrk02Do         = "Tune the most CPU-expensive queries (QRY01), check MAXDOP and cost threshold (INS04, INS05), and confirm the VM has enough CPU and is not over-committed on its host."
 	wrk03Why        = "Queries that would use this index are scanning more data than they need, which costs CPU, memory and disk reads."
 	wrk03Do         = "Have a developer or DBA review it before creating anything: check whether an existing index can be extended instead, combine overlapping suggestions, and never create them all blindly (each index slows down inserts and updates). If this is a vendor database, check with the vendor. "
 	wrk03DoOnline   = "Create it WITH (ONLINE = ON)."
@@ -437,7 +445,7 @@ const (
 	prs01MemoryWhy  = "Queries waiting for memory cannot even start: other queries hold it all, usually a few huge sorts or hashes from bad estimates. A forced grant gave a query less memory than it asked for, so it spills to tempdb."
 	prs01MemoryDo   = "Find the queries with large memory grants (QRY01 shows memory grant warnings in their plans) and fix their estimates: statistics (MNT04), missing indexes, or the query itself."
 	prs01CPUWhy     = "Runnable tasks are queries ready to run with no free CPU to run on. Two or more per scheduler means the server is short of CPU right now."
-	prs01CPUDo      = "Tune the most CPU-expensive queries (QRY01, WRK04 in the scan), check MAXDOP (INS04), and confirm the VM has the CPUs it should and is not over-committed on its host."
+	prs01CPUDo      = "Tune the most CPU-expensive queries (QRY01), check MAXDOP (INS04), and confirm the VM has the CPUs it should and is not over-committed on its host."
 	perfNotRead     = "Could not read the performance facts: "
 	waitsNotRead    = "Could not read the wait statistics (sys.dm_os_wait_stats, needs VIEW SERVER STATE): "
 	countersNotRead = "Could not read the performance counters (sys.dm_os_performance_counters): "
@@ -548,6 +556,9 @@ func BuildPerformanceCard(f PerformanceFacts, def CardDef, lastDeadlocks *Deadlo
 		c.Note = RestartNote(f.UptimeHours)
 	}
 	c.Facts = b.facts()
+	if x, ok := TrendFact(BuildPerformanceTrend(f)); ok {
+		c.Facts = append([]Fact{x}, c.Facts...)
+	}
 	return c, b.findings, checks
 }
 
@@ -956,17 +967,18 @@ func (b *perfBuild) wrk01() {
 		return
 	}
 	floor := f.waitFloor()
+	// Phase 5k: the waits small against uptime are one Info line, each with its time.
+	var small, smallEv []string
 	for i, w := range waits {
 		if i == 5 {
 			break
 		}
 		g := WaitGroup(w.Type)
 		pct := float64(w.WaitMs) * 100 / float64(total)
-		evidence := fmt.Sprintf("Waited %d hours over %d waits since %s.", w.WaitMs/3600000, w.Tasks, sqlTime(f.StartedAt))
+		evidence := fmt.Sprintf("Waited %s over %s waits since %s.", waitTime(w.WaitMs), n0int(w.Tasks), sqlTime(f.StartedAt))
 		if w.WaitMs < floor {
-			b.add("WRK01", SeverityInfo, WhenNone, EffortNone, ClockSinceRestart, f.ServerName,
-				fmt.Sprintf("Wait #%d: %s (%s%% of all waiting; small against uptime).", i+1, w.Type, pct1(pct)),
-				wrk01Why[g], wrk01Do[g], evidence)
+			small = append(small, fmt.Sprintf("%s %s%%", w.Type, pct1(pct)))
+			smallEv = append(smallEv, fmt.Sprintf("%s: %s over %s waits.", w.Type, waitTime(w.WaitMs), n0int(w.Tasks)))
 			continue
 		}
 		sev := SeverityInfo
@@ -984,6 +996,28 @@ func (b *perfBuild) wrk01() {
 			fmt.Sprintf("Wait #%d: %s (%s%% of all waiting).", i+1, w.Type, pct1(pct)),
 			wrk01Why[g], wrk01Do[g], evidence)
 	}
+	if len(small) > 0 {
+		b.add("WRK01", SeverityInfo, WhenNone, EffortNone, ClockSinceRestart, f.ServerName,
+			"Waits since restart are small against uptime: "+strings.Join(small, ", ")+".",
+			wrk01SmallWhy, wrk01SmallDo, strings.Join(smallEv, " ")+" Since "+sqlTime(f.StartedAt)+".")
+	}
+}
+
+// The folded WRK01 line (phase 5k).
+const (
+	wrk01SmallWhy = "Shares of all waiting always add up to 100%, so on a server that waited little since its restart they say nothing about slowness."
+	wrk01SmallDo  = "Nothing: look again after a busy day."
+)
+
+// waitTime writes a wait time: "40 s", "12 min", "3.5 hours".
+func waitTime(ms int64) string {
+	switch {
+	case ms < 60000:
+		return n0(float64(ms)/1000) + " s"
+	case ms < 3600000:
+		return n0(float64(ms)/60000) + " min"
+	}
+	return n1(float64(ms)/3600000) + " hours"
 }
 
 // signalPct is the share of signal waits in all waits, as WRK02 converts it to int.

@@ -314,6 +314,63 @@ export interface CheckStatus {
   note: string // why skipped; "" otherwise
 }
 
+// Phase 5k (docs/phase5k-contract.md): the Performance screen's "better or worse than usual" and what
+// made the difference.
+export interface PerformanceTrend {
+  verdict: "better" | "worse" | "same" | "" // "" when there is nothing to compare with (message says why)
+  words: string
+  sentence: string
+  day: string // "today", "yesterday", "Wed 4 Nov"
+  figures: TrendFigure[]
+  compared: string
+  days: TrendDay[]
+  movers: TrendMovers
+  message: string
+}
+
+export interface TrendFigure {
+  id: "queries" | "cpu" | "waiting"
+  label: string
+  value: string
+  change: string
+  usual: string
+  tone: "better" | "worse" | "same"
+  pct: number
+}
+
+export interface TrendDay {
+  date: string
+  label: string
+  kind: "working" | "weekend" | "quiet" | "judged" | "none"
+  cpuPerQueryMs: number
+  queriesPerHour: number
+  planChanges: number
+  note: string
+}
+
+export interface TrendMovers {
+  faster: number
+  savedMsPerDay: number
+  slower: number
+  addedMsPerDay: number
+  slowerList: TrendMover[]
+  fasterList: TrendMover[]
+  error: string
+}
+
+export interface TrendMover {
+  queryHash: string
+  objectName: string
+  text: string
+  since: string // UTC
+  beforeCpuMs: number
+  nowCpuMs: number
+  nowRuns: number
+  cpuMsPerDay: number // added (positive) or saved (negative)
+  after: string
+  afterAt: string | null
+}
+
 export interface CardDetail {
   card: Card // the same object the overview carries for this card
   findings: Finding[] // ranked: severity, effort, when, checkId
@@ -322,6 +379,7 @@ export interface CardDetail {
   fixes?: Fix[] // the fixes available on this card right now (setup, upkeep, backups); only fixes whose finding fired, and on backups the remove fix
   deadlocks?: DeadlockReport | null // performance only: the last stored DLK01 report; omitted or null otherwise
   blockingHistory?: BlockingHistory | null // performance only (phase 5d): the last stored BLK01 history; omitted or null otherwise
+  trend?: PerformanceTrend | null // performance only (phase 5k): better or worse than usual; omitted or null otherwise
   checkdbRun?: CheckdbRun | null // backups and storage only: the last DBCC CHECKDB run from kakapo; omitted or null otherwise
   maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
 }

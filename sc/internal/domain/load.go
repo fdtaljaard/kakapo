@@ -23,8 +23,23 @@ var loadDayChoices = []int{7, 14, 30}
 // LoadBarelyUsedShare is kakapo's own line for a day that was barely used: its queries per hour held
 // under a quarter of the median day's. Set on OldSchool's 30 days (measured 2026-11-05): 15 and 16 Oct
 // ran a fifth or less of a normal day's queries per hour and would pull the usual range down to
-// nothing; Wed 4 Nov, quiet but used, ran nine tenths and stays.
+// nothing.
 const LoadBarelyUsedShare = 0.25
+
+// A quiet day (phase 5k, docs/phase5k-contract.md, part 3): less work asked and less cost, a holiday.
+// Its queries per hour under LoadQuietQueriesShare of the median day's and its CPU per hour under
+// LoadQuietCPUShare of it. Wed 4 Nov 2026 on OldSchool, a public holiday: 69% of the queries, 18% of
+// the CPU. A day with a good fix keeps its queries and stays.
+const (
+	LoadQuietQueriesShare = 0.75
+	LoadQuietCPUShare     = 0.5
+)
+
+// LoadQuiet says whether a day is left out of the usual range: barely used, or quiet.
+func LoadQuiet(queriesPerHour, cpuPerHour, medianQueries, medianCPU float64) bool {
+	return queriesPerHour < medianQueries*LoadBarelyUsedShare ||
+		(queriesPerHour < medianQueries*LoadQuietQueriesShare && cpuPerHour < medianCPU*LoadQuietCPUShare)
+}
 
 // LoadMinDays is how many days of today's kind the usual range needs.
 const LoadMinDays = 2
@@ -149,23 +164,77 @@ type loadDay struct {
 	hours map[int]LoadHourFact
 }
 
-// queriesPerHour is the day's queries per hour held.
+// workHours are the hours a day is judged on (phase 5k): its business hours held, else every hour held.
+// Background work runs around the clock and hides a holiday in the whole day's figures (OldSchool,
+// Wed 4 Nov 2026: 88% of a working day's queries over the whole day, 69% in business hours).
+func (d loadDay) workHours() []LoadHourFact {
+	out := []LoadHourFact{}
+	for h, x := range d.hours {
+		if h >= trendHours.From && h < trendHours.To {
+			out = append(out, x)
+		}
+	}
+	if len(out) == 0 {
+		for _, x := range d.hours {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// queriesPerHour is the day's queries per hour in its work hours.
 func (d loadDay) queriesPerHour() float64 {
-	if len(d.hours) == 0 {
+	hs := d.workHours()
+	if len(hs) == 0 {
 		return 0
 	}
 	var n int64
-	for _, h := range d.hours {
+	for _, h := range hs {
 		n += h.Executions
 	}
-	return float64(n) / float64(len(d.hours))
+	return float64(n) / float64(len(hs))
+}
+
+// cpuPerHour is the day's CPU (microseconds) per hour in its work hours.
+func (d loadDay) cpuPerHour() float64 {
+	hs := d.workHours()
+	if len(hs) == 0 {
+		return 0
+	}
+	var n int64
+	for _, h := range hs {
+		n += h.CPU
+	}
+	return float64(n) / float64(len(hs))
+}
+
+// loadQuietDays says which days are left out (LoadQuiet), each against the median of the other days,
+// so a quiet day does not pull its own line down; with each day's share of that median's queries and
+// CPU per hour, in percent.
+func loadQuietDays(days []loadDay) (quiet []bool, queriesPct, cpuPct []float64) {
+	quiet, queriesPct, cpuPct = make([]bool, len(days)), make([]float64, len(days)), make([]float64, len(days))
+	for i, d := range days {
+		var qs, cs []float64
+		for j, o := range days {
+			if j != i {
+				qs, cs = append(qs, o.queriesPerHour()), append(cs, o.cpuPerHour())
+			}
+		}
+		if len(qs) == 0 {
+			continue
+		}
+		mq, mc := median(qs), median(cs)
+		quiet[i] = LoadQuiet(d.queriesPerHour(), d.cpuPerHour(), mq, mc)
+		queriesPct[i], cpuPct[i] = safeDiv(d.queriesPerHour(), mq)*100, safeDiv(d.cpuPerHour(), mc)*100
+	}
+	return quiet, queriesPct, cpuPct
 }
 
 // LoadBaseline builds the comparison from the hours before today (docs/phase5i-contract.md, "The
 // comparison"): the days of today's kind in the selected days before today that Query Store holds,
 // each with the hours it holds (an hour Query Store has no interval for is not held, so a day it
-// started partway through counts for the hours it has); a day whose queries per hour held are under
-// LoadBarelyUsedShare of the median day's is left out; the usual range of each hour of the day is the
+// started partway through counts for the hours it has); a day barely used or quiet against the other
+// days (loadQuietDays, in business hours) is left out; the usual range of each hour of the day is the
 // lowest, the highest and the median of the days left, for cores busy, queries and threads waiting.
 // Fewer than LoadMinDays days left: no range.
 func LoadBaseline(f LoadFacts, days int) LoadBase {
@@ -189,14 +258,10 @@ func LoadBaseline(f LoadFacts, days int) LoadBase {
 	sort.Slice(held, func(i, j int) bool { return held[i].date.Before(held[j].date) })
 	b.Held = len(held)
 
-	qph := make([]float64, 0, len(held))
-	for _, d := range held {
-		qph = append(qph, d.queriesPerHour())
-	}
-	line := median(qph) * LoadBarelyUsedShare
+	quiet, _, _ := loadQuietDays(held)
 	kept := []loadDay{}
-	for _, d := range held {
-		if d.queriesPerHour() < line {
+	for i, d := range held {
+		if quiet[i] {
 			b.LeftOut = append(b.LeftOut, d.date)
 			continue
 		}
@@ -436,7 +501,7 @@ func BuildLoad(f LoadFacts, base LoadBase, opt LoadOptions) Load {
 	}
 	left := ""
 	if n := len(base.LeftOut); n > 0 {
-		left = fmt.Sprintf(" (%d barely used, left out)", n)
+		left = fmt.Sprintf(" (%d quiet or barely used, left out)", n)
 	}
 	if len(base.Compared) < LoadMinDays {
 		l.Key = fmt.Sprintf("Query Store holds %s like today here; the usual range needs %d.", plural(int64(len(base.Compared)), "day", "days"), LoadMinDays) + left

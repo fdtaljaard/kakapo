@@ -10,6 +10,7 @@ import { CheckdbRunPanel } from "@/components/checkdb-run-panel"
 import { ChecksList } from "@/components/checks-list"
 import { DatabaseLine } from "@/components/database-list"
 import { DeadlocksPanel } from "@/components/deadlocks-panel"
+import { PerformanceTrendBlock } from "@/components/performance-trend"
 import { SamplePanel } from "@/components/sample-panel"
 import { FindingCard } from "@/components/finding-card"
 import { FixDialog } from "@/components/fix-dialog"
@@ -159,6 +160,9 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
       )}
 
       {stillRunning && <StillRunningNotice notice={stillRunning} onDismiss={() => setStillRunning(null)} />}
+
+      {/* Phase 5k: better or worse than usual, and what made the difference (docs/phase5k-contract.md). */}
+      {cardId === "performance" && detail?.trend && <PerformanceTrendBlock trend={detail.trend} serverId={serverId} database={database} />}
 
       <FindingContext.Provider value={handover}>
         {detail ? (

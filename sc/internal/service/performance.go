@@ -23,6 +23,13 @@ func readPerformanceFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStat
 	if err != nil {
 		return domain.PerformanceFacts{Database: d.Name, State: d.State, Error: err.Error()}
 	}
+	// Phase 5k: the hours of the 8 days before, as the load strip reads them (docs/phase5k-contract.md),
+	// for "better or worse than usual". A read that fails leaves the trend out, not the card.
+	if f.State == "ONLINE" && f.QuerySource == domain.QuerySourceQueryStore {
+		if l, err := collect.LoadHours(readCtx, db, d.Name, domain.LoadFrom(f.ServerNow, 8)); err == nil {
+			f.Load = &l
+		}
+	}
 	return f
 }
 
@@ -50,7 +57,7 @@ func (s *Service) performanceDetail(ctx context.Context, db *sql.DB, serverID in
 	// The create-index fix of each WRK03 finding, with its options (docs/phase4c-contract.md, part 3),
 	// and the archive fix of each QRY01 finding that says to archive before an index.
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Deadlocks: last, Blocking: blocking,
-		Fixes: domain.AvailablePerformanceFixes(facts, findings)}, nil
+		Fixes: domain.AvailablePerformanceFixes(facts, findings), Trend: domain.BuildPerformanceTrend(facts)}, nil
 }
 
 // DeadlockReport runs DLK01 now (docs/phase3e-contract.md): reads the deadlocks of the last 7 days

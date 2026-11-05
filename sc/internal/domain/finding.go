@@ -155,6 +155,9 @@ type CardDetail struct {
 	// piece of regular maintenance and where it stands; nil (left out) for every other card, and when
 	// the Upkeep card itself could not be read (a plan whose jobs could not be read says so in it).
 	MaintenancePlan *MaintenancePlan `json:"maintenancePlan,omitempty"`
+	// Trend is the Performance card's "better or worse than usual" (docs/phase5k-contract.md): written
+	// for the Performance card (null when it could not be built), left out for every other card.
+	Trend *PerformanceTrend `json:"trend,omitempty"`
 }
 
 // Check is one check the app implements: which card it belongs to, its title, the question it

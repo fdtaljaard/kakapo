@@ -165,7 +165,7 @@ func TestBuildLoad(t *testing.T) {
 	if l.Key != "range of the last 4 working days at that hour" {
 		t.Errorf("key %q", l.Key)
 	}
-	if k := BuildLoad(f, LoadBaseline(f, 30), LoadOptions{}).Key; k != "range of the last 8 working days at that hour (2 barely used, left out)" {
+	if k := BuildLoad(f, LoadBaseline(f, 30), LoadOptions{}).Key; k != "range of the last 8 working days at that hour (2 quiet or barely used, left out)" {
 		t.Errorf("30 days key %q", k)
 	}
 }

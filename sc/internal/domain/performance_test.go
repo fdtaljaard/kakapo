@@ -94,13 +94,13 @@ func TestPerformanceGreen(t *testing.T) {
 	}
 	wantFacts(t, c, "Biggest wait=CXPACKET 24% (parallelism)/normal", "CPU pressure=10% signal waits/normal",
 		"Blocking now=none/normal", "Pressure now=none/normal")
-	// Info findings only: the five waits, SRV04, the query.
+	// Info findings only: the five small waits in one line (phase 5k), SRV04, the query.
 	for _, x := range fs {
 		if x.Severity != SeverityInfo || x.Clock == "" {
 			t.Errorf("finding %+v", x)
 		}
 	}
-	if len(findingsOf(fs, "WRK01")) != 5 || len(findingsOf(fs, "SRV04")) != 1 || len(findingsOf(fs, "QRY01")) != 1 || len(fs) != 7 {
+	if len(findingsOf(fs, "WRK01")) != 1 || len(findingsOf(fs, "SRV04")) != 1 || len(findingsOf(fs, "QRY01")) != 1 || len(fs) != 3 {
 		t.Errorf("findings %+v", fs)
 	}
 	if len(cs) != 15 {
@@ -170,25 +170,13 @@ func TestPerformanceWRK01(t *testing.T) {
 	f := goodPerf()
 	_, fs, _ := runPerf(f)
 	w := findingsOf(fs, "WRK01")
-	// Ten days up: the floor is a day of waiting, so every wait here is small against uptime.
-	if w[0].Finding != "Wait #1: CXPACKET (24.0% of all waiting; small against uptime)." || w[0].Severity != SeverityInfo || w[0].When != WhenNone ||
-		w[0].Effort != EffortNone || w[0].Clock != ClockSinceRestart || w[0].Object != `SQL01\WMS` || w[0].Why != wrk01Why["PAR"] ||
-		w[0].DoThis != wrk01Do["PAR"] || w[0].Evidence != "Waited 0 hours over 8000 waits since 2026-10-24 11:00." ||
-		w[0].ThenCheck != "Re-run after a business day: the top wait's share is lower." {
-		t.Errorf("first %+v", w[0])
-	}
-	for _, x := range w {
-		if strings.Contains(x.Finding, "SLEEP") || strings.Contains(x.Finding, "LAZYWRITER") {
-			t.Errorf("benign wait ranked: %+v", x)
-		}
-	}
-	// Order: by wait time, then type.
-	order := []string{}
-	for _, x := range w {
-		order = append(order, x.Finding[strings.Index(x.Finding, ": ")+2:strings.Index(x.Finding, " (")])
-	}
-	if strings.Join(order, ",") != "CXPACKET,PAGEIOLATCH_SH,WRITELOG,ASYNC_NETWORK_IO,SOS_SCHEDULER_YIELD" {
-		t.Errorf("order %v", order)
+	// Ten days up: the floor is a day of waiting, so every wait here is small against uptime: one Info
+	// line (phase 5k), by wait time then type, each wait's time in minutes, no benign wait.
+	if len(w) != 1 || w[0].Finding != "Waits since restart are small against uptime: CXPACKET 24.0%, PAGEIOLATCH_SH 20.0%, WRITELOG 20.0%, ASYNC_NETWORK_IO 18.0%, SOS_SCHEDULER_YIELD 18.0%." ||
+		w[0].Severity != SeverityInfo || w[0].When != WhenNone || w[0].Effort != EffortNone || w[0].Clock != ClockSinceRestart ||
+		w[0].Object != `SQL01\WMS` || w[0].Why != wrk01SmallWhy || w[0].DoThis != wrk01SmallDo ||
+		!strings.HasPrefix(w[0].Evidence, "CXPACKET: 4 min over 8,000 waits. PAGEIOLATCH_SH: 3 min over 5,000 waits.") {
+		t.Errorf("small waits %+v", w)
 	}
 
 	// Severities at the thresholds, on a day of uptime (floor 8,640,000 ms) with a billion ms of
@@ -242,8 +230,9 @@ func TestPerformanceWRK01Floor(t *testing.T) {
 	f.Waits = []WaitStat{{"LCK_M_S", 200000, 0, 40, 9000}, {"WRITELOG", 107692, 0, 900, 10}}
 	c, fs, cs := runPerf(f)
 	x := findingsOf(fs, "WRK01")[0]
-	if x.Finding != "Wait #1: LCK_M_S (65.0% of all waiting; small against uptime)." || x.Severity != SeverityInfo ||
-		x.When != WhenNone || x.Effort != EffortNone || x.Why != wrk01Why["LOCK"] {
+	if x.Finding != "Waits since restart are small against uptime: LCK_M_S 65.0%, WRITELOG 35.0%." || x.Severity != SeverityInfo ||
+		x.When != WhenNone || x.Effort != EffortNone || x.Why != wrk01SmallWhy ||
+		x.Evidence != "LCK_M_S: 3 min over 40 waits. WRITELOG: 2 min over 900 waits. Since 2026-10-24 11:00." {
 		t.Errorf("small %+v", x)
 	}
 	if c.Status != StatusGreen || c.Verdict != "Nothing stands out: the top wait is LCK_M_S at 65%, no blocking, no memory or thread pressure." ||
@@ -265,7 +254,7 @@ func TestPerformanceWRK01Floor(t *testing.T) {
 	f.UptimeHours = 0
 	f.Waits = []WaitStat{{"LCK_M_S", 360000, 0, 1, 1}, {"WRITELOG", 359999, 0, 1, 1}}
 	_, fs, _ = runPerf(f)
-	if w := findingsOf(fs, "WRK01"); w[0].Severity != SeverityMedium || w[1].Finding != "Wait #2: WRITELOG (50.0% of all waiting; small against uptime)." {
+	if w := findingsOf(fs, "WRK01"); w[0].Severity != SeverityMedium || w[1].Finding != "Waits since restart are small against uptime: WRITELOG 50.0%." {
 		t.Errorf("an hour's floor %+v", w)
 	}
 }
