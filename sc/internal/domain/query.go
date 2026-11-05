@@ -544,8 +544,14 @@ const (
 	queryVeryChangedPct  = 20 // stale at any age
 	queryStaleMinRows    = 1000
 	queryRegressionRatio = 2.0 // the plan in use is this many times slower than the fastest
-	queryPlanXMLMax      = 5   // plans whose XML the page carries (Save .sqlplan)
-	queryLargeTableRows  = 10_000_000
+	// queryForceMinRuns: a faster plan with fewer runs than this may only have met favourable values;
+	// it keeps its Force button, but the sentence asks for more runs before forcing it.
+	queryForceMinRuns = 10
+	// queryWorkRatio: the faster plan does less work when its CPU or its pages read per run are this
+	// many times lower; either is enough (a plan may trade a little CPU for far fewer reads).
+	queryWorkRatio      = 1.5
+	queryPlanXMLMax     = 5 // plans whose XML the page carries (Save .sqlplan)
+	queryLargeTableRows = 10_000_000
 )
 
 // BuildQueryDetail builds the query's page from what was read. canChange says whether the
@@ -1151,10 +1157,29 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 	case active != nil && fastest != nil && fastest != active && fastest.AvgDurationMs > 0 &&
 		active.AvgDurationMs >= queryRegressionRatio*fastest.AvgDurationMs && active.AvgDurationMs >= 10:
 		ratio := active.AvgDurationMs / fastest.AvgDurationMs
-		text := fmt.Sprintf("%s plans: the one in use since %s is %sx slower than %s (%s against %s on average).",
-			qCountWord(ran), qPlanSince(f, *active), qRatioText(ratio), qPlanName(*fastest), QueryDuration(active.AvgDurationMs), QueryDuration(fastest.AvgDurationMs))
+		text := fmt.Sprintf("%s plans: the one in use since %s is %sx slower than %s (%s against %s on average, %s against %s).",
+			qCountWord(ran), qPlanSince(f, *active), qRatioText(ratio), qPlanName(*fastest), QueryDuration(active.AvgDurationMs), QueryDuration(fastest.AvgDurationMs),
+			plural(active.Runs, "run", "runs"), plural(fastest.Runs, "run", "runs"))
+		// Does the faster plan do less work, or did it only wait less? CPU and reads per run, over the same
+		// runs as the durations (Query Store's per-plan averages of the same window).
+		cpuX, readsX := qWorkRatio(active.AvgCPUMs, fastest.AvgCPUMs), qWorkRatio(active.AvgReads, fastest.AvgReads)
+		lessWork := cpuX >= queryWorkRatio || readsX >= queryWorkRatio
+		if lessWork {
+			var parts []string
+			if cpuX >= queryWorkRatio {
+				parts = append(parts, "uses "+qRatioText(cpuX)+"x less CPU")
+			}
+			if readsX >= queryWorkRatio {
+				parts = append(parts, "reads "+qRatioText(readsX)+"x fewer pages")
+			}
+			text += " " + upperFirst(qPlanName(*fastest)) + " " + qJoinAnd(parts) + " per run, so the plan itself does less work."
+		}
 		var a *QueryAction
 		switch {
+		case fastest.Runs < queryForceMinRuns:
+			text += fmt.Sprintf(" But %s ran only %s: compare it on more runs before forcing it.", qPlanName(*fastest), plural(fastest.Runs, "time", "times"))
+		case !lessWork && active.AvgCPUMs > 0 && active.AvgReads > 0:
+			text += " CPU and pages read per run are similar, so the difference is in elapsed time (waiting, not the work done): forcing it may not make runs consistently faster."
 		case qFindAction(fastest.Actions, "force-plan") != nil:
 			text += fmt.Sprintf(" Force plan %d so SQL Server uses the faster one.", fastest.PlanID)
 			a = qFindAction(fastest.Actions, "force-plan")
@@ -1360,6 +1385,14 @@ func qPlanSince(f QueryFacts, p QueryPlan) string {
 		return "its last compile"
 	}
 	return qServerClock(*first, f)
+}
+
+// qWorkRatio is how many times more work the plan in use does than the faster one; 0 when unknown.
+func qWorkRatio(active, faster float64) float64 {
+	if active <= 0 || faster <= 0 {
+		return 0
+	}
+	return active / faster
 }
 
 func qRatioText(r float64) string {

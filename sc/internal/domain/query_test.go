@@ -188,7 +188,7 @@ func TestQueryDetailRegressedPlan(t *testing.T) {
 
 	want := []string{
 		"It ran 11,240 times in 7 days, 155 ms each on average; the slowest run took 41 s.",
-		"Two plans: the one in use since 2 Nov 10:00 is 6x slower than plan 12 (600 ms against 100 ms on average). Force plan 12 so SQL Server uses the faster one.",
+		"Two plans: the one in use since 2 Nov 10:00 is 6x slower than plan 12 (600 ms against 100 ms on average, 1,240 runs against 10,000 runs). Plan 12 uses 7.5x less CPU and reads 14x fewer pages per run, so the plan itself does less work. Force plan 12 so SQL Server uses the faster one.",
 		"Its parameters were compiled with @FromDate = '2019-01-01 00:00:00.000' and @Site = 5, which may not be typical. Its runs swing from 600 ms on average to 41 s",
 		"Remove the plan from the cache so the next run compiles for its own values.",
 		"Its plan converts a column's type for every row (CONVERT_IMPLICIT(nvarchar(50),[l].[Code],0)=[@code])",
@@ -319,5 +319,35 @@ func TestThisDatabaseTable(t *testing.T) {
 	cross := Showplan{Objects: []ShowplanObject{{Database: "Copy", Schema: "dbo", Table: "A"}, {Database: "Other", Schema: "dbo", Table: "B"}}}
 	if _, ok := qThisDatabaseTable("[Other].[dbo].[B]", "Copy", cross); ok {
 		t.Error("an index offered in another database")
+	}
+}
+
+// The force advice holds back when the faster plan ran only a few times, and when it does the same work
+// per run (CPU and pages read) and only waited less.
+func TestQueryDetailForceAdviceEvidence(t *testing.T) {
+	explain := func(f QueryFacts) string {
+		var lines []string
+		for _, e := range BuildQueryDetail(f, true).Explain {
+			lines = append(lines, e.Text)
+		}
+		return strings.Join(lines, "\n")
+	}
+	few := regressedQueryFacts()
+	few.Plans[0].Runs, few.Plans[0].CPU, few.Plans[0].Duration, few.Plans[0].Reads = 2, 2*40000, 2*100000, 2*3000
+	if got := explain(few); !strings.Contains(got, "But plan 12 ran only 2 times: compare it on more runs before forcing it.") ||
+		strings.Contains(got, "Force plan 12 so") {
+		t.Errorf("few runs:\n%s", got)
+	}
+	waiting := regressedQueryFacts()
+	waiting.Plans[0].CPU, waiting.Plans[0].Reads = 10000*290000, 10000*41000
+	if got := explain(waiting); !strings.Contains(got, "CPU and pages read per run are similar, so the difference is in elapsed time (waiting, not the work done)") ||
+		strings.Contains(got, "does less work") || strings.Contains(got, "Force plan 12 so") {
+		t.Errorf("waiting:\n%s", got)
+	}
+	// Fewer reads alone is enough evidence of less work, even with a little more CPU.
+	reads := regressedQueryFacts()
+	reads.Plans[0].CPU = 10000 * 320000
+	if got := explain(reads); !strings.Contains(got, "Plan 12 reads 14x fewer pages per run, so the plan itself does less work. Force plan 12 so") {
+		t.Errorf("reads only:\n%s", got)
 	}
 }
