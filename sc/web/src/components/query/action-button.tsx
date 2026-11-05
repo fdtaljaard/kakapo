@@ -1,4 +1,4 @@
-import { Database, Eraser, Pin, PinOff, Plus, Wrench } from "lucide-react"
+import { Archive, Database, Eraser, Pin, PinOff, Plus, Wrench } from "lucide-react"
 
 import type { QueryAction } from "@/api-queries"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ const icons: Record<string, typeof Wrench> = {
   "evict-plan": Eraser,
   "update-statistics-table": Database,
   "create-index": Plus,
+  "archive-table": Archive,
 }
 
 // One action of the query page: opens the fix dialog for its fix with its options (the preview reads

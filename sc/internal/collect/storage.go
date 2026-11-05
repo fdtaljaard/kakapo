@@ -197,16 +197,101 @@ ORDER BY CASE WHEN database_id = 2 THEN 1 ELSE 0 END, file_id;
 
 SELECT session_id, login_name, program_name, mb FROM @tsess ORDER BY mb DESC;`
 
+// growingTablesBlock reads the tables that only grow (IDX10) into @gt, in its own TRY whose error
+// goes to @growError (declared by the query that holds it): user tables whose name contains log,
+// history, audit, trace, event, journal, archive or queue, of a million rows or 500 MB, the 10
+// biggest, and how far back each one's rows go (see storageDatabaseQuery). The Storage card's read
+// and the archive-first read of QRY01 and the query page (growingTablesQuery) share it.
+const growingTablesBlock = `DECLARE @gt TABLE (n int NOT NULL, schema_name sysname NOT NULL, table_name sysname NOT NULL, rows_count bigint NOT NULL,
+                   mb decimal(18, 1) NOT NULL, date_col sysname NULL, date_indexed bit NOT NULL, key_col sysname NULL,
+                   oldest datetime2 NULL);
+
+/* Tables that only grow (IDX10): user tables whose name says log, history or queue, of a million rows
+   or 500 MB, the 10 biggest; then the lowest value of each one's first date column, read uncommitted
+   and only when that column leads an index, else the date of the row with the lowest ascending
+   identity key of the clustered index (a seek either way, never a scan) */
+BEGIN TRY
+    INSERT @gt (n, schema_name, table_name, rows_count, mb, date_col, date_indexed, key_col)
+    SELECT ROW_NUMBER() OVER (ORDER BY x.mb DESC, x.schema_name, x.table_name), x.schema_name, x.table_name, x.rows_count, x.mb,
+           d.name,
+           CASE WHEN EXISTS (SELECT 1 FROM sys.index_columns AS ic
+                             JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                             WHERE ic.object_id = x.object_id AND ic.column_id = d.column_id AND ic.key_ordinal = 1
+                               AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0)
+                THEN 1 ELSE 0 END,
+           k.name
+    FROM (SELECT TOP (10) t.object_id, s.name AS schema_name, t.name AS table_name,
+                 SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) AS rows_count,
+                 CONVERT(decimal(18, 1), SUM(p.used_page_count) * 8 / 1024.0) AS mb
+          FROM sys.tables AS t
+          JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+          JOIN sys.dm_db_partition_stats AS p ON p.object_id = t.object_id
+          WHERE t.is_ms_shipped = 0
+            AND EXISTS (SELECT 1 FROM (VALUES (N'log'), (N'history'), (N'audit'), (N'trace'), (N'event'), (N'journal'), (N'archive'), (N'queue')) AS w (word)
+                        WHERE LOWER(t.name) LIKE N'%' + w.word + N'%')
+          GROUP BY t.object_id, s.name, t.name
+          HAVING SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) >= 1000000
+              OR SUM(p.used_page_count) * 8 / 1024.0 >= 500
+          ORDER BY SUM(p.used_page_count) DESC) AS x
+    OUTER APPLY (SELECT TOP (1) c.name, c.column_id FROM sys.columns AS c
+                 WHERE c.object_id = x.object_id AND TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')
+                 ORDER BY c.column_id) AS d
+    OUTER APPLY (SELECT c.name FROM sys.index_columns AS ic
+                 JOIN sys.identity_columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                 WHERE ic.object_id = x.object_id AND ic.index_id = 1 AND ic.key_ordinal = 1
+                   AND ic.is_descending_key = 0 AND CONVERT(bigint, c.increment_value) > 0) AS k;
+
+    DECLARE @i int = 1, @gtCount int, @schema sysname, @table sysname, @col sysname, @indexed bit, @key sysname, @o datetime2, @sql nvarchar(max);
+    SELECT @gtCount = COUNT(*) FROM @gt;
+    WHILE @i <= @gtCount
+    BEGIN
+        SELECT @schema = schema_name, @table = table_name, @col = date_col, @indexed = date_indexed, @key = key_col, @o = NULL FROM @gt WHERE n = @i;
+        IF @col IS NOT NULL AND (@indexed = 1 OR @key IS NOT NULL)
+        BEGIN TRY
+            IF @indexed = 1
+                SET @sql = N'` + KakapoTag + ` SELECT @o = CONVERT(datetime2, MIN(' + QUOTENAME(@col) + N')) FROM '
+                         + QUOTENAME(@schema) + N'.' + QUOTENAME(@table) + N' WITH (READUNCOMMITTED);';
+            ELSE
+                SET @sql = N'` + KakapoTag + ` SELECT TOP (1) @o = CONVERT(datetime2, ' + QUOTENAME(@col) + N') FROM '
+                         + QUOTENAME(@schema) + N'.' + QUOTENAME(@table) + N' WITH (READUNCOMMITTED) ORDER BY ' + QUOTENAME(@key) + N';';
+            EXEC sys.sp_executesql @sql, N'@o datetime2 OUTPUT', @o = @o OUTPUT;
+            UPDATE @gt SET oldest = @o WHERE n = @i;
+        END TRY
+        BEGIN CATCH
+            SET @o = NULL; /* the age stays unknown for this table; the others are still read */
+        END CATCH;
+        SET @i += 1;
+    END;
+END TRY
+BEGIN CATCH
+    SET @growError = ERROR_MESSAGE();
+END CATCH;`
+
+// growingTablesSelect returns @gt, the result set scanGrowingTables reads.
+const growingTablesSelect = `SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, key_col, oldest FROM @gt ORDER BY n;`
+
+// growingTablesQuery runs inside the database and reads only the tables that only grow, the same
+// block as the Storage card's read: QRY01 and the query page say "archive before an index" when a
+// costly query reads much of one (docs/phase5a-contract.md). Result sets: the error, the tables.
+const growingTablesQuery = `SET NOCOUNT ON;
+DECLARE @growError nvarchar(2048);
+` + growingTablesBlock + `
+SELECT @growError;
+` + growingTablesSelect
+
 // storageDatabaseQuery runs inside the database (EXEC [db].sys.sp_executesql): the file latency and
 // the VLF count and how full the log is (sys.dm_db_log_space_usage; read from inside, so an
 // AUTO_CLOSE database is open while they are read), the space
 // used per file, the table sizes, the tables that only grow and the identity columns, each in its
 // own TRY.
 // The tables that only grow are user tables whose name contains log, history, audit, trace, event,
-// journal or archive, of a million rows or 500 MB, the 10 biggest. For each whose first datetime,
+// journal, archive or queue, of a million rows or 500 MB, the 10 biggest. For each whose first datetime,
 // datetime2 or date column is the leading key column of an index (not filtered, disabled or
 // hypothetical), one SELECT MIN of that column, read uncommitted, says how far back its rows go:
-// on the index it is a seek. On any other column it would scan millions of rows, so it is not read.
+// on the index it is a seek. Otherwise, when the clustered index leads with an ascending identity,
+// the row with the lowest key is the oldest, so its date is read with TOP (1) ORDER BY that key (a
+// seek on the clustered index). A MIN on an unindexed column would scan millions of rows, so it is
+// never read.
 // Result sets: errors, the VLF count and the log space used, file latency, space used, totals, the 10 biggest tables,
 // tables that only grow, identity columns.
 const storageDatabaseQuery = `SET NOCOUNT ON;
@@ -248,8 +333,6 @@ END CATCH;
 DECLARE @space TABLE (file_id int NOT NULL, used_mb bigint NULL);
 DECLARE @tables TABLE (object_id int NOT NULL, table_name nvarchar(300) NOT NULL, data_mb decimal(18, 2) NOT NULL,
                        index_mb decimal(18, 2) NOT NULL, index_count int NOT NULL, rows_count bigint NOT NULL);
-DECLARE @gt TABLE (n int NOT NULL, schema_name sysname NOT NULL, table_name sysname NOT NULL, rows_count bigint NOT NULL,
-                   mb decimal(18, 1) NOT NULL, date_col sysname NULL, date_indexed bit NOT NULL, oldest datetime2 NULL);
 DECLARE @ident TABLE (table_name nvarchar(300) NOT NULL, column_name sysname NOT NULL, type_name sysname NOT NULL,
                       last_value bigint NOT NULL, seed_value bigint NOT NULL, increment_value bigint NOT NULL,
                       pct_used decimal(9, 2) NOT NULL);
@@ -284,56 +367,7 @@ BEGIN CATCH
     SET @tableError = ERROR_MESSAGE();
 END CATCH;
 
-/* Tables that only grow (IDX10): user tables whose name says log or history, of a million rows or
-   500 MB, the 10 biggest; then the lowest value of each one's first date column, read uncommitted
-   and only when that column leads an index (a seek, never a scan) */
-BEGIN TRY
-    INSERT @gt (n, schema_name, table_name, rows_count, mb, date_col, date_indexed)
-    SELECT ROW_NUMBER() OVER (ORDER BY x.mb DESC, x.schema_name, x.table_name), x.schema_name, x.table_name, x.rows_count, x.mb,
-           d.name,
-           CASE WHEN EXISTS (SELECT 1 FROM sys.index_columns AS ic
-                             JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-                             WHERE ic.object_id = x.object_id AND ic.column_id = d.column_id AND ic.key_ordinal = 1
-                               AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0)
-                THEN 1 ELSE 0 END
-    FROM (SELECT TOP (10) t.object_id, s.name AS schema_name, t.name AS table_name,
-                 SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) AS rows_count,
-                 CONVERT(decimal(18, 1), SUM(p.used_page_count) * 8 / 1024.0) AS mb
-          FROM sys.tables AS t
-          JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-          JOIN sys.dm_db_partition_stats AS p ON p.object_id = t.object_id
-          WHERE t.is_ms_shipped = 0
-            AND EXISTS (SELECT 1 FROM (VALUES (N'log'), (N'history'), (N'audit'), (N'trace'), (N'event'), (N'journal'), (N'archive')) AS w (word)
-                        WHERE LOWER(t.name) LIKE N'%' + w.word + N'%')
-          GROUP BY t.object_id, s.name, t.name
-          HAVING SUM(CASE WHEN p.index_id IN (0, 1) THEN p.row_count ELSE 0 END) >= 1000000
-              OR SUM(p.used_page_count) * 8 / 1024.0 >= 500
-          ORDER BY SUM(p.used_page_count) DESC) AS x
-    OUTER APPLY (SELECT TOP (1) c.name, c.column_id FROM sys.columns AS c
-                 WHERE c.object_id = x.object_id AND TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')
-                 ORDER BY c.column_id) AS d;
-
-    DECLARE @i int = 1, @gtCount int, @schema sysname, @table sysname, @col sysname, @indexed bit, @o datetime2, @sql nvarchar(max);
-    SELECT @gtCount = COUNT(*) FROM @gt;
-    WHILE @i <= @gtCount
-    BEGIN
-        SELECT @schema = schema_name, @table = table_name, @col = date_col, @indexed = date_indexed, @o = NULL FROM @gt WHERE n = @i;
-        IF @col IS NOT NULL AND @indexed = 1
-        BEGIN TRY
-            SET @sql = N'` + KakapoTag + ` SELECT @o = CONVERT(datetime2, MIN(' + QUOTENAME(@col) + N')) FROM '
-                     + QUOTENAME(@schema) + N'.' + QUOTENAME(@table) + N' WITH (READUNCOMMITTED);';
-            EXEC sys.sp_executesql @sql, N'@o datetime2 OUTPUT', @o = @o OUTPUT;
-            UPDATE @gt SET oldest = @o WHERE n = @i;
-        END TRY
-        BEGIN CATCH
-            SET @o = NULL; /* the age stays unknown for this table; the others are still read */
-        END CATCH;
-        SET @i += 1;
-    END;
-END TRY
-BEGIN CATCH
-    SET @growError = ERROR_MESSAGE();
-END CATCH;
+` + growingTablesBlock + `
 
 BEGIN TRY
     INSERT @ident (table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used)
@@ -361,7 +395,7 @@ SELECT file_id, used_mb FROM @space;
 SELECT COUNT(*), ISNULL(SUM(data_mb), 0), ISNULL(SUM(index_mb), 0) FROM @tables;
 SELECT TOP (10) table_name, data_mb, index_mb, index_count, rows_count FROM @tables
 WHERE data_mb + index_mb >= 1 ORDER BY data_mb + index_mb DESC;
-SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, oldest FROM @gt ORDER BY n;
+` + growingTablesSelect + `
 SELECT table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used FROM @ident
 ORDER BY pct_used DESC;`
 
@@ -507,10 +541,7 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 }
 
 func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *domain.StorageFacts) error {
-	// QUOTED_IDENTIFIER ON, the standard setting, whatever the connection's default: the dynamic SQL
-	// is compiled with the session's setting.
-	q := Tag(safeSession + "SET QUOTED_IDENTIFIER ON; EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt;")
-	rows, err := db.QueryContext(ctx, q, sql.Named("stmt", Tag(storageDatabaseQuery)))
+	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", Tag(storageDatabaseQuery)))
 	if err != nil {
 		return friendlyError(err)
 	}
@@ -615,18 +646,8 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 	if err := nextResultSet(rows, "tables that only grow"); err != nil {
 		return err
 	}
-	f.GrowingTables = []domain.GrowingTable{}
-	for rows.Next() {
-		var (
-			t       domain.GrowingTable
-			dateCol sql.NullString
-			oldest  sql.NullTime
-		)
-		if err := rows.Scan(&t.Schema, &t.Name, &t.Rows, &t.MB, &dateCol, &t.DateIndexed, &oldest); err != nil {
-			return err
-		}
-		t.DateCol, t.Oldest = dateCol.String, naivePtr(oldest)
-		f.GrowingTables = append(f.GrowingTables, t)
+	if f.GrowingTables, err = scanGrowingTables(rows); err != nil {
+		return err
 	}
 
 	// 7: identity columns at half their range or more.
@@ -642,6 +663,61 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 		f.Identities = append(f.Identities, c)
 	}
 	return friendlyErrOrNil(rows.Err())
+}
+
+// scanGrowingTables reads the rows of growingTablesSelect.
+func scanGrowingTables(rows *sql.Rows) ([]domain.GrowingTable, error) {
+	out := []domain.GrowingTable{}
+	for rows.Next() {
+		var (
+			t       domain.GrowingTable
+			dateCol sql.NullString
+			keyCol  sql.NullString
+			oldest  sql.NullTime
+		)
+		if err := rows.Scan(&t.Schema, &t.Name, &t.Rows, &t.MB, &dateCol, &t.DateIndexed, &keyCol, &oldest); err != nil {
+			return nil, err
+		}
+		t.DateCol, t.KeyCol, t.Oldest = dateCol.String, keyCol.String, naivePtr(oldest)
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// inDatabaseQuoted is the batch that runs @stmt inside a database with QUOTED_IDENTIFIER ON, the
+// standard setting, whatever the connection's default: the dynamic SQL is compiled with the
+// session's setting.
+func inDatabaseQuoted(database string) string {
+	return Tag(safeSession + "SET QUOTED_IDENTIFIER ON; EXEC " + domain.QuoteName(database) + ".sys.sp_executesql @stmt;")
+}
+
+// GrowingTables reads only the tables that only grow of one database (growingTablesQuery, the
+// Storage card's block), SELECTs only: for QRY01's and the query page's "archive before an index".
+// The string is SQL Server's error when that block failed; the error is for a read that could not
+// run at all.
+func GrowingTables(ctx context.Context, db *sql.DB, database string) ([]domain.GrowingTable, string, error) {
+	rows, err := db.QueryContext(ctx, inDatabaseQuoted(database), sql.Named("stmt", Tag(growingTablesQuery)))
+	if err != nil {
+		return nil, "", friendlyError(err)
+	}
+	defer rows.Close()
+	var growErr sql.NullString
+	if rows.Next() {
+		if err := rows.Scan(&growErr); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := nextResultSet(rows, "tables that only grow"); err != nil {
+		return nil, "", err
+	}
+	tables, err := scanGrowingTables(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", friendlyError(err)
+	}
+	return tables, growErr.String, nil
 }
 
 // nextResultSet drains the current result set and moves to the next; the driver reaches the next

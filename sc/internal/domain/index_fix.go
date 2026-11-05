@@ -32,6 +32,9 @@ const (
 	OptionOnline     = "online"
 	OptionObject     = "object"
 	OptionIndex      = "index" // drop-index: the index to drop
+	// OptionQueryHash is the query a fix belongs to: evict-plan's, and the QRY01 finding an archive
+	// fix belongs to (the card page matches it to the hash in the finding's evidence).
+	OptionQueryHash = "queryHash"
 )
 
 // TableColumn is one column of a table as sys.columns describes it.

@@ -87,6 +87,8 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		return domain.Overview{}, err
 	}
 	performance := readPerformanceFacts(ctx, db, *d)
+	// QRY01's archive before an index, from the storage facts read above (no second read).
+	performance.GrowingCandidates = growingCandidatesOf(storage)
 	performanceDef, _ := domain.FindCardDef(domain.CardPerformance)
 	lastDeadlocks, err := s.store.LastDeadlockReport(ctx, serverID, d.Name)
 	if err != nil {

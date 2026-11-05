@@ -31,6 +31,10 @@ func readPerformanceFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStat
 // each null before its first run; reading the card never reads the system_health session.
 func (s *Service) performanceDetail(ctx context.Context, db *sql.DB, serverID int64, d domain.DatabaseStatus, def domain.CardDef) (domain.CardDetail, error) {
 	facts := readPerformanceFacts(ctx, db, d)
+	if facts.Error == "" && facts.State == "ONLINE" && len(facts.TopQueries) > 0 {
+		// QRY01's archive before an index: the tables that only grow that nothing cleans up.
+		facts.GrowingCandidates = readGrowingCandidates(ctx, db, d.Name, facts.ServerNow)
+	}
 	last, err := s.store.LastDeadlockReport(ctx, serverID, d.Name)
 	if err != nil {
 		return domain.CardDetail{}, err
@@ -43,7 +47,8 @@ func (s *Service) performanceDetail(ctx context.Context, db *sql.DB, serverID in
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.CardDetail{}, err
 	}
-	// The create-index fix of each WRK03 finding, with its options (docs/phase4c-contract.md, part 3).
+	// The create-index fix of each WRK03 finding, with its options (docs/phase4c-contract.md, part 3),
+	// and the archive fix of each QRY01 finding that says to archive before an index.
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Deadlocks: last, Blocking: blocking,
 		Fixes: domain.AvailablePerformanceFixes(facts, findings)}, nil
 }

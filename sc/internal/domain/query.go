@@ -71,6 +71,11 @@ type QueryFacts struct {
 
 	TablesError string
 	Tables      []QueryTableFact
+
+	// The tables that only grow that nothing cleans up (GrowingCandidates, read beside the query):
+	// the page says "archive before an index" when the query reads much of one. nil when they or
+	// kakapo's archive jobs could not be read.
+	GrowingCandidates []GrowingTable
 }
 
 // QueryStorePlanFact is one plan of the query in Query Store, with its runtime statistics over the
@@ -945,14 +950,8 @@ func qProcStatements(ss []ProcStatementFact, hash string) []ProcStatement {
 // qQueryTables are the tables of this database the plans touch, with their size and statistics
 // age, largest first; stale statistics carry the update-statistics-table action.
 func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable {
-	xmls := []string{}
-	for _, p := range plans {
-		if x := qPlanXMLOf(f, p); x != "" && !p.PlanTooBig {
-			xmls = append(xmls, x)
-		}
-	}
 	indexes := map[string][]string{}
-	for _, o := range ShowplanTables(f.Database, xmls...) {
+	for _, o := range ShowplanTables(f.Database, qPlanXMLs(f, plans)...) {
 		if o.Index != "" {
 			indexes[strings.ToLower(o.Schema+"."+o.Table)] = strings.Split(o.Index, "\n")
 		}
@@ -977,6 +976,27 @@ func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable 
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Rows > out[j].Rows })
 	return out
+}
+
+// qPlanXMLs are the XML of the plans that can be inspected.
+func qPlanXMLs(f QueryFacts, plans []QueryPlan) []string {
+	xmls := []string{}
+	for _, p := range plans {
+		if x := qPlanXMLOf(f, p); x != "" && !p.PlanTooBig {
+			xmls = append(xmls, x)
+		}
+	}
+	return xmls
+}
+
+// qArchiveAction opens the archive fix on a table that only grows, with the date column IDX10 read
+// when it is indexed, as the Storage card's entry does (ArchiveFixesFor).
+func qArchiveAction(t GrowingTable) *QueryAction {
+	opts := map[string]string{OptionTable: archiveTableOption(t.Schema, t.Name)}
+	if t.DateIndexed {
+		opts[OptionArchiveDateColumn] = t.DateCol
+	}
+	return &QueryAction{FixID: FixArchiveTable, Label: "Archive old rows", Title: "Archive or delete old rows of " + t.Schema + "." + t.Name, Options: opts}
 }
 
 // qStatsAgeDays is how old statistics are, in whole days: the update is server time, ServerNow UTC.
@@ -1061,6 +1081,20 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 			plural(s.Runs, "time", "times"), when, QueryDuration(s.AvgDurationMs), QueryDuration(s.MaxDurationMs)), nil)
 		add(fmt.Sprintf("Each run uses %s of CPU and reads %s pages (%s MB) from memory or disk.",
 			QueryDuration(s.AvgCPUMs), n0(s.AvgReads), kbAsMB(s.AvgReads*8)), nil)
+	}
+
+	// Archive before an index (IDX10, as QRY01 says it): the query reads much of a table that only
+	// grows. The fix only for a table with a date column, as IDX10's finding carries it.
+	archive, share, archiveFirst := GrowingTable{}, 0.0, false
+	if d.Source != QueryDetailFromNothing && s.Runs > 0 {
+		archive, share, archiveFirst = archiveFirstTable(f.Database, f.GrowingCandidates, s.AvgReads, qPlanXMLs(f, d.Plans)...)
+	}
+	if archiveFirst {
+		var a *QueryAction
+		if canChange && archive.DateCol != "" {
+			a = qArchiveAction(archive)
+		}
+		add(archiveFirstDo(archive, share), a)
 	}
 
 	// The plans.
@@ -1196,7 +1230,10 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 			keys := strings.Trim(mi.Equality+", "+mi.Inequality, ", ")
 			text := fmt.Sprintf("SQL Server suggests an index on %s (%s) that it estimates would cut this query's cost by %s%%.",
 				mi.TableName, qUnbracketList(keys), n0(mi.Impact))
-			if mi.Action != nil {
+			switch {
+			case archiveFirst:
+				text += " Archive " + archive.Schema + "." + archive.Name + " first; create the index only if it is still slow after that."
+			case mi.Action != nil:
 				text += " Create the index: the preview checks the existing indexes first."
 			}
 			add(text, mi.Action)

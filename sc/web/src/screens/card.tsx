@@ -105,8 +105,10 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
   }
   const applyFinding = (f: Finding) => {
     if (!f.fixId) return
-    // The Backups card's fix is titled by itself ("Create a backup schedule"); the others by the finding.
-    const fix = cardId === "backups" ? detail?.fixes?.find((x) => x.id === f.fixId) : undefined
+    // The Backups card's fix is titled by itself ("Create a backup schedule"), and so is a costly query's
+    // archive ("Archive or delete old rows"); the others by the finding.
+    const ownTitle = cardId === "backups" || (f.checkId === "QRY01" && f.fixId === archiveTableFixId)
+    const fix = ownTitle ? detail?.fixes?.find((x) => x.id === f.fixId) : undefined
     setFixing({ fixId: f.fixId, title: fix?.title ?? f.title, options: fixOptionsFor(f, detail?.fixes) })
   }
   // Where a finding's next read lives (docs/phase4c-contract.md): a costly query opens its page, a
@@ -672,14 +674,15 @@ function NotCheckedBody({ card }: { card: CardData }) {
 
 // The options a finding's fix needs (docs/phase4c-contract.md): the detail's fixes entry with this id whose
 // options name the finding's object (a table, an index suggestion, a flag), else the first with this id.
+// A costly query's archive fix also names its query hash, which the finding's evidence holds.
 function fixOptionsFor(f: Finding, fixes?: Fix[]): Record<string, string> | undefined {
   const mine = fixes?.filter((x) => x.id === f.fixId) ?? []
   const onObject = mine.filter((x) => Object.values(x.options ?? {}).includes(f.object))
   // Two suggestions on one table (WRK03): the evidence names the columns, so the entry whose column
-  // options all appear in it is the finding's own.
+  // options all appear in it is the finding's own. Two costly queries on one object (QRY01): the hash.
   const text = `${f.finding} ${f.evidence ?? ""}`
   const byColumns = onObject.find((x) =>
-    ["equality", "inequality", "included"].every((k) => !x.options?.[k] || text.includes(x.options[k])),
+    ["equality", "inequality", "included", "queryHash"].every((k) => !x.options?.[k] || text.includes(x.options[k])),
   )
   const match = byColumns ?? onObject[0] ?? mine[0]
   return match?.options

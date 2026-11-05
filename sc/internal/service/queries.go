@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"sqlmonitor/internal/collect"
 	"sqlmonitor/internal/domain"
@@ -46,5 +47,7 @@ func (s *Service) QueryDetail(ctx context.Context, serverID int64, dbName, hash 
 	if err != nil {
 		return domain.QueryDetail{}, newError(KindUnreachable, "could not read the query on %s: %v", srv.Name, err)
 	}
+	// Archive before an index: the tables that only grow that nothing cleans up, in the server's clock.
+	f.GrowingCandidates = readGrowingCandidates(ctx, db, d.Name, f.ServerNow.Add(time.Duration(f.UTCOffsetMinutes)*time.Minute))
 	return domain.BuildQueryDetail(f, d.CanFix()), nil
 }

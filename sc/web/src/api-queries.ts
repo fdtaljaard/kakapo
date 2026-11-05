@@ -44,7 +44,7 @@ export interface ExplainLine {
 
 // Opens the fix dialog: the fix, the dialog's title and the options its first preview needs.
 export interface QueryAction {
-  fixId: string // "force-plan" | "unforce-plan" | "evict-plan" | "update-statistics-table" | "create-index" | "query-store"
+  fixId: string // "force-plan" | "unforce-plan" | "evict-plan" | "update-statistics-table" | "create-index" | "query-store" | "archive-table"
   label: string // the button
   title: string // the dialog
   options: Record<string, string>

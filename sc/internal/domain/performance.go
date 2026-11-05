@@ -73,6 +73,11 @@ type PerformanceFacts struct {
 	QueryStoreError string // why Query Store could not be read, when it could not
 	QueriesError    string // neither Query Store nor the plan cache could be read
 
+	// QRY01's "archive before an index": the tables that only grow that nothing cleans up
+	// (GrowingCandidates, the Storage card's IDX10 rule), read beside these facts. nil when they or
+	// kakapo's archive jobs could not be read: QRY01 then says nothing about archiving.
+	GrowingCandidates []GrowingTable
+
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
@@ -1063,8 +1068,53 @@ func (b *perfBuild) wrk03() {
 // AvailablePerformanceFixes are the fixes of the Performance card's findings (docs/phase4c-contract.md,
 // part 3): one create-index fix per WRK03 finding, with the suggestion's table and columns in its
 // options and the finding's object, so the card page sends them with the first preview. The
-// suggestion is matched to its finding by the table and the evidence's columns.
+// suggestion is matched to its finding by the table and the evidence's columns. Then one archive
+// fix per QRY01 finding that carries it (archive before an index), as ArchiveFixesFor builds IDX10's.
 func AvailablePerformanceFixes(f PerformanceFacts, findings []Finding) []Fix {
+	out := performanceIndexFixes(f, findings)
+	return append(out, qry01ArchiveFixes(f, findings)...)
+}
+
+// qry01ArchiveFixes are the archive fixes of the QRY01 findings that carry one: the table the query
+// reads most of, its options as ArchiveFixesFor gives them, plus the finding's object and query hash
+// (several QRY01 findings can share one object; the hash is in each one's evidence). A finding is
+// matched to its query by the evidence: its query hash, else its text.
+func qry01ArchiveFixes(f PerformanceFacts, findings []Finding) []Fix {
+	out := []Fix{}
+	def, _ := FindFixDef(FixArchiveTable)
+	for _, x := range findings {
+		if x.CheckID != "QRY01" || x.FixID != FixArchiveTable {
+			continue
+		}
+		for i, q := range f.TopQueries {
+			if i == 5 {
+				break
+			}
+			if q.QueryHash != "" && !strings.Contains(x.Evidence, " Query hash: "+q.QueryHash+".") ||
+				q.QueryHash == "" && !strings.HasSuffix(x.Evidence, " Query: "+left(oneLine(q.Text), 1500)) || q.Execs == 0 || q.PlanTooBig {
+				continue
+			}
+			t, _, ok := archiveFirstTable(f.Database, f.GrowingCandidates, float64(q.Reads)/float64(q.Execs), q.Plan)
+			if !ok || t.DateCol == "" {
+				continue
+			}
+			opts := map[string]string{OptionTable: archiveTableOption(t.Schema, t.Name), OptionObject: x.Object}
+			if q.QueryHash != "" {
+				opts[OptionQueryHash] = q.QueryHash
+			}
+			if t.DateIndexed {
+				opts[OptionArchiveDateColumn] = t.DateCol
+			}
+			out = append(out, Fix{ID: def.ID, Title: def.Title, Scope: def.Scope, CheckID: x.CheckID, Setting: def.Setting,
+				Current: "no archive job", Target: "old rows archived nightly", Options: opts})
+			break
+		}
+	}
+	return out
+}
+
+// performanceIndexFixes are the create-index fixes of the WRK03 findings.
+func performanceIndexFixes(f PerformanceFacts, findings []Finding) []Fix {
 	out := []Fix{}
 	def, _ := FindFixDef(FixCreateIndex)
 	used := map[int]bool{}
@@ -1298,6 +1348,90 @@ func (b *perfBuild) srv04() {
 		left("CPU share from plans still in cache; disk reads from file statistics. Busiest: "+strings.Join(parts, "; "), 4000))
 }
 
+// planMissingIndexWords is PlanWarnings' words for a plan's <MissingIndexes>.
+const planMissingIndexWords = "SQL Server suggests an index for it (check IDX02 and IDX09 before creating one)"
+
+// archiveFirstMinShare is the share of a table's pages a query must read per run, on average, for
+// "archive its old rows before an index": archiving then shrinks what every run reads. A query that
+// seeks a few rows reads the same few pages whatever the table's size, and gains nothing.
+const archiveFirstMinShare = 0.25
+
+// archiveFirstTable is the table that only grows (of candidates) that a query's plans touch and that
+// it reads the largest share of per run (avgReads pages against the table's MB x 128), when that
+// share is archiveFirstMinShare or more.
+func archiveFirstTable(database string, candidates []GrowingTable, avgReads float64, plans ...string) (GrowingTable, float64, bool) {
+	var (
+		best  GrowingTable
+		share float64
+		found bool
+	)
+	if len(candidates) == 0 || avgReads <= 0 {
+		return best, 0, false
+	}
+	for _, o := range planTablesHere(database, plans...) {
+		for _, c := range candidates {
+			pages := c.MB * 128
+			if pages <= 0 || !strings.EqualFold(o.Schema, c.Schema) || !strings.EqualFold(o.Table, c.Name) {
+				continue
+			}
+			if s := avgReads / pages; s >= archiveFirstMinShare && s > share {
+				best, share, found = c, s, true
+			}
+		}
+	}
+	return best, share, found
+}
+
+// planTablesHere are the tables of this database the plans touch (no temporary tables, table
+// variables or system tables). A plan compiled before the database was restored or renamed names the
+// database it had then (Query Store keeps the plan as compiled): when none of a plan's objects names
+// this database, its objects are taken as this database's.
+func planTablesHere(database string, plans ...string) []ShowplanObject {
+	out := []ShowplanObject{}
+	for _, p := range plans {
+		objects := ParseShowplan(p).Objects
+		here := false
+		for _, o := range objects {
+			if strings.EqualFold(o.Database, database) {
+				here = true
+				break
+			}
+		}
+		for _, o := range objects {
+			if !here && !strings.EqualFold(o.Database, "tempdb") {
+				o.Database = ""
+			}
+			if qShowplanTableOf(database, o) {
+				out = append(out, o)
+			}
+		}
+	}
+	return out
+}
+
+// archiveFirstDo is the Do this of a query that reads much of a table that only grows: archive its
+// old rows first, an index only if it is still slow after that; a queue keeps the rows not finished.
+func archiveFirstDo(t GrowingTable, share float64) string {
+	age := "that keeps every row"
+	if t.Oldest != nil {
+		age = "whose oldest row is from " + t.Oldest.Format("Jan 2006")
+	}
+	kind := growingKind(t.Name)
+	s := fmt.Sprintf("This query reads %s%% of %s.%s (%s MB) every run, a %s table %s and that nothing cleans up. "+
+		"Archive its old rows first (Storage card, Tables row): every run then reads less. Consider an index only if it is still slow after that.",
+		n0(math.Min(share*100, 100)), t.Schema, t.Name, n0(t.MB), kind, age)
+	if kind == "queue" {
+		s += " A queue's old rows may still be needed (failed rows retried): archive only the finished ones with the archive's condition, " +
+			"e.g. the status that means done, and confirm which statuses are finished with the vendor first."
+	}
+	return s
+}
+
+// archiveFirstIndexWords is the <MissingIndexes> flag of a query whose table should be archived first.
+func archiveFirstIndexWords(t GrowingTable) string {
+	return "SQL Server suggests an index for it, but archive " + t.Schema + "." + t.Name + " first"
+}
+
 // PlanWarnings reads what the triage reads from a plan's XML (PerformanceTriage.sql section 0): the
 // expression of an implicit conversion that stops a seek, and the other warnings, in its words.
 // Spills and memory grant warnings exist only in actual plans, never in a cached one, so they come
@@ -1319,7 +1453,7 @@ func PlanWarnings(plan string) (conversion string, flags []string) {
 		{"<UserDefinedFunction", "calls a scalar function for every row"},
 		{`Table="[@`, "reads a table variable (no statistics, estimated as 1 row)"},
 		{`StatementOptmEarlyAbortReason="TimeOut"`, "the optimizer timed out before finding a good plan (the query is too complex)"},
-		{"<MissingIndexes>", "SQL Server suggests an index for it (check IDX02 and IDX09 before creating one)"},
+		{"<MissingIndexes>", planMissingIndexWords},
 	} {
 		if strings.Contains(plan, w.marker) {
 			flags = append(flags, w.words)
@@ -1372,6 +1506,18 @@ func (b *perfBuild) qry01() {
 		conversion, flags := "", []string{}
 		if !q.PlanTooBig {
 			conversion, flags = PlanWarnings(q.Plan)
+		}
+		// Archive before an index (IDX10): the query reads much of a table that only grows.
+		archive, archiveShare, archiveFirst := GrowingTable{}, 0.0, false
+		if !q.PlanTooBig && q.Execs > 0 {
+			archive, archiveShare, archiveFirst = archiveFirstTable(f.Database, f.GrowingCandidates, perRunF(q.Reads), q.Plan)
+		}
+		if archiveFirst {
+			for i, w := range flags {
+				if w == planMissingIndexWords {
+					flags[i] = archiveFirstIndexWords(archive)
+				}
+			}
 		}
 		spillKB := q.spillKBPerRun()
 		spills := spillKB >= 8000 // 1,000 pages
@@ -1434,6 +1580,9 @@ func (b *perfBuild) qry01() {
 		}
 
 		do := qry01Do
+		if archiveFirst {
+			do = archiveFirstDo(archive, archiveShare) + " " + qry01Do
+		}
 		if varies {
 			do += " Test with the values users actually enter, including one that matches nothing: some inputs cost far more than others."
 		}
@@ -1498,7 +1647,7 @@ func (b *perfBuild) qry01() {
 		ev += " Query: " + left(oneLine(q.Text), 1500)
 
 		sev := SeverityInfo
-		if varies || conversion != "" || len(flags) > 0 || waits || q.Variants >= 50 || spills || grant || unstable {
+		if varies || conversion != "" || len(flags) > 0 || waits || q.Variants >= 50 || spills || grant || unstable || archiveFirst {
 			sev = SeverityLow
 		}
 		object := q.ObjectName
@@ -1506,6 +1655,10 @@ func (b *perfBuild) qry01() {
 			object = f.Database
 		}
 		b.add("QRY01", sev, WhenDecideFirst, EffortModerate, clock, object, s, qry01Why, do, ev)
+		// The archive fix, as IDX10's finding carries it: only for a table with a date column.
+		if archiveFirst && archive.DateCol != "" {
+			b.findings[len(b.findings)-1].FixID = FixArchiveTable
+		}
 	}
 }
 

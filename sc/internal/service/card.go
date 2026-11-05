@@ -143,6 +143,33 @@ func readStorageFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus) 
 	return f
 }
 
+// growingCandidatesOf are the tables QRY01 may say to archive before an index (domain.GrowingCandidates),
+// from the storage facts already read in the same request: none when the tables that only grow or
+// kakapo's archive jobs could not be read, so the advice stays as it was.
+func growingCandidatesOf(f domain.StorageFacts) []domain.GrowingTable {
+	if f.Error != "" || f.State != "ONLINE" || f.GrowingTablesError != "" || f.ArchivesError != "" {
+		return nil
+	}
+	return domain.GrowingCandidates(f.GrowingTables, f.Archives, f.Database, f.ServerNow)
+}
+
+// readGrowingCandidates reads the same tables for a page without storage facts (the Performance card,
+// the query page): the tables that only grow and kakapo's archive jobs, read-only. Any failure gives
+// none, so the advice stays as it was and the page never fails for it. now is the server's clock.
+func readGrowingCandidates(ctx context.Context, db *sql.DB, database string, now time.Time) []domain.GrowingTable {
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tables, growErr, err := collect.GrowingTables(readCtx, db, database)
+	if err != nil || growErr != "" {
+		return nil
+	}
+	jobs, jobsErr, err := collect.ArchiveJobs(readCtx, db, database, false)
+	if err != nil || jobsErr != "" {
+		return nil
+	}
+	return domain.GrowingCandidates(tables, jobs, database, now)
+}
+
 // storageTrend keeps the samples of one storage read (docs/phase3b-contract.md, addendum C) and
 // returns the pair of stored samples of the tightest volume STO12 forecasts from, or nil when the
 // volumes could not be read.

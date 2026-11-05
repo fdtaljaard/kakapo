@@ -91,27 +91,47 @@ type SlowGrowth struct {
 	At   time.Time
 }
 
-// GrowingTable is a user table whose name suggests a log or history table (it contains log,
-// history, audit, trace, event, journal or archive) and that holds a million rows or 500 MB.
+// GrowingTable is a user table whose name suggests a log, history or queue table (it contains one
+// of GrowingTableWords) and that holds a million rows or 500 MB.
 type GrowingTable struct {
 	Schema  string
 	Name    string
 	Rows    int64
 	MB      float64
 	DateCol string // its first datetime, datetime2 or date column; "" when it has none
-	// DateIndexed: DateCol leads an index (key_ordinal 1). Only then is its MIN read, because then
-	// it is a seek on the index; on any other column it would be a scan of millions of rows.
+	// DateIndexed: DateCol leads an index (key_ordinal 1). Then its MIN is read, a seek on the index;
+	// on any other column a MIN would be a scan of millions of rows.
 	DateIndexed bool
-	Oldest      *time.Time // the lowest value of DateCol; nil when not read, not readable or empty
+	// KeyCol is the clustered index's first key column when it is an ascending identity: the row with
+	// the lowest key is the oldest row, so when DateCol is not indexed, Oldest is that row's DateCol,
+	// read with TOP (1) ORDER BY KeyCol (a seek on the clustered index). "" when there is none.
+	KeyCol string
+	Oldest *time.Time // the lowest value of DateCol (or the oldest row's); nil when not read, not readable or empty
 }
 
 // growingMinMonths is how old the oldest row of a table that only grows must be before IDX10
 // says nothing removes old rows: a table whose oldest row is younger is being cleaned up.
 const growingMinMonths = 12
 
-// GrowingTableWords are the words, any case, in the name of a table that looks like a log or
-// history table. The collector's read filters on the same words.
-var GrowingTableWords = []string{"log", "history", "audit", "trace", "event", "journal", "archive"}
+// GrowingTableWords are the words, any case, in the name of a table that looks like a log, history
+// or queue table (a queue that keeps its processed rows grows like a log). The collector's read
+// filters on the same words.
+var GrowingTableWords = []string{"log", "history", "audit", "trace", "event", "journal", "archive", "queue"}
+
+// growingKind is what a table that only grows looks like from its name: "queue" when only that word
+// matched (a queue that keeps its processed rows), else "log or history".
+func growingKind(name string) string {
+	lower := strings.ToLower(name)
+	for _, w := range GrowingTableWords {
+		if w != "queue" && strings.Contains(lower, w) {
+			return "log or history"
+		}
+	}
+	if strings.Contains(lower, "queue") {
+		return "queue"
+	}
+	return "log or history"
+}
 
 // LooksLikeLogTable says whether a table's name contains one of GrowingTableWords, in any case.
 func LooksLikeLogTable(name string) bool {
@@ -1313,8 +1333,9 @@ func (b *storageBuild) idx10() {
 		b.skipped["IDX10"] = "Could not read the tables that only grow: " + f.GrowingTablesError
 		return
 	}
+	candidates := GrowingCandidates(f.GrowingTables, f.Archives, f.Database, f.ServerNow)
 	for _, t := range f.GrowingTables {
-		if !LooksLikeLogTable(t.Name) || (t.Rows < 1000000 && t.MB < 500) {
+		if !growingSized(t) {
 			continue
 		}
 		if j, ok := findArchiveJob(f.Archives, f.Database, t.Schema, t.Name); ok {
@@ -1324,27 +1345,31 @@ func (b *storageBuild) idx10() {
 				fmt.Sprintf("Rows: %s. Size: %s MB. %s.", n0(float64(t.Rows)), n0(t.MB), upperFirst(j.ArchivedWords())))
 			continue
 		}
+		if !growingIn(candidates, t) {
+			continue // its oldest row is younger than growingMinMonths: something cleans it up
+		}
 		months := 0
 		if t.Oldest != nil {
-			if months = wholeMonths(*t.Oldest, f.ServerNow); months < growingMinMonths {
-				continue
-			}
+			months = wholeMonths(*t.Oldest, f.ServerNow)
 		}
 		rank := 4
 		if t.Rows >= 10000000 || t.MB >= 5120 {
 			rank = 3
 		}
-		finding := fmt.Sprintf("%s.%s has %s rows (%s MB) and looks like a log or history table", t.Schema, t.Name, n0(float64(t.Rows)), n0(t.MB))
+		finding := fmt.Sprintf("%s.%s has %s rows (%s MB) and looks like a %s table", t.Schema, t.Name, n0(float64(t.Rows)), n0(t.MB), growingKind(t.Name))
 		evidence := fmt.Sprintf("Rows: %s. Size: %s MB.", n0(float64(t.Rows)), n0(t.MB))
 		switch {
 		case t.Oldest != nil:
 			finding += fmt.Sprintf("; its oldest row is from %s (%d months ago), so nothing seems to remove old rows.",
 				t.Oldest.Format("2006-01-02"), months)
 			evidence += fmt.Sprintf(" Oldest %s: %s.", t.DateCol, sqlTime(*t.Oldest))
+			if !t.DateIndexed && t.KeyCol != "" {
+				evidence = strings.TrimSuffix(evidence, ".") + fmt.Sprintf(" (the row with the lowest %s).", t.KeyCol)
+			}
 		case t.DateCol == "":
 			finding += "."
 			evidence += " It has no date column, so how far back its rows go is unknown."
-		case !t.DateIndexed:
+		case !t.DateIndexed && t.KeyCol == "":
 			finding += "."
 			evidence += fmt.Sprintf(" Its date column %s is not indexed, so how far back its rows go was not read.", t.DateCol)
 		default:
@@ -1356,6 +1381,42 @@ func (b *storageBuild) idx10() {
 			b.withFix(FixArchiveTable)
 		}
 	}
+}
+
+// growingSized says whether a table that only grows is named like one (GrowingTableWords) and holds
+// a million rows or 500 MB: IDX10's bar.
+func growingSized(t GrowingTable) bool {
+	return LooksLikeLogTable(t.Name) && (t.Rows >= 1000000 || t.MB >= 500)
+}
+
+// GrowingCandidates are the tables IDX10 fires on as "nothing removes old rows": named like a log,
+// history or queue table, a million rows or 500 MB, the oldest row growingMinMonths old or more (or
+// its age unknown), and not archived by kakapo (findArchiveJob). They are one rule for IDX10 and for
+// QRY01's and the query page's "archive before an index". now is the server's clock, as Oldest is.
+func GrowingCandidates(tables []GrowingTable, archives []ArchiveJob, database string, now time.Time) []GrowingTable {
+	out := []GrowingTable{}
+	for _, t := range tables {
+		if !growingSized(t) {
+			continue
+		}
+		if _, ok := findArchiveJob(archives, database, t.Schema, t.Name); ok {
+			continue
+		}
+		if t.Oldest != nil && wholeMonths(*t.Oldest, now) < growingMinMonths {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func growingIn(tables []GrowingTable, t GrowingTable) bool {
+	for _, x := range tables {
+		if strings.EqualFold(x.Schema, t.Schema) && strings.EqualFold(x.Name, t.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // wholeMonths counts the whole months from a to now: 2025-11-03 to 2026-11-03 is 12, to

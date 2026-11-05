@@ -64,7 +64,8 @@ func TestStorageInstanceQuery(t *testing.T) {
 
 // TestGrowingTablesQuery checks IDX10's read: user tables named like log or history tables (the
 // domain's words), a million rows or 500 MB, the 10 biggest, and one MIN of the first date column
-// per table, only when that column leads an index (a seek), read uncommitted and in its own TRY so
+// per table when that column leads an index, else the oldest row's date through an ascending
+// identity clustered key (a seek either way), read uncommitted and in its own TRY so
 // one table cannot stop the others.
 func TestGrowingTablesQuery(t *testing.T) {
 	q := storageDatabaseQuery
@@ -78,8 +79,12 @@ func TestGrowingTablesQuery(t *testing.T) {
 		"TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')", "ORDER BY c.column_id",
 		"JOIN sys.indexes AS i ON i.object_id = ic.object_id AND i.index_id = ic.index_id",
 		"ic.column_id = d.column_id AND ic.key_ordinal = 1", "i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.has_filter = 0",
-		"MIN(' + QUOTENAME(@col) + N')", "WITH (READUNCOMMITTED)", "IF @col IS NOT NULL AND @indexed = 1",
-		"SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, oldest FROM @gt ORDER BY n;"} {
+		"MIN(' + QUOTENAME(@col) + N')", "WITH (READUNCOMMITTED)", "IF @col IS NOT NULL AND (@indexed = 1 OR @key IS NOT NULL)",
+		// Otherwise the oldest row through an ascending identity that leads the clustered index (a seek).
+		"JOIN sys.identity_columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id",
+		"ic.index_id = 1 AND ic.key_ordinal = 1", "ic.is_descending_key = 0 AND CONVERT(bigint, c.increment_value) > 0",
+		"SELECT TOP (1) @o = CONVERT(datetime2, ' + QUOTENAME(@col) + N')", "ORDER BY ' + QUOTENAME(@key) + N';'",
+		"SELECT schema_name, table_name, rows_count, mb, date_col, date_indexed, key_col, oldest FROM @gt ORDER BY n;"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("growing tables read lacks %q", want)
 		}
@@ -87,6 +92,73 @@ func TestGrowingTablesQuery(t *testing.T) {
 	for _, gone := range []string{"IntegrationLog", "COL_LENGTH", "[Date]", "@lt"} {
 		if strings.Contains(q, gone) {
 			t.Errorf("growing tables read still names %q", gone)
+		}
+	}
+}
+
+// The archive-first read of QRY01 and the query page is the Storage card's own block of the tables
+// that only grow, nothing more: tagged (the batch and the dynamic SQL inside), run inside the
+// database, and read-only (its INSERT and UPDATE are on @gt).
+func TestGrowingTablesOnlyQuery(t *testing.T) {
+	if !strings.Contains(storageDatabaseQuery, growingTablesBlock) || !strings.Contains(storageDatabaseQuery, growingTablesSelect) {
+		t.Error("the Storage card's read does not hold the shared block")
+	}
+	if !strings.Contains(growingTablesQuery, growingTablesBlock) || !strings.Contains(growingTablesQuery, growingTablesSelect) ||
+		!strings.Contains(growingTablesQuery, "DECLARE @growError nvarchar(2048);") || !strings.Contains(growingTablesQuery, "SELECT @growError;") {
+		t.Errorf("growing tables query:\n%s", growingTablesQuery)
+	}
+	if n := strings.Count(growingTablesQuery, "BEGIN TRY"); n != 2 {
+		t.Errorf("%d TRY blocks, want the block's own two", n)
+	}
+	for _, other := range []string{"@ident", "@tables", "@space", "sys.dm_io_virtual_file_stats", "sys.dm_db_log_info"} {
+		if strings.Contains(growingTablesQuery, other) {
+			t.Errorf("growing tables query reads more than the block: %q", other)
+		}
+	}
+	batch := inDatabaseQuoted("Warehouse]Live")
+	if !strings.HasPrefix(batch, KakapoTag+" "+safeSession) || !strings.Contains(batch, "EXEC [Warehouse]]Live].sys.sp_executesql @stmt;") {
+		t.Errorf("in-database batch %q", batch)
+	}
+	for name, q := range map[string]string{"growing tables": Tag(growingTablesQuery), "in database": batch} {
+		if !strings.HasPrefix(q, KakapoTag+" ") || strings.HasPrefix(q, KakapoTag+" "+KakapoTag) {
+			t.Errorf("%s is not tagged once: %.60s", name, q)
+		}
+		readOnly(t, name, q)
+	}
+	if !strings.Contains(growingTablesQuery, "N'"+KakapoTag+" SELECT @o") {
+		t.Error("the oldest-row read must carry the kakapo tag")
+	}
+}
+
+// TestGrowingTablesLive reads the tables that only grow of one database on a real instance,
+// read-only, when SQLMONITOR_TEST_HOST and SQLMONITOR_TEST_DB name one: the same tables as the
+// Storage card's read.
+func TestGrowingTablesLive(t *testing.T) {
+	host, name := os.Getenv("SQLMONITOR_TEST_HOST"), os.Getenv("SQLMONITOR_TEST_DB")
+	if host == "" || name == "" {
+		t.Skip("set SQLMONITOR_TEST_HOST and SQLMONITOR_TEST_DB to read a live instance")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, domain.ServerInput{Host: host, Auth: domain.AuthWindows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tables, growErr, err := GrowingTables(ctx, db, name)
+	if err != nil || growErr != "" {
+		t.Fatalf("read: %v %q", err, growErr)
+	}
+	f, err := StorageFacts(ctx, db, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tables) != len(f.GrowingTables) {
+		t.Errorf("%d tables, the Storage card read %d", len(tables), len(f.GrowingTables))
+	}
+	for i, x := range tables {
+		t.Logf("%s.%s rows %d mb %.1f date %q indexed %v key %q oldest %v", x.Schema, x.Name, x.Rows, x.MB, x.DateCol, x.DateIndexed, x.KeyCol, x.Oldest)
+		if i < len(f.GrowingTables) && (x.Schema != f.GrowingTables[i].Schema || x.Name != f.GrowingTables[i].Name) {
+			t.Errorf("table %d: %s.%s against %s.%s", i, x.Schema, x.Name, f.GrowingTables[i].Schema, f.GrowingTables[i].Name)
 		}
 	}
 }

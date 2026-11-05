@@ -735,6 +735,32 @@ func TestStorageIDX10(t *testing.T) {
 	if got[1].Evidence != "Rows: 2,000,000. Size: 700 MB. Its date column SentAt could not be read, so how far back its rows go is unknown." {
 		t.Errorf("IDX10 evidence with an unreadable date column: %q", got[1].Evidence)
 	}
+
+	// A queue that keeps its processed rows: its date column is not indexed, but its clustered key is
+	// an ascending identity, so the oldest row's date was read through the key. Its kind is "queue".
+	// A queue whose key read found nothing says its date column could not be read.
+	queued := time.Date(2025, 9, 25, 16, 19, 2, 0, time.UTC)
+	f = sfacts()
+	f.GrowingTables = []GrowingTable{
+		{Schema: "dbo", Name: "IntegrationDocumentQueue", Rows: 5284503, MB: 523.1, DateCol: "LastUpdateDateTime", KeyCol: "ID", Oldest: &queued},
+		{Schema: "dbo", Name: "MessageQueue", Rows: 2000000, MB: 300, DateCol: "QueuedAt", KeyCol: "ID"},
+	}
+	_, fs, _ = sbuild(f)
+	got = allOf(fs, "IDX10")
+	if len(got) != 2 {
+		t.Fatalf("IDX10 for queues: %+v", got)
+	}
+	wantStorageFinding(t, got[0], SeverityLow, WhenDecideFirst, EffortModerate, "[dbo].[IntegrationDocumentQueue]",
+		"dbo.IntegrationDocumentQueue has 5,284,503 rows (523 MB) and looks like a queue table; its oldest row is from 2025-09-25 (13 months ago), so nothing seems to remove old rows.")
+	if got[0].Evidence != "Rows: 5,284,503. Size: 523 MB. Oldest LastUpdateDateTime: 2025-09-25 16:19 (the row with the lowest ID)." {
+		t.Errorf("IDX10 evidence read through the key: %q", got[0].Evidence)
+	}
+	if got[1].Evidence != "Rows: 2,000,000. Size: 300 MB. Its date column QueuedAt could not be read, so how far back its rows go is unknown." {
+		t.Errorf("IDX10 evidence when the key read found nothing: %q", got[1].Evidence)
+	}
+	if growingKind("AuditQueue") != "log or history" || !LooksLikeLogTable("IntegrationDocumentQueue") {
+		t.Error("queue words")
+	}
 	if chk, _ := CheckByID("IDX10"); chk.Title != "Application tables that only grow" || chk.Question != "Which tables grow for ever?" ||
 		chk.Owner != OwnerVendor || chk.ThenCheck != "Re-run after the cleanup: the row count stopped growing." {
 		t.Errorf("IDX10 catalogue row %+v", chk)
