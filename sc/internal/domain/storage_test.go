@@ -127,7 +127,7 @@ func TestStorageGreen(t *testing.T) {
 		t.Fatalf("findings %+v", fs)
 	}
 	wantStorageFinding(t, fs[0], SeverityInfo, WhenNone, EffortNone, "WarehouseLive",
-		"The biggest table, [dbo].[Transaction], has 1,200 MB in total: 800 MB data and 400 MB in 3 index(es).")
+		"The biggest table, [dbo].[Transaction], has 1,200 MB in total: 800 MB data and 400 MB in 3 nonclustered index(es).")
 	if !strings.HasPrefix(fs[0].Evidence, "Top 2: [dbo].[Transaction]: 1,200 MB total, 800 MB data, 400 MB index, 1,234,567 rows; [dbo].[SalesOrder]: 120 MB total") ||
 		!strings.HasSuffix(fs[0].Evidence, "All 120 tables: 2,048 MB data, 1,024 MB indexes.") {
 		t.Errorf("IDX01 evidence %q", fs[0].Evidence)
@@ -638,6 +638,34 @@ func TestStorageIDX07(t *testing.T) {
 	f.SpaceUsedError = "denied"
 	if _, _, checks := sbuild(f); checkOf(checks, "IDX07").Status != CheckSkipped {
 		t.Errorf("space used unreadable: %+v", checkOf(checks, "IDX07"))
+	}
+}
+
+func TestStorageIDX10ArchiveTables(t *testing.T) {
+	oldest := time.Date(2024, 1, 5, 10, 22, 0, 0, time.UTC)
+	f := sfacts()
+	f.GrowingTables = []GrowingTable{
+		{Schema: "archive", Name: "IntegrationLog", Rows: 2000000, MB: 973, DateCol: "At", Oldest: &oldest}, // kakapo's own archive
+		{Schema: "dbo", Name: "Audit", Rows: 2000000, MB: 700, DateCol: "At", Oldest: &oldest},              // archived, no job left
+	}
+	f.ArchiveTables = []string{"Audit", "IntegrationLog"}
+	_, fs, _ := sbuild(f)
+	got := allOf(fs, "IDX10")
+	if len(got) != 1 || got[0].Object != "[dbo].[Audit]" || got[0].Severity != SeverityInfo ||
+		got[0].Finding != "dbo.Audit has 2,000,000 rows (700 MB). archive.Audit holds older rows, but no archive job runs on this server." {
+		t.Errorf("IDX10: %+v", got)
+	}
+}
+
+func TestStorageIDX01QueryStoreAndIndexes(t *testing.T) {
+	f := sfacts()
+	f.Tables[0].IndexCount = 0
+	qs, max := int64(576), int64(2048)
+	f.QueryStoreMB, f.QueryStoreMaxMB = &qs, &max
+	_, fs, _ := sbuild(f)
+	if !strings.Contains(fs[0].Finding, "800 MB data and 400 MB in no nonclustered index.") ||
+		!strings.HasSuffix(fs[0].Evidence, " Query Store: 576 MB of the 2,048 MB it may use.") {
+		t.Errorf("IDX01: %q / %q", fs[0].Finding, fs[0].Evidence)
 	}
 }
 

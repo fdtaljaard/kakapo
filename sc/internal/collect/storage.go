@@ -226,7 +226,7 @@ BEGIN TRY
           FROM sys.tables AS t
           JOIN sys.schemas AS s ON s.schema_id = t.schema_id
           JOIN sys.dm_db_partition_stats AS p ON p.object_id = t.object_id
-          WHERE t.is_ms_shipped = 0
+          WHERE t.is_ms_shipped = 0 AND s.name <> N'archive' /* kakapo's own archive tables */
             AND EXISTS (SELECT 1 FROM (VALUES (N'log'), (N'history'), (N'audit'), (N'trace'), (N'event'), (N'journal'), (N'archive'), (N'queue')) AS w (word)
                         WHERE LOWER(t.name) LIKE N'%' + w.word + N'%')
           GROUP BY t.object_id, s.name, t.name
@@ -369,6 +369,25 @@ END CATCH;
 
 ` + growingTablesBlock + `
 
+/* The tables in the archive schema (kakapo's archive writes there), and Query Store's size (IDX01);
+   each in its own TRY, an error leaves the area empty */
+DECLARE @archTables TABLE (table_name sysname NOT NULL);
+DECLARE @qsMb bigint, @qsMax bigint;
+BEGIN TRY
+    INSERT @archTables (table_name)
+    SELECT t.name FROM sys.tables AS t JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+    WHERE s.name = N'archive' AND t.is_ms_shipped = 0;
+END TRY
+BEGIN CATCH
+END CATCH;
+BEGIN TRY
+    IF OBJECT_ID(N'sys.database_query_store_options') IS NOT NULL
+        EXEC sys.sp_executesql N'/* kakapo */ SELECT @c = current_storage_size_mb, @m = max_storage_size_mb FROM sys.database_query_store_options WHERE actual_state > 0;',
+             N'@c bigint OUTPUT, @m bigint OUTPUT', @c = @qsMb OUTPUT, @m = @qsMax OUTPUT;
+END TRY
+BEGIN CATCH
+END CATCH;
+
 BEGIN TRY
     INSERT @ident (table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used)
     SELECT i.table_name, i.name, i.type_name, i.last_value, i.seed_value, i.increment_value, i.pct_used
@@ -397,7 +416,9 @@ SELECT TOP (10) table_name, data_mb, index_mb, index_count, rows_count FROM @tab
 WHERE data_mb + index_mb >= 1 ORDER BY data_mb + index_mb DESC;
 ` + growingTablesSelect + `
 SELECT table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used FROM @ident
-ORDER BY pct_used DESC;`
+ORDER BY pct_used DESC;
+SELECT table_name FROM @archTables ORDER BY table_name;
+SELECT @qsMb, @qsMax;`
 
 // StorageFacts reads what the Storage card needs about one database (docs/phase3b-contract.md),
 // SELECTs only. An area the login may not read (VIEW SERVER STATE, VIEW DATABASE STATE) carries
@@ -661,6 +682,33 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 			return err
 		}
 		f.Identities = append(f.Identities, c)
+	}
+
+	// 8: the tables in the archive schema.
+	if err := nextResultSet(rows, "archive tables"); err != nil {
+		return err
+	}
+	f.ArchiveTables = []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return err
+		}
+		f.ArchiveTables = append(f.ArchiveTables, n)
+	}
+
+	// 9: Query Store's size.
+	if err := nextResultSet(rows, "query store size"); err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cur, max sql.NullInt64
+		if err := rows.Scan(&cur, &max); err != nil {
+			return err
+		}
+		if cur.Valid && max.Valid {
+			f.QueryStoreMB, f.QueryStoreMaxMB = &cur.Int64, &max.Int64
+		}
 	}
 	return friendlyErrOrNil(rows.Err())
 }

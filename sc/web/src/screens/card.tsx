@@ -34,6 +34,7 @@ import { formatUptime, formatWhen } from "@/lib/format"
 import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
+import { StorageDrivesBlock } from "@/components/room-line"
 
 // "/instances/:id/databases/:db/cards/:card": the frame of one card (title, question, status, verdict)
 // and what sits behind it, for one database (docs/phase3a-contract.md). The card detail is read on load
@@ -163,6 +164,8 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
 
       {/* Phase 5k: better or worse than usual, and what made the difference (docs/phase5k-contract.md). */}
       {cardId === "performance" && detail?.trend && <PerformanceTrendBlock trend={detail.trend} serverId={serverId} database={database} />}
+      {/* Phase 5l: the Storage card answers its question first, one bar per drive (docs/phase5l-contract.md). */}
+      {cardId === "storage" && detail?.drives && <StorageDrivesBlock drives={detail.drives} database={database} />}
 
       <FindingContext.Provider value={handover}>
         {detail ? (
@@ -205,6 +208,7 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                     serverId={serverId}
                     database={database}
                     fixes={detail.fixes}
+                    findings={detail.findings}
                     onArchive={(table) =>
                       setFixing({ fixId: archiveTableFixId, title: "Archive or delete old rows", options: { table } })
                     }

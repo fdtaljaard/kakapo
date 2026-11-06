@@ -254,6 +254,8 @@ func BuildRCSIFix(f RCSIFacts) (FixPreview, Fix, error) {
 			"Check with the vendor that the application does not rely on readers being blocked to keep two users off the same row (rare).",
 			permission(ScopeDatabase, f.Database),
 		},
+		Needs: []RoomNeed{{Path: RoleTempdb, Part: RoomPart{Label: "row versions", Weak: true,
+			Basis: "the version store grows with every long transaction; TMP03 shows how much it holds"}}},
 	}
 	return p, fix, nil
 }

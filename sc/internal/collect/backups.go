@@ -28,7 +28,7 @@ DECLARE @since datetime = DATEADD(DAY, -7, @now);
 DECLARE @dbid int, @create datetime, @recovery nvarchar(60), @msdbError nvarchar(2048),
         @lastFull datetime, @lastDiff datetime, @lastLog datetime,
         @fulls int, @diffs int, @logs int, @suspect int, @suspectLast datetime,
-        @lastRealFull datetime, @durability nvarchar(60), @durabilityError nvarchar(2048);
+        @lastRealFull datetime, @lastRestore datetime, @durability nvarchar(60), @durabilityError nvarchar(2048);
 DECLARE @points TABLE (t datetime NOT NULL);
 DECLARE @nul TABLE (t datetime NOT NULL);
 
@@ -89,6 +89,11 @@ BEGIN TRY
     SELECT @suspect = COUNT(*), @suspectLast = MAX(sp.last_update_date)
     FROM msdb.dbo.suspect_pages AS sp
     WHERE sp.database_id = @dbid;
+
+    /* BAK01: the latest restore into this database, to tell a restored copy from a database never backed up */
+    SELECT @lastRestore = MAX(rh.restore_date)
+    FROM msdb.dbo.restorehistory AS rh
+    WHERE rh.destination_database_name = @db;
 END TRY
 BEGIN CATCH
     SET @msdbError = ERROR_MESSAGE();
@@ -213,7 +218,7 @@ SELECT CAST(d.state_desc AS nvarchar(60)),
        ISNULL(@fulls, 0), ISNULL(@diffs, 0), ISNULL(@logs, 0),
        ISNULL(@suspect, 0), @suspectLast,
        CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
-       @lastRealFull, @durability, @durabilityError,
+       @lastRealFull, @durability, @durabilityError, @lastRestore,
        COALESCE(@@SERVERNAME, CAST(SERVERPROPERTY('ServerName') AS nvarchar(256))),
        CAST(SERVERPROPERTY('Edition') AS nvarchar(128)),
        CAST(CASE WHEN @express = 1 THEN 0 ELSE 1 END AS bit),
@@ -252,7 +257,7 @@ func BackupFacts(ctx context.Context, db *sql.DB, database string) (domain.Backu
 	}
 	var (
 		checkDb, lastFull, lastDiff, lastLog, suspectLast sql.NullTime
-		lastRealFull                                      sql.NullTime
+		lastRealFull, lastRestore                         sql.NullTime
 		logMB                                             sql.NullInt64
 		msdbError, durability, durabilityErr              sql.NullString
 		serverName, edition, agentStatus, agentErr        sql.NullString
@@ -262,7 +267,7 @@ func BackupFacts(ctx context.Context, db *sql.DB, database string) (domain.Backu
 	if err := rows.Scan(&f.State, &f.RecoveryModel, &create, &f.IsAgMember, &checkDb, &logMB, &now,
 		&f.UTCOffsetMinutes, &msdbError, &lastFull, &lastDiff, &lastLog,
 		&f.Fulls7, &f.Diffs7, &f.Logs7, &f.SuspectPages, &suspectLast, &f.EngineVersion,
-		&lastRealFull, &durability, &durabilityErr,
+		&lastRealFull, &durability, &durabilityErr, &lastRestore,
 		&serverName, &edition, &f.HasAgent, &agentStatus, &agentErr, &jobsErr,
 		&f.MaintenancePlans, &plansErr, &f.OlaBackup, &operator, &operatorErr, &dir, &f.CompressionOK); err != nil {
 		return f, fmt.Errorf("read the backup facts of %s: %w", database, err)
@@ -282,6 +287,7 @@ func BackupFacts(ctx context.Context, db *sql.DB, database string) (domain.Backu
 	}
 	f.MsdbError = msdbError.String
 	f.LastRealFull = naivePtr(lastRealFull)
+	f.LastRestore = naivePtr(lastRestore)
 	f.DelayedDurability, f.DurabilityError = durability.String, durabilityErr.String
 
 	// The driver reaches the next result set only once this one is read to its end.

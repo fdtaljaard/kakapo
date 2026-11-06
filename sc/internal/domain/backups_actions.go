@@ -289,6 +289,11 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 	switch target {
 	case "FULL":
 		p.Warnings = append(p.Warnings, recoveryToFull, recoveryChain)
+		logPart := RoomPart{Label: "the log", Unbounded: true, Basis: "it grows until log backups run; no job takes them yet"}
+		if j, ok := f.CoveringJob(JobLog); ok {
+			logPart = RoomPart{Label: "the log", Basis: "it grows between log backups; " + j.Name + " takes them"}
+		}
+		p.Needs = append(p.Needs, RoomNeed{Path: RoleLog, Part: logPart})
 		if j, ok := f.CoveringJob(JobLog); ok {
 			p.Warnings = append(p.Warnings, "The job "+j.Name+" already takes log backups of this database: check it runs (MNT02).")
 		}
@@ -560,6 +565,7 @@ func BuildCheckdbJobFix(f BackupFacts, jf CheckdbJobFacts, room *CheckdbRoom, op
 		p.Warnings = append(p.Warnings, "SQL Server Agent is stopped ("+status+"): the job will not run until it starts (MNT01).")
 	}
 	p.Warnings = append(p.Warnings, roomWarning(room, j.PhysicalOnly), checkdbFirstRun)
+	p.Needs = append(p.Needs, checkdbNeeds(room, j.PhysicalOnly)...)
 	if j.PhysicalOnly {
 		p.Warnings = append(p.Warnings, physicalOnlyNote)
 	}
@@ -647,6 +653,7 @@ func BuildCheckdbNowFix(f BackupFacts, dataMB *int64, room *CheckdbRoom, options
 	p.Changes = []Drift{{Setting: "Integrity check of " + f.Database, Current: "last good: " + lastGoodWords(f), Target: "run now, " + checkWords(physicalOnly)}}
 	p.Statement = CheckdbStatement(f.Database, physicalOnly)
 	p.Warnings = append(p.Warnings, roomWarning(room, physicalOnly), checkdbLoad, checkdbWait)
+	p.Needs = append(p.Needs, checkdbNeeds(room, physicalOnly)...)
 	if physicalOnly {
 		p.Warnings = append(p.Warnings, physicalOnlyNote)
 	}
@@ -797,4 +804,22 @@ func availableBackupActionFixes(f BackupFacts, findings []Finding) []Fix {
 		out = append(out, fix)
 	}
 	return out
+}
+
+// checkdbNeeds is CHECKDB's room (docs/phase5l-contract.md): tempdb's growth for its sorts, from
+// the last STO10 estimate, and the internal snapshot on the data drive, which has no fixed size.
+func checkdbNeeds(room *CheckdbRoom, physicalOnly bool) []RoomNeed {
+	snapshot := RoomNeed{Path: RoleData, Part: RoomPart{Label: "the internal snapshot", Weak: true,
+		Basis: "it grows with the changes made while the check runs"}}
+	switch {
+	case room == nil:
+		return []RoomNeed{{Path: RoleTempdb, Part: RoomPart{Label: "CHECKDB's sorts", Weak: true,
+			Basis: "not known yet: run Check room for CHECKDB on the Storage card (STO10)"}}, snapshot}
+	case physicalOnly:
+		return []RoomNeed{{Path: RoleTempdb, Part: RoomPart{Label: "CHECKDB's sorts", Weak: true,
+			Basis: "WITH PHYSICAL_ONLY needs far less than STO10's " + mbText(room.NeedMB)}}, snapshot}
+	}
+	grow := max(0, room.NeedMB-room.TempdbFreeMB)
+	return []RoomNeed{{Path: RoleTempdb, Part: RoomPart{Label: "tempdb's growth for CHECKDB", MB: grow,
+		Basis: fmt.Sprintf("STO10 of %s: CHECKDB needs about %s of tempdb, which has %s free inside", room.CapturedAt.UTC().Format("2006-01-02 15:04"), mbText(room.NeedMB), mbText(room.TempdbFreeMB))}}, snapshot}
 }

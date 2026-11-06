@@ -141,7 +141,7 @@ func TestBackupsNeverBackedUp(t *testing.T) {
 	wantNoFinding(t, fs, "BAK05")
 	wantFacts(t, c, "Worst-case data loss=no backup/worse", "Last full backup=never/worse",
 		"Last CHECKDB=3 days ago/normal", "Log backups=none in FULL recovery/bad")
-	wantChecks(t, checks, "BAK01=finding", "BAK02=finding", "BAK03=passed", "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=finding", "BAK02=finding", "BAK03=passed", "BAK04=passed", "BAK05=skipped:Not judged: no full backup yet (BAK01).", "BAK06=passed", "DBC12=passed", "DBC08=passed")
 	if want := time.Date(2026, 11, 3, 7, 21, 0, 0, time.UTC); c.AsOf == nil || !c.AsOf.Equal(want) {
 		t.Errorf("asOf %v, want %v (server time in UTC)", c.AsOf, want)
 	}
@@ -176,7 +176,7 @@ func TestBackupsFullWithoutLogBackups(t *testing.T) {
 	}
 	wantFacts(t, c, "Worst-case data loss=24 hours/normal", "Last full backup=1 day ago/normal",
 		"Last CHECKDB=3 days ago/normal", "Log backups=none in FULL recovery/bad")
-	wantChecks(t, checks, "BAK01=passed", "BAK02=finding", "BAK03=passed", "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=finding", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=passed")
 
 	// A last log backup of 30 hours ago says so, in hours as DATEDIFF counts them.
 	f.LastLog = at(serverNow.Add(-30*time.Hour - 30*time.Minute))
@@ -208,7 +208,7 @@ func TestBackupsFullWith15MinuteLogs(t *testing.T) {
 	}
 	wantFacts(t, c, "Worst-case data loss=15 minutes/normal", "Last full backup=1 day ago/normal",
 		"Last CHECKDB=3 days ago/normal", "Log backups=every 15 min on average/normal")
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=passed")
 }
 
 func TestBackupsSimpleNightlyFull(t *testing.T) {
@@ -232,7 +232,7 @@ func TestBackupsSimpleNightlyFull(t *testing.T) {
 	}
 	wantFacts(t, c, "Worst-case data loss=24 hours/normal", "Last full backup=1 day ago/normal",
 		"Last CHECKDB=3 days ago/normal", "Log backups=not needed (SIMPLE)/normal")
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=finding")
 }
 
 func TestBackupsWorstGapThreeDays(t *testing.T) {
@@ -244,7 +244,7 @@ func TestBackupsWorstGapThreeDays(t *testing.T) {
 	wantFinding(t, findingOf(t, fs, "BAK05"), SeverityHigh, WhenDecideFirst, EffortModerate, sentence)
 	wantFacts(t, c, "Worst-case data loss=3.0 days/worse", "Last full backup=1 day ago/normal",
 		"Last CHECKDB=3 days ago/normal", "Log backups=not needed (SIMPLE)/normal")
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=finding")
 
 	// A 26-hour gap is Medium, and the fact turns bad rather than worse.
 	f = facts("SIMPLE")
@@ -287,7 +287,7 @@ func TestBackupsCheckDB(t *testing.T) {
 	if c.Facts[2] != (Fact{"Last CHECKDB", "never", ToneWorse}) {
 		t.Errorf("never fact %+v", c.Facts[2])
 	}
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=finding", "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=finding", "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=finding")
 
 	f.LastGoodCheckDb = at(serverNow.AddDate(0, 0, -20))
 	c, fs, _ = build(f)
@@ -312,7 +312,7 @@ func TestBackupsCheckDB(t *testing.T) {
 	if c.Facts[2] != (Fact{"Last CHECKDB", "unknown on this version", ToneNormal}) {
 		t.Errorf("unknown fact %+v", c.Facts[2])
 	}
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=skipped:"+checkDbUnknownNote, "BAK04=passed", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=skipped:"+checkDbUnknownNote, "BAK04=passed", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=finding")
 	f.EngineVersion = "13.0.4001.0" // 2016 SP1: does not know
 	if _, _, checks = build(f); checks[2].Note != checkDbUnknownNote {
 		t.Errorf("2016 SP1 note %q", checks[2].Note)
@@ -344,7 +344,7 @@ func TestBackupsSuspectPages(t *testing.T) {
 	if c.Facts[3] != (Fact{"Damaged pages", "2", ToneWorse}) {
 		t.Errorf("damaged pages fact %+v", c.Facts[3])
 	}
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=finding", "BAK05=passed", "BAK06=passed", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=finding", "BAK05=finding", "BAK06=passed", "DBC12=passed", "DBC08=passed")
 }
 
 func TestBackupsAvailabilityGroupBump(t *testing.T) {
@@ -557,7 +557,7 @@ func TestBackupsNulFulls(t *testing.T) {
 		b6.Evidence != "Full backups to NUL in 30 days: 2, the last "+last+". Last real full backup: 2026-11-02 22:00. Differentials based on a NUL full are left out of the worst-case data loss (BAK05)." {
 		t.Errorf("BAK06 texts %+v", b6)
 	}
-	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=passed", "BAK06=finding", "DBC12=passed", "DBC08=passed")
+	wantChecks(t, checks, "BAK01=passed", "BAK02=passed", "BAK03=passed", "BAK04=passed", "BAK05=finding", "BAK06=finding", "DBC12=passed", "DBC08=passed")
 
 	// The last full went to NUL: every differential since then is lost.
 	f.NulFulls = []time.Time{night(1).Add(6 * time.Hour)}
@@ -619,5 +619,16 @@ func TestBackupsDelayedDurability(t *testing.T) {
 	f.DelayedDurability, f.DurabilityError = "", "denied"
 	if _, _, checks := build(f); checks[6].Status != CheckSkipped || checks[6].Note != "Could not read the delayed durability setting: denied" {
 		t.Errorf("unreadable: %+v", checks[6])
+	}
+}
+
+func TestBackupsNeverFullNamesRestore(t *testing.T) {
+	f := facts("FULL")
+	f.LastFull = nil
+	r := f.ServerNow.AddDate(0, 0, -1)
+	f.LastRestore = &r
+	_, fs, _ := build(f)
+	if x := findingOf(t, fs, "BAK01"); x.Finding != "No backup has been taken here since it was restored on "+r.Format("2 Jan 2006")+"." {
+		t.Errorf("%q", x.Finding)
 	}
 }

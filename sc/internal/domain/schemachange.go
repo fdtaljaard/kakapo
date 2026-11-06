@@ -514,6 +514,7 @@ func BuildEnableDefaultTraceFix(f DefaultTraceFacts) (FixPreview, Fix, error) {
 		Rollback:  spConfigure(DefaultTraceSetting, 0),
 	}
 	p.Warnings = append(p.Warnings, warnServer(orQ(f.ServerName)), warnDefaultTrace)
+	p.Needs = append(p.Needs, RoomNeed{Path: RoleErrorLog, Part: RoomPart{Label: "the default trace", MB: 100, Basis: "SQL Server keeps at most 5 files of 20 MB beside the error log"}})
 	if pend := pendingWithout(f.Pending, DefaultTraceSetting); len(pend) > 0 {
 		p.Warnings = append(p.Warnings, warnPending(pend))
 	}

@@ -141,6 +141,7 @@ func (s *Service) prepareGenericFix(ctx context.Context, serverID int64, dbName,
 	case err != nil:
 		return fail(newError(KindNotFound, "there is no fix named %q", fixID))
 	}
+	s.resolveRoom(ctx, serverID, db, d.Name, &g.preview)
 	return g, nil
 }
 
@@ -181,6 +182,7 @@ func (s *Service) prepareQueryStoreFix(ctx context.Context, serverID int64, dbNa
 		fc.db.Close()
 		return nil, newError(KindNotFound, "nothing to apply on %s: Query Store already has the recommended settings", fc.database.Name)
 	}
+	s.resolveRoom(ctx, serverID, fc.db, fc.database.Name, &fc.preview)
 	fc.preview.Warnings = append(fc.preview.Warnings, domain.PermissionHint(domain.ScopeDatabase, fc.database.Name))
 	return fc, nil
 }
@@ -216,6 +218,10 @@ func (s *Service) ApplyFixWithOptions(ctx context.Context, serverID int64, dbNam
 
 	g, err := s.prepareGenericFix(ctx, serverID, dbName, fixID, options)
 	if err != nil {
+		return domain.FixResult{}, err
+	}
+	if err := roomHeld(g.preview); err != nil {
+		g.db.Close()
 		return domain.FixResult{}, err
 	}
 	r, registered := registeredFixFor(fixID)

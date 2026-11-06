@@ -3,6 +3,7 @@ import { Check, ChevronRight, CircleCheck, Copy, Loader2, TriangleAlert, XCircle
 
 import { api, ApiError, type FixInput, type FixPreview, type FixResult, type FixRun } from "@/api"
 import { FixProgress, FixTook } from "@/components/fix-progress"
+import { RoomLines } from "@/components/room-line"
 import { CopyFallback, StatementBlock } from "@/components/statement-block"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -222,6 +223,9 @@ export function FixDialog({
           </Alert>
         )}
 
+        {/* Phase 5l: the room on each drive, first, rebuilt with the preview (docs/phase5l-contract.md). */}
+        {step.kind === "preview" && !refreshing && <RoomLines room={step.preview.room} />}
+
         {step.kind === "preview" && step.preview.inputs && step.preview.inputs.length > 0 && (
           <FixInputs
             // A new preview resets the fields to the values it was built with (the folder as normalised).
@@ -309,6 +313,7 @@ export function FixDialog({
               </Button>
               {step.kind === "preview" &&
                 step.preview.changes.length > 0 &&
+                !roomHeld(step.preview) &&
                 (step.preview.express ? (
                   <CopyScriptButton
                     status={script.status}
@@ -607,4 +612,9 @@ function ResultBody({ result, took }: { result: FixResult; took?: ReactNode }) {
       </p>
     </div>
   )
+}
+
+// Phase 5l: a change that does not fit on one of its drives is not offered (the server refuses it too).
+function roomHeld(preview: FixPreview): boolean {
+  return (preview.room ?? []).some((l) => l.state === "nofit")
 }

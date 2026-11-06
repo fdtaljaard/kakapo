@@ -235,7 +235,7 @@ ALTER DATABASE tempdb REMOVE FILE [tempdev5];`
 	if got := AddedTempdbFiles(p); strings.Join(got, ",") != "tempdev5,tempdev6,tempdev7,tempdev8" {
 		t.Errorf("added %q", got)
 	}
-	if !stoHasWarning(p, "The new files take 512 MB (4 x 128 MB) on T:\\, which has 10240 MB free.") || !stoHasWarning(p, tempdbAtOnce) ||
+	if len(p.Needs) != 1 || p.Needs[0].Part.MB != 512 || p.Needs[0].Volume != `T:\` || !stoHasWarning(p, tempdbAtOnce) ||
 		!stoHasWarning(p, "The rollback removes each added file") || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database tempdb." ||
 		stoHasWarning(p, "The existing TempDB data files are not the same size") {
 		t.Errorf("warnings %q", p.Warnings)
@@ -359,10 +359,9 @@ func TestTempdbFilesUnequal(t *testing.T) {
 	if len(backs) != 9 || backs[0] != "ALTER DATABASE tempdb MODIFY FILE (NAME = N'temp1', FILEGROWTH = 64MB);" {
 		t.Errorf("rollback\n%s", p.Rollback)
 	}
-	if len(p.Changes) != 10 || p.Changes[0] != (Drift{"temp1", "128 MB, growth 64 MB", "256 MB, growth 64 MB"}) ||
+	if len(p.Changes) != 9 || len(p.Needs) != 1 || p.Needs[0].Part.MB != 952 || p.Needs[0].Volume != `T:\` || p.Changes[0] != (Drift{"temp1", "128 MB, growth 64 MB", "256 MB, growth 64 MB"}) ||
 		p.Changes[1] != (Drift{"temp2", "200 MB, growth 64 MB", "256 MB, growth 64 MB"}) ||
-		p.Changes[8] != (Drift{"templog", "256 MB, growth 64 MB", "256 MB, growth 64 MB"}) ||
-		p.Changes[9] != (Drift{"Disk room needed", "", `952 MB on T:\ (10240 MB free)`}) {
+		p.Changes[8] != (Drift{"templog", "256 MB, growth 64 MB", "256 MB, growth 64 MB"}) {
 		t.Errorf("changes %+v", p.Changes)
 	}
 	if fix.Current != "8 data files of 128 to 200 MB, log 256 MB" || fix.Target != "8 data files of 256 MB, growth 64 MB; log 256 MB, growth 64 MB" ||
@@ -509,12 +508,12 @@ func TestTempdbFilesBlocking(t *testing.T) {
 		p.Warnings[0] != `The TempDB files need 952 MB more on T:\ and it has 500 MB free: free space there first (STO01) or type smaller sizes.` {
 		t.Errorf("no room: %v %+v", err, p)
 	}
-	// A volume that could not be read: the room row says so, and it does not block.
+	// A volume that could not be read: the room line says so (tempdb's path, Not readable), and it does not block.
 	tempdbEach(&f, "ROWS", func(x *StorageFile) { x.Volume, x.VolumeTotalMB = "", 0 })
 	tempdbEach(&f, "LOG", func(x *StorageFile) { x.Volume, x.VolumeTotalMB = "", 0 })
 	p, _, _ = BuildTempdbFilesFix(f, StorageFileState{}, nil)
-	if len(p.Changes) != 10 || p.Changes[9] != (Drift{"Disk room needed", "", "952 MB (kakapo could not read the volume)"}) {
-		t.Errorf("unknown volume %+v", p.Changes)
+	if len(p.Changes) != 9 || len(p.Needs) != 1 || p.Needs[0].Path != RoleTempdb || p.Needs[0].Part.MB != 952 {
+		t.Errorf("unknown volume %+v %+v", p.Changes, p.Needs)
 	}
 }
 

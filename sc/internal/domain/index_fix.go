@@ -668,6 +668,13 @@ func BuildCreateIndexFix(f IndexFacts, s CreateIndexSpec, options map[string]str
 	fix := Fix{ID: def.ID, Title: def.Title, Scope: def.Scope, CheckID: def.CheckID, Setting: def.Setting,
 		Current: "none", Target: target, Options: echo}
 	pv := FixPreview{Database: f.Database, EngineVersion: f.ProductVersion, Changes: []Drift{}, Warnings: []string{}, Options: echo}
+	if mb := int64(math.Ceil(p.sizeMB)); mb > 0 {
+		// The room line (docs/phase5l-contract.md): the index in the data files, its sort in tempdb.
+		size := "the estimated size of the index (rows x key and included columns)"
+		pv.Needs = append(pv.Needs,
+			RoomNeed{Path: RoleData, Part: RoomPart{Label: "the new index", MB: mb, Basis: size + "; the data files may have room inside already"}},
+			RoomNeed{Path: RoleTempdb, Part: RoomPart{Label: "the sort (SORT_IN_TEMPDB)", MB: mb, Basis: size + "; in FULL recovery the log takes about as much"}})
+	}
 
 	// The guards that block come first, so the first warning says why nothing can be applied.
 	guards := createIndexGuards(f, p)

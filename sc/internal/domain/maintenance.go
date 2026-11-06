@@ -747,6 +747,8 @@ func StitchMaintenancePlan(choice PlanChoice, parts []PlanPart) FixPreview {
 		for _, w := range part.Preview.Warnings {
 			warn(w)
 		}
+		// The room line (docs/phase5l-contract.md): every part's needs, one line per drive.
+		p.Needs = append(p.Needs, part.Preview.Needs...)
 	}
 	if len(blocked) > 0 {
 		return p

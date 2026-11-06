@@ -21,6 +21,10 @@ func (s *Service) prepareBackupFix(ctx context.Context, g *genericFix, def domai
 	g.preview, g.fix, err = buildBackupFix(def.ID, f, g.options, func(folder string) (bool, error) {
 		return collect.FolderExists(ctx, g.db, folder)
 	})
+	if err == nil && def.ID == domain.FixBackupSchedule {
+		// The room line (docs/phase5l-contract.md): the backups this schedule keeps in its folder.
+		g.preview.Needs = domain.BackupScheduleNeeds(domain.NewBackupSchedule(f, g.options), collect.BackupSizes(ctx, g.db, g.database.Name))
+	}
 	return err
 }
 

@@ -100,7 +100,7 @@ func TestStorageActionBadOptions(t *testing.T) {
 	}
 	g = actionFix()
 	if err := buildStorageActionFix(g, domain.FixTempdbFiles, tf, domain.StorageFileState{}, nil); err != nil ||
-		len(g.preview.Changes) != 4 || strings.Count(g.preview.Statement, "MODIFY FILE") != 3 || strings.Count(g.preview.Rollback, "MODIFY FILE") != 3 ||
+		len(g.preview.Changes) != 3 || len(g.preview.Needs) != 1 || strings.Count(g.preview.Statement, "MODIFY FILE") != 3 || strings.Count(g.preview.Rollback, "MODIFY FILE") != 3 ||
 		g.fix.ID != domain.FixTempdbFiles {
 		t.Errorf("tempdb-files: %v %+v", err, g.preview)
 	}

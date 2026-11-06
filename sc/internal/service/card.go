@@ -96,7 +96,7 @@ func (s *Service) storageDetail(ctx context.Context, db *sql.DB, serverID int64,
 	// remove-archive for each table kakapo archives (the card's Tables row).
 	fixes := append(domain.AvailableStorageFixes(facts, findings), domain.ArchiveFixesFor(facts, findings)...)
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, CheckdbRoom: last, CheckdbRun: run,
-		Fixes: fixes}, nil
+		Fixes: fixes, Drives: domain.BuildStorageDrives(facts, trend)}, nil
 }
 
 // detailWithoutChecks is the detail of a card whose checks are not built yet: grey, with empty

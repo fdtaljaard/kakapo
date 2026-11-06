@@ -1,6 +1,6 @@
 import { useState } from "react"
 
-import type { Fix } from "@/api"
+import type { Finding, Fix } from "@/api"
 import { archivedTables, type ArchivedTable } from "@/api-tables"
 import { TablePicker } from "@/components/table-picker"
 import { Badge } from "@/components/ui/badge"
@@ -17,17 +17,21 @@ export function TablesRow({
   serverId,
   database,
   fixes,
+  findings,
   onArchive,
   onRemove,
 }: {
   serverId: number
   database: string
   fixes?: Fix[]
+  findings?: Finding[]
   onArchive: (table: string) => void
   onRemove: (fix: Fix) => void
 }) {
   const [picking, setPicking] = useState(false)
   const archived = archivedTables(fixes)
+  // Tables with an archive table (archive.<name>) but no archive job on this server, as IDX10 says them.
+  const orphans = (findings ?? []).filter((f) => f.checkId === "IDX10" && f.finding.includes("no archive job runs"))
   return (
     <Card>
       <CardHeader>
@@ -39,6 +43,13 @@ export function TablesRow({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
+        {orphans.length > 0 && (
+          <ul className="grid gap-1 text-sm" aria-label="Archive tables without a job">
+            {orphans.map((f) => (
+              <li key={f.object}>{f.finding}</li>
+            ))}
+          </ul>
+        )}
         {archived.length > 0 && (
           <ul className="grid divide-y rounded-xl border" aria-label="Tables kakapo archives">
             {archived.map((t) => (

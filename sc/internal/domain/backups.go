@@ -39,6 +39,9 @@ type BackupFacts struct {
 	NulFulls     []time.Time
 	LastRealFull *time.Time
 
+	// LastRestore is the latest restore into this database in msdb.dbo.restorehistory; nil when none.
+	LastRestore *time.Time
+
 	// DBC12: sys.databases delayed_durability_desc (DISABLED, ALLOWED, FORCED); "" before SQL
 	// Server 2014, which has no delayed durability. DurabilityError when it could not be read.
 	DelayedDurability string
@@ -261,7 +264,7 @@ func (b *backupBuild) skipAll(card CardID, note string) {
 }
 
 // checks says what became of each check: skipped with its note, a finding when it found
-// something to act on, passed otherwise (an Info finding is information, not a problem).
+// something to act on, passed otherwise (the list tells an Info finding from one to act on).
 func (b *backupBuild) checks(card CardID) []CheckStatus {
 	out := []CheckStatus{}
 	for _, c := range ChecksFor(card) {
@@ -270,7 +273,8 @@ func (b *backupBuild) checks(card CardID) []CheckStatus {
 			st.Status, st.Note = CheckSkipped, note
 		} else {
 			for _, x := range b.findings {
-				if x.CheckID == c.ID && x.Severity.Actionable() {
+				// An Info finding is a finding too: the list shows it as "For information".
+				if x.CheckID == c.ID {
 					st.Status = CheckFinding
 				}
 			}
@@ -309,8 +313,12 @@ func (b *backupBuild) bak01() {
 		rank = 3
 	}
 	fixID, doThis := f.scheduleFix(JobFull, bak01Do)
+	finding := "No full backup of this database has been recorded."
+	if f.LastRestore != nil {
+		finding = "No backup has been taken here since it was restored on " + f.LastRestore.Format("2 Jan 2006") + "."
+	}
 	b.addFix("BAK01", agBump(rank, f.IsAgMember), "Online", EffortQuickWin,
-		"No full backup of this database has been recorded.", bak01Why, doThis,
+		finding, bak01Why, doThis,
 		"Last full: never. Last differential: "+sqlTimeOr(f.LastDiff, "never")+"."+
 			b.agNote("Database is in an Availability Group: backups may run on another replica."), fixID)
 }
@@ -338,6 +346,7 @@ func (b *backupBuild) bak02() {
 func (b *backupBuild) bak05() {
 	f := b.f
 	if f.LastFull == nil {
+		b.skipped["BAK05"] = "Not judged: no full backup yet (BAK01)."
 		return
 	}
 	w := WorstGapMinutes(f)

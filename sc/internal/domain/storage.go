@@ -232,6 +232,14 @@ type StorageFacts struct {
 	Archives      []ArchiveJob
 	ArchivesError string
 
+	// ArchiveTables are the names of the tables in this database's archive schema, where kakapo's
+	// archive writes (docs/archiving.md). A table with one of the same name was archived, even when
+	// no job is left to show it (a restored copy).
+	ArchiveTables []string
+	// QueryStoreMB and QueryStoreMaxMB are Query Store's size and what it may use; nil unless Query
+	// Store is on and its size was read.
+	QueryStoreMB, QueryStoreMaxMB *int64
+
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
@@ -1255,8 +1263,13 @@ func (b *storageBuild) idx01() {
 	parts := []string{}
 	for i, t := range f.Tables {
 		if i == 0 {
-			finding = fmt.Sprintf("The biggest table, %s, has %s MB in total: %s MB data and %s MB in %d index(es).",
-				t.Name, n0(t.DataMB+t.IndexMB), n0(t.DataMB), n0(t.IndexMB), t.IndexCount)
+			// The clustered index is counted as data; IndexCount counts the nonclustered ones.
+			idx := "no nonclustered index"
+			if t.IndexCount > 0 {
+				idx = fmt.Sprintf("%d nonclustered index(es)", t.IndexCount)
+			}
+			finding = fmt.Sprintf("The biggest table, %s, has %s MB in total: %s MB data and %s MB in %s.",
+				t.Name, n0(t.DataMB+t.IndexMB), n0(t.DataMB), n0(t.IndexMB), idx)
 		}
 		parts = append(parts, fmt.Sprintf("%s: %s MB total, %s MB data, %s MB index, %s rows",
 			t.Name, n0(t.DataMB+t.IndexMB), n0(t.DataMB), n0(t.IndexMB), n0(float64(t.Rows))))
@@ -1264,6 +1277,9 @@ func (b *storageBuild) idx01() {
 	evidence := fmt.Sprintf("All %d tables: %s MB data, %s MB indexes.", f.TableCount, n0(f.TotalDataMB), n0(f.TotalIndexMB))
 	if len(parts) > 0 {
 		evidence = fmt.Sprintf("Top %d: %s. %s", len(parts), strings.Join(parts, "; "), evidence)
+	}
+	if f.QueryStoreMB != nil && f.QueryStoreMaxMB != nil {
+		evidence += fmt.Sprintf(" Query Store: %s MB of the %s MB it may use.", n0(float64(*f.QueryStoreMB)), n0(float64(*f.QueryStoreMaxMB)))
 	}
 	b.add("IDX01", 5, "None", EffortNone, f.Database, finding, idx01Why, "", evidence)
 }
@@ -1345,6 +1361,14 @@ func (b *storageBuild) idx10() {
 				fmt.Sprintf("Rows: %s. Size: %s MB. %s.", n0(float64(t.Rows)), n0(t.MB), upperFirst(j.ArchivedWords())))
 			continue
 		}
+		if hasArchiveTable(f.ArchiveTables, t.Name) {
+			b.add("IDX10", 5, "Planned", EffortModerate, QuoteName(t.Schema)+"."+QuoteName(t.Name),
+				fmt.Sprintf("%s.%s has %s rows (%s MB). %s.%s holds older rows, but no archive job runs on this server.",
+					t.Schema, t.Name, n0(float64(t.Rows)), n0(t.MB), archiveSchema, t.Name),
+				idx10Why, "Nothing to do unless the table should keep being archived: archive it again to start a job.",
+				fmt.Sprintf("Rows: %s. Size: %s MB. The table %s.%s exists.", n0(float64(t.Rows)), n0(t.MB), archiveSchema, t.Name))
+			continue
+		}
 		if !growingIn(candidates, t) {
 			continue // its oldest row is younger than growingMinMonths: something cleans it up
 		}
@@ -1386,6 +1410,9 @@ func (b *storageBuild) idx10() {
 // growingSized says whether a table that only grows is named like one (GrowingTableWords) and holds
 // a million rows or 500 MB: IDX10's bar.
 func growingSized(t GrowingTable) bool {
+	if strings.EqualFold(t.Schema, archiveSchema) {
+		return false // kakapo's own archive tables
+	}
 	return LooksLikeLogTable(t.Name) && (t.Rows >= 1000000 || t.MB >= 500)
 }
 
@@ -1408,6 +1435,19 @@ func GrowingCandidates(tables []GrowingTable, archives []ArchiveJob, database st
 		out = append(out, t)
 	}
 	return out
+}
+
+// archiveSchema is the schema kakapo archives into by default.
+const archiveSchema = "archive"
+
+// hasArchiveTable says whether the archive schema holds a table of this name.
+func hasArchiveTable(names []string, name string) bool {
+	for _, n := range names {
+		if strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func growingIn(tables []GrowingTable, t GrowingTable) bool {

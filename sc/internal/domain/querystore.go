@@ -121,6 +121,11 @@ type FixPreview struct {
 	// Express true: nothing will be applied (SQL Server Express has no Agent); Statement is a
 	// script to run by hand.
 	Express bool `json:"express,omitempty"`
+	// Room is the free space on each drive the change uses and whether the change fits
+	// (docs/phase5l-contract.md); a line that does not fit holds Apply back. Needs are what the
+	// builder states the change will use; the service reads the drives and turns them into Room.
+	Room  []RoomLine `json:"room,omitempty"`
+	Needs []RoomNeed `json:"-"`
 }
 
 // FixInput is one value the user may set in a fix's preview (docs/phase3g-contract.md).
@@ -446,6 +451,10 @@ func BuildQueryStoreFix(o QueryStoreOptions, engineMajor int, dbName string) Fix
 	}
 	if _, ok := changed["MAX_STORAGE_SIZE_MB"]; ok {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("The store can grow to %d MB (2 GB) inside the database. It lives in the PRIMARY filegroup, so it adds to the database and its backups.", t.MaxStorageMb))
+		if grow := t.MaxStorageMb - o.CurrentStorageMb; grow > 0 {
+			p.Needs = append(p.Needs, RoomNeed{Path: RoleData, Part: RoomPart{Label: "Query Store", MB: grow,
+				Basis: fmt.Sprintf("it may grow from %d MB to %d MB; at most, as the data files may have room inside already. Backups grow by as much", o.CurrentStorageMb, t.MaxStorageMb)}})
+		}
 	}
 	if strings.EqualFold(o.ActualState, "READ_ONLY") && o.ReadonlyReason&65536 != 0 && o.CurrentStorageMb >= t.MaxStorageMb {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("The store already holds %d MB, at or above the %d MB target. Size-based cleanup will remove old queries to make room; if it stays read-only, clear it with ALTER DATABASE %s SET QUERY_STORE CLEAR.", o.CurrentStorageMb, t.MaxStorageMb, db))

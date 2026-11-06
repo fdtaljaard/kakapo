@@ -92,6 +92,21 @@ export interface FixPreview {
   inputs?: FixInput[]
   options?: Record<string, string>
   express?: boolean // true: nothing will be applied; statement is a script to run by hand (Copy script)
+  // Phase 5l: the free space on each drive the change uses (docs/phase5l-contract.md); "nofit" holds Apply back.
+  room?: RoomLine[]
+}
+
+// Phase 5l: one drive's room for a change.
+export interface RoomLine {
+  drive: string // "C:", or the path when not readable
+  totalMB: number // 0 when not known
+  freeMB: number
+  needMB: number
+  leftMB: number
+  daysLeft?: number
+  parts: { label: string; mb: number; basis: string; weak?: boolean; unbounded?: boolean }[]
+  state: "fits" | "tight" | "nofit" | "unknown"
+  sentence: string
 }
 
 // Phase 3g: one value the user may set in a fix's preview (docs/phase3g-contract.md).
@@ -382,6 +397,13 @@ export interface CardDetail {
   trend?: PerformanceTrend | null // performance only (phase 5k): better or worse than usual; omitted or null otherwise
   checkdbRun?: CheckdbRun | null // backups and storage only: the last DBCC CHECKDB run from kakapo; omitted or null otherwise
   maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
+  drives?: StorageDrives // storage only (phase 5l): the answer first, one bar per drive; omitted otherwise
+}
+
+// Phase 5l: the Storage card's answer, "Will it run out of room?" (docs/phase5l-contract.md part 5).
+export interface StorageDrives {
+  sentence: string
+  drives: { drive: string; totalMB: number; freeMB: number; databaseMB: number; holds: string[]; daysLeft?: number; state: "fits" | "tight" }[]
 }
 
 // Phase 5b: the maintenance plan of a database (docs/phase5b-contract.md): one line per piece of regular

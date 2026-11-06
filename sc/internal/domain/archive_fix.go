@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -531,6 +532,7 @@ func BuildArchiveFix(f ArchiveFacts, options map[string]string) (FixPreview, Fix
 		Inputs: inputs, Options: echo}
 	blocks := append(f.archiveBlocks(plan), bad...)
 	p.Warnings = append(append(p.Warnings, blocks...), f.archiveWarnings(plan)...)
+	p.Needs = append(p.Needs, f.archiveNeeds(plan)...)
 	if len(blocks) > 0 {
 		return p, fix
 	}
@@ -674,4 +676,35 @@ func RemoveArchiveReadBack(jobName string, states []BackupJobState) (string, boo
 		}
 	}
 	return "the job " + jobName + " is gone", true
+}
+
+// archiveNeeds is the archive's room (docs/phase5l-contract.md): the copy in the archive's database
+// and, in FULL or BULK_LOGGED recovery, one night's batches in this database's log, as
+// archiveWarnings counts them.
+func (f ArchiveFacts) archiveNeeds(plan ArchivePlan) []RoomNeed {
+	due := f.Rows
+	if f.Estimate.Known {
+		due = f.Estimate.Rows
+	}
+	if due <= 0 || f.Rows <= 0 {
+		return nil
+	}
+	rowMB := f.MB / float64(f.Rows)
+	var out []RoomNeed
+	if plan.Archives() {
+		out = append(out, RoomNeed{Path: RoleOf(RoleData, plan.Target.Database), Part: RoomPart{Label: "the archive copy",
+			MB:    int64(math.Ceil(rowMB * float64(due))),
+			Basis: fmt.Sprintf("%s rows due x %s MB a row; the deletes free as much in %s, for new rows", n0int(due), n1(rowMB), f.Database)}})
+	}
+	if fullOrBulk(f.RecoveryModel) {
+		night := min(due, plan.rowsPerNight())
+		factor := 1.0
+		if plan.Archives() && strings.EqualFold(plan.Target.Database, f.Database) {
+			factor = 2
+		}
+		out = append(out, RoomNeed{Path: RoleLog, Part: RoomPart{Label: "one night's batches in the log",
+			MB:    int64(math.Ceil(rowMB * float64(night) * factor)),
+			Basis: "until the next log backup frees it (BAK02)"}})
+	}
+	return out
 }

@@ -259,6 +259,10 @@ func BuildAutogrowthFix(f StorageFacts, st StorageFileState, options map[string]
 			p.Warnings = append(p.Warnings, fmt.Sprintf("Could not tell whether instant file initialization is on%s (INS07); without it each %d MB growth is written with zeros first.", why, mb))
 		}
 	}
+	if x.Volume != "" {
+		p.Needs = append(p.Needs, RoomNeed{Volume: x.Volume, Part: RoomPart{Label: "one growth of " + x.LogicalName, MB: int64(mb),
+			Basis: "the new growth step: the file takes this much more each time it fills"}})
+	}
 	if x.Volume != "" && x.VolumeTotalMB > 0 && x.VolumeFreeMB < int64(mb) {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("Volume %s has %d MB free, less than one growth of %d MB: free space there first (STO01).", x.Volume, x.VolumeFreeMB, mb))
 	}
@@ -425,6 +429,8 @@ func BuildAddTempdbFilesFix(f StorageFacts, options map[string]string) (FixPrevi
 			tempdbSetupFirst)
 	}
 	need := int64(count) * sizeMB
+	p.Needs = append(p.Needs, RoomNeed{Volume: first.Volume, Path: folder, Part: RoomPart{Label: fmt.Sprintf("%d new TempDB files", count), MB: need,
+		Basis: fmt.Sprintf("%d x %d MB, the size of the first file", count, sizeMB)}})
 	switch {
 	case first.Volume == "" || first.VolumeTotalMB <= 0:
 		p.Warnings = append(p.Warnings, fmt.Sprintf("The folder %s must have room for the new files: %d x %d MB = %d MB (kakapo could not read the volume).", folder, count, sizeMB, need))
@@ -432,8 +438,6 @@ func BuildAddTempdbFilesFix(f StorageFacts, options map[string]string) (FixPrevi
 		p.Warnings = append(p.Warnings, fmt.Sprintf("The folder %s needs %d MB for the new files (%d x %d MB) and volume %s has %d MB free: free space first or add fewer files.",
 			folder, need, count, sizeMB, first.Volume, first.VolumeFreeMB))
 		usable = false
-	default:
-		p.Warnings = append(p.Warnings, fmt.Sprintf("The new files take %d MB (%d x %d MB) on %s, which has %d MB free.", need, count, sizeMB, first.Volume, first.VolumeFreeMB))
 	}
 	p.Warnings = append(p.Warnings, tempdbAtOnce, tempdbRemoveNote, permission(ScopeDatabase, "tempdb"))
 	if !usable {
@@ -830,13 +834,13 @@ func BuildTempdbFilesFix(f StorageFacts, st StorageFileState, options map[string
 		r := rooms[k]
 		switch {
 		case !r.known:
-			rows = append(rows, Drift{Setting: "Disk room needed", Current: "", Target: fmt.Sprintf("%d MB (kakapo could not read the volume)", r.needMB)})
+			p.Needs = append(p.Needs, RoomNeed{Path: RoleTempdb, Part: RoomPart{Label: "larger TempDB files", MB: r.needMB, Basis: "the increase of the files"}})
 			p.Warnings = append(p.Warnings, fmt.Sprintf("The TempDB files need %d MB more room and kakapo could not read the volume: check the free space before applying.", r.needMB))
 		case r.freeMB < r.needMB:
 			p.Warnings = append(p.Warnings, fmt.Sprintf("The TempDB files need %d MB more on %s and it has %d MB free: free space there first (STO01) or type smaller sizes.", r.needMB, r.volume, r.freeMB))
 			usable = false
 		default:
-			rows = append(rows, Drift{Setting: "Disk room needed", Current: "", Target: fmt.Sprintf("%d MB on %s (%d MB free)", r.needMB, r.volume, r.freeMB)})
+			p.Needs = append(p.Needs, RoomNeed{Volume: r.volume, Part: RoomPart{Label: "larger TempDB files", MB: r.needMB, Basis: "the increase of the files on this drive"}})
 		}
 	}
 

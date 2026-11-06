@@ -409,6 +409,8 @@ func BuildInstallXESessionFix(f XEInstallFacts, options map[string]string) (FixP
 	if pend := pendingWithout(f.Pending, BlockedThresholdSetting); len(pend) > 0 {
 		p.Warnings = append(p.Warnings, warnPending(pend))
 	}
+	p.Needs = append(p.Needs, RoomNeed{Path: folder, Part: RoomPart{Label: "the session's files", MB: int64(fileMB * files),
+		Basis: fmt.Sprintf("%d files of %d MB at most; the oldest is replaced", files, fileMB)}})
 	p.Warnings = append(p.Warnings,
 		fmt.Sprintf("Every block over %d s is written to the file with both statements; on a server with constant blocking the files turn over faster (at most %s MB on disk, never more).",
 			threshold, n0int(int64(fileMB*files))),

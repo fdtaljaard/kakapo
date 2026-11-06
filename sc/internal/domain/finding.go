@@ -158,6 +158,9 @@ type CardDetail struct {
 	// Trend is the Performance card's "better or worse than usual" (docs/phase5k-contract.md): written
 	// for the Performance card (null when it could not be built), left out for every other card.
 	Trend *PerformanceTrend `json:"trend,omitempty"`
+	// Drives is the Storage card's answer first (docs/phase5l-contract.md part 5): one bar per drive;
+	// nil (left out) for every other card and when the volumes could not be read.
+	Drives *StorageDrives `json:"drives,omitempty"`
 }
 
 // Check is one check the app implements: which card it belongs to, its title, the question it
