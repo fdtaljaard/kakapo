@@ -2,7 +2,7 @@
 // and evidence as one plain-text block ready for whoever owns it. Pure functions with type-only imports, so
 // web/scripts/handover.test.ts can run them under plain node.
 
-import type { Card, Finding, Owner } from "@/api"
+import type { Card, Decision, Finding, Owner } from "@/api"
 
 // Where the finding was read: the server and database, the card's as-of as the card shows it ("09:21",
 // "yesterday 16:40"), and the kakapo build stamp. An empty field leaves its part out.
@@ -80,4 +80,28 @@ export function scriptText(statement: string, rollback: string): string {
     .map((line) => (line ? `-- ${line}` : "--"))
     .join("\n")
   return `${statement}\n\n-- Rollback:\n${commented}`
+}
+
+// Phase 5m: a decision's row as a hand-over block (docs/phase5m-contract.md, section 1): the verdict and its
+// sentence, what kakapo found, what to do first, what it costs, the record and the sources.
+export function decisionHandoverText(d: Decision, ctx: HandoverContext): string {
+  const where = [ctx.server, ctx.database].filter(Boolean).join(" / ")
+  const head = [`${d.title} (${d.checkId}): ${d.tag}${where ? ` on ${where}` : ""}`]
+  if (ctx.asOf) head.push(`As of ${ctx.asOf}`)
+  const lines = (ls: { label: string; text: string; window?: string }[]) =>
+    ls.map((l) => `- ${l.label}: ${l.text}${l.window ? ` (${l.window})` : ""}`).join("\n")
+  return [
+    head.join("\n"),
+    section("Question", d.question),
+    section("Verdict", d.sentence),
+    section("What kakapo found", lines(d.found)),
+    section("Do first", d.doFirst.map((s) => `- ${s.text}`).join("\n")),
+    section("What it costs", [lines(d.costs), d.notMeasured ?? "", lines(d.facts)].filter(Boolean).join("\n")),
+    section("Decision", d.recordLine ? `${d.recordLine}${d.reviewDue ? " (review due)" : ""}` : ""),
+    section("Then check", d.thenCheck),
+    section("Sources", d.sources.join("\n")),
+    ctx.version ? `From kakapo build ${ctx.version}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
 }

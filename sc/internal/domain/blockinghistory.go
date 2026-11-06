@@ -157,6 +157,11 @@ type BlockingHistory struct {
 	// DaySources says where each server day of the window came from (kakapo, system_health, or both on
 	// the day the session began); left out when kakapo's files were not read.
 	DaySources []BlockingDaySource `json:"daySources,omitempty"`
+	// Classes are the waits of the window by class (docs/phase5m-contract.md, section 2), every class in
+	// WaitClassOrder; left out of a history read before phase 5m, which the row versioning decision says.
+	Classes []BlockingClass `json:"classes,omitempty"`
+	// ClassLine is BLK01's line under its summary: what READ COMMITTED SNAPSHOT would remove and what not.
+	ClassLine string `json:"classLine,omitempty"`
 }
 
 // BlockingDaySource is a server day (2026-11-03) and where its blocking was read from.
@@ -200,6 +205,9 @@ type BlockingLeader struct {
 	SampleBlockerStatement string        `json:"sampleBlockerStatement"`
 	LockMode               string        `json:"lockMode,omitempty"` // the lock the longest-waiting victim wanted
 	QueryHash              string        `json:"queryHash,omitempty"`
+	// Classes are its wait episodes per class (docs/phase5m-contract.md, section 2): the waits of the
+	// sessions behind it, by class name; left out before phase 5m.
+	Classes map[string]int `json:"classes,omitempty"`
 
 	// MostAtOnce is the most sessions behind it in one snapshot (BLK01's High threshold).
 	MostAtOnce int `json:"-"`
@@ -333,9 +341,10 @@ type blkEpisode struct {
 	object   string
 	victims  map[int]bool
 	longest  int64
-	sample   BlockedProcess // the direct victim that waited longest
-	headOnly bool           // system_health wrote the head itself: it holds a transaction while it waits
-	local    time.Time      // the snapshot on the server's clock
+	sample   BlockedProcess  // the direct victim that waited longest
+	headOnly bool            // system_health wrote the head itself: it holds a transaction while it waits
+	local    time.Time       // the snapshot on the server's clock
+	waits    map[string]bool // the wait episodes (waitEpisodeID) of the sessions behind it, and of the head itself when head-only
 }
 
 // BuildBlockingHistory keeps the reports of this database in the window, attributes every blocked
@@ -386,6 +395,9 @@ func BuildBlockingHistory(in BlockingHistoryInputs) BlockingHistory {
 		h.ReportsTotal++
 	}
 	h.Snapshots = len(bySnap)
+	waits := blockingWaitEpisodes(bySnap)
+	h.Classes = buildBlockingClasses(bySnap, waits, offset)
+	h.ClassLine = BlockingClassLine(&h)
 
 	// The heat line: every hour of the window on the server's clock.
 	hours := map[string]*BlockingHour{}
@@ -429,7 +441,7 @@ func BuildBlockingHistory(in BlockingHistoryInputs) BlockingHistory {
 		episodes = append(episodes, eps...)
 	}
 
-	h.Leaders = blkLeaders(episodes, in.Database)
+	h.Leaders = blkLeaders(episodes, in.Database, waits)
 	if len(h.Leaders) > blkLeadersMax {
 		h.Notes = append(h.Notes, fmt.Sprintf("%d more blockers were seen less often and are not listed.", len(h.Leaders)-blkLeadersMax))
 		h.Leaders = h.Leaders[:blkLeadersMax]
@@ -498,7 +510,7 @@ func blkSnapshotEpisodes(t, local time.Time, reports []BlockedProcessReport) []b
 		if !ok {
 			i = len(out)
 			at[head] = i
-			out = append(out, blkEpisode{snapshot: t, local: local, victims: map[int]bool{}})
+			out = append(out, blkEpisode{snapshot: t, local: local, victims: map[int]bool{}, waits: map[string]bool{}})
 		}
 		return &out[i]
 	}
@@ -509,6 +521,7 @@ func blkSnapshotEpisodes(t, local time.Time, reports []BlockedProcessReport) []b
 		head := headOf(r.Blocking.SPID)
 		e := episode(head)
 		e.victims[r.Blocked.SPID] = true
+		e.waits[waitEpisodeID(r)] = true
 		e.longest = max(e.longest, r.Blocked.WaitMs)
 		if r.Blocking.SPID == head {
 			if e.head.SPID == 0 {
@@ -537,6 +550,11 @@ func blkSnapshotEpisodes(t, local time.Time, reports []BlockedProcessReport) []b
 		}
 		e.head, e.headOnly = hp, true
 		e.longest = max(e.longest, hp.WaitMs)
+		for _, r := range reports {
+			if r.HeadOnly() && r.Blocked.SPID == spid {
+				e.waits[waitEpisodeID(r)] = true
+			}
+		}
 	}
 	// The object: the one most of the head's direct victims wait on; "" when none was recorded.
 	for i := range out {
@@ -595,9 +613,10 @@ func blkEpisodeID(e blkEpisode) string {
 // blkLeaders groups the episodes by statement and object. A head seen with no session recorded behind
 // it has no object; it joins the leader of the same statement when that statement blocked on exactly
 // one object in the window, so one blocker is one leader whether or not a snapshot listed its victims.
-func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
+func blkLeaders(episodes []blkEpisode, database string, waits map[string]*waitEpisode) []BlockingLeader {
 	type acc struct {
 		l         BlockingLeader
+		waits     map[string]bool
 		episodes  map[string]time.Time // episode id -> first sighting (server clock)
 		sessions  map[string]bool      // episode id / victim
 		snapshots map[time.Time]bool
@@ -629,7 +648,7 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		if a == nil {
 			a = &acc{l: BlockingLeader{Key: key, BlockerStatement: stmt, Procedure: proc, Object: e.object},
 				episodes: map[string]time.Time{}, sessions: map[string]bool{}, snapshots: map[time.Time]bool{}, passes: map[time.Time]bool{},
-				kinds: map[string]bool{}}
+				kinds: map[string]bool{}, waits: map[string]bool{}}
 			byKey[key] = a
 			order = append(order, key)
 		}
@@ -640,6 +659,9 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		}
 		for v := range e.victims {
 			a.sessions[fmt.Sprintf("%s/%d", id, v)] = true
+		}
+		for w := range e.waits {
+			a.waits[w] = true
 		}
 		if e.kakapo {
 			a.passes[e.snapshot] = true
@@ -682,6 +704,12 @@ func blkLeaders(episodes []blkEpisode, database string) []BlockingLeader {
 		a := byKey[key]
 		l := a.l
 		l.Occurrences, l.Snapshots, l.Passes, l.TotalBlockedSessions = len(a.episodes), len(a.snapshots), len(a.passes), len(a.sessions)
+		l.Classes = map[string]int{}
+		for w := range a.waits {
+			if e := waits[w]; e != nil {
+				l.Classes[e.class]++
+			}
+		}
 		l.Kinds = []string{}
 		for _, k := range blkHistoryKindOrder {
 			if a.kinds[k] {
@@ -923,7 +951,7 @@ const (
 	blk01DoSerializable = "SERIALIZABLE is TransactionScope's default; ask the vendor for READ COMMITTED."
 	blk01DoRepeatable   = "REPEATABLE READ keeps every row it read locked until it commits; ask the vendor for READ COMMITTED."
 	blk01DoLongRunning  = "The statement itself is slow: open it."
-	blk01DoIndex        = "The lasting fixes are an index so each statement touches fewer rows, shorter transactions, or READ COMMITTED SNAPSHOT for the database (decide first: it uses TempDB for row versions)."
+	blk01DoIndex        = "The lasting fixes are an index so each statement touches fewer rows, shorter transactions, or READ COMMITTED SNAPSHOT: see Decisions at the top of the page."
 	blk01DoIndexRCSI    = "The database already has READ COMMITTED SNAPSHOT, so this blocking is writers against writers or a lock hint; the fix is in the code or the index."
 )
 
@@ -962,17 +990,27 @@ func blk01Owner(l BlockingLeader) string {
 	return OwnerUs
 }
 
+// BLK01's thresholds (docs/phase5d-contract.md), which the row versioning decision reuses
+// (docs/phase5m-contract.md, rule 2): Medium from 2 occurrences; High from 10, a wait of 60 s, or 10
+// sessions blocked at once.
+const (
+	blk01MediumOccurrences = 2
+	blk01HighOccurrences   = 10
+	blk01HighWaitSec       = 60
+	blk01HighAtOnce        = 10
+)
+
 // blk01Severity: Info for one occurrence; Medium from two; High from ten, or a wait of 60 s or more, or
 // 10 sessions blocked in one snapshot; a head system_health wrote holding its transaction while it waited
 // is High by the same thresholds from its first occurrence.
 func blk01Severity(l BlockingLeader) Severity {
-	high := l.Occurrences >= 10 || l.LongestWaitSec >= 60 || l.MostAtOnce >= 10
+	high := l.Occurrences >= blk01HighOccurrences || l.LongestWaitSec >= blk01HighWaitSec || l.MostAtOnce >= blk01HighAtOnce
 	switch {
 	case l.HeldWhileWaiting && high:
 		// A head that held its transaction a minute or more while it waited is the problem itself, seen
 		// once or not: system_health often keeps no victim behind it to count.
 		return SeverityHigh
-	case l.Occurrences < 2:
+	case l.Occurrences < blk01MediumOccurrences:
 		return SeverityInfo
 	case high:
 		return SeverityHigh

@@ -102,28 +102,12 @@ BEGIN CATCH
     SET @countersError = ERROR_MESSAGE();
 END CATCH;
 
-/* ACT02 Transactions open more than 5 minutes in this database; WRK07 sessions sleeping with one, instance-wide */
-DECLARE @open TABLE (session_id int NOT NULL, login_name nvarchar(128) NULL, host_name nvarchar(128) NULL, program_name nvarchar(128) NULL,
-                     status nvarchar(30) NULL, minutes int NOT NULL, started datetime NULL, log_bytes bigint NULL, last_stmt nvarchar(4000) NULL);
+` + openMinutesDeclaration + openTransactionsFragment + `
+/* WRK07 sessions sleeping with a transaction open more than 5 minutes, instance-wide */
 DECLARE @idle TABLE (session_id int NOT NULL, login_name nvarchar(128) NULL, host_name nvarchar(128) NULL, program_name nvarchar(128) NULL,
                      minutes int NOT NULL, implicit bit NOT NULL, began datetime NULL);
-DECLARE @transError nvarchar(2048);
-IF @vss = 0 SET @transError = @noVss;
-ELSE
+IF @transError IS NULL
 BEGIN TRY
-    INSERT @open (session_id, login_name, host_name, program_name, status, minutes, started, log_bytes, last_stmt)
-    SELECT s.session_id, s.login_name, s.host_name, s.program_name, s.status,
-           DATEDIFF(MINUTE, dt.database_transaction_begin_time, GETDATE()), dt.database_transaction_begin_time,
-           dt.database_transaction_log_bytes_used, LEFT(q.text, 4000)
-    FROM sys.dm_tran_database_transactions dt
-    JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_id
-    JOIN sys.dm_exec_sessions s ON s.session_id = st.session_id
-    OUTER APPLY (SELECT TOP (1) t.text FROM sys.dm_exec_connections c CROSS APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) t
-                 WHERE c.session_id = s.session_id) q
-    WHERE dt.database_id = @dbid
-      AND dt.database_transaction_begin_time < DATEADD(MINUTE, -5, GETDATE())
-      AND s.session_id <> @@SPID;
-
     INSERT @idle (session_id, login_name, host_name, program_name, minutes, implicit, began)
     SELECT TOP (200) s.session_id, s.login_name, s.host_name, s.program_name,
            DATEDIFF(MINUTE, tat.transaction_begin_time, GETDATE()),
@@ -220,7 +204,7 @@ SELECT @found,
        @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET()),
        ` + liveColumns + `;
 SELECT wait_type, wait_ms, signal_ms, tasks, max_ms FROM @waits ORDER BY wait_ms DESC;
-SELECT session_id, login_name, host_name, program_name, status, minutes, started, log_bytes, last_stmt FROM @open ORDER BY started, session_id;
+SELECT ` + openTransactionColumns + ` FROM @open ORDER BY started, session_id;
 SELECT session_id, login_name, host_name, program_name, minutes, implicit FROM @idle ORDER BY began, session_id;
 SELECT db_id, ISNULL(DB_NAME(db_id), N'database ' + CONVERT(nvarchar(10), db_id)), cpu, read_bytes FROM @load ORDER BY cpu DESC, read_bytes DESC;
 SELECT statement, equality, inequality, included, uses, impact, score, last_seek FROM @missing ORDER BY score DESC;
@@ -581,18 +565,10 @@ func readPerformanceInstance(ctx context.Context, db *sql.DB, database string, f
 	}
 	f.OpenTransactions = []domain.OpenTransaction{}
 	for rows.Next() {
-		var x domain.OpenTransaction
-		var login, host, program, status, last sql.NullString
-		var started sql.NullTime
-		var logBytes sql.NullInt64
-		if err := rows.Scan(&x.Session, &login, &host, &program, &status, &x.Minutes, &started, &logBytes, &last); err != nil {
+		x, err := scanOpenTransaction(rows)
+		if err != nil {
 			return err
 		}
-		x.Login, x.Host, x.Program, x.Status, x.LastStatement = login.String, host.String, program.String, status.String, last.String
-		if started.Valid {
-			x.Started = naive(started.Time)
-		}
-		x.LogBytes = logBytes.Int64
 		f.OpenTransactions = append(f.OpenTransactions, x)
 	}
 

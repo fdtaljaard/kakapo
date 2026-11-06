@@ -147,18 +147,44 @@ func readKillBack(ctx context.Context, g *genericFix, n int, loginTime string) (
 	return rb, nil
 }
 
-// prepareRCSI reads the database's READ COMMITTED SNAPSHOT setting and builds the preview.
+// rcsiVerdictKey keeps the row versioning verdict the preview was built on in g.options, for the
+// decision record the apply writes. g.options never goes back to the client; the preview's options do.
+const rcsiVerdictKey = "kakapo.rcsiVerdict"
+
+// prepareRCSI reads the row versioning facts (docs/phase5m-contract.md, section 5) and builds the preview
+// with the row versioning decision's evidence and cost lines, from the stored reports.
 func prepareRCSI(ctx context.Context, s *Service, g *genericFix, _ domain.FixDef, _ map[string]string) error {
-	f, err := collect.ReadRCSI(ctx, g.db, g.database.Name)
-	if err != nil {
-		return newError(KindUnreachable, "could not read READ_COMMITTED_SNAPSHOT of %s on %s: %v", g.database.Name, g.srv.Name, err)
+	name := g.database.Name
+	f, err := collect.ReadRowVersioning(ctx, g.db, name)
+	if err == nil && f.SettingsError != "" {
+		err = errors.New(f.SettingsError)
 	}
-	return buildRCSIFix(g, f)
+	if err != nil {
+		return newError(KindUnreachable, "could not read READ_COMMITTED_SNAPSHOT of %s on %s: %v", name, g.srv.Name, err)
+	}
+	in, err := s.storedRowVersioningInputs(ctx, g.srv.ID, name)
+	if err != nil {
+		return err
+	}
+	in.Facts = &f
+	dec, err := s.rowVersioningDecision(ctx, g.srv.ID, in)
+	if err != nil {
+		return err
+	}
+	if err := buildRCSIFix(g, domain.RCSIFactsOf(f), &dec); err != nil {
+		return err
+	}
+	g.options = maps.Clone(g.options)
+	if g.options == nil {
+		g.options = map[string]string{}
+	}
+	g.options[rcsiVerdictKey] = dec.Verdict
+	return nil
 }
 
-// buildRCSIFix builds the preview from the setting read; already on is KindNotFound.
-func buildRCSIFix(g *genericFix, f domain.RCSIFacts) error {
-	p, fix, err := domain.BuildRCSIFix(f)
+// buildRCSIFix builds the preview from the setting read and the decision; already on is KindNotFound.
+func buildRCSIFix(g *genericFix, f domain.RCSIFacts, d *domain.Decision) error {
+	p, fix, err := domain.BuildRCSIFix(f, d)
 	if errors.Is(err, domain.ErrFixNotApplicable) {
 		return newError(KindNotFound, "READ COMMITTED SNAPSHOT is already on for %s: nothing to apply", f.Database)
 	}
@@ -169,8 +195,9 @@ func buildRCSIFix(g *genericFix, f domain.RCSIFacts) error {
 	return nil
 }
 
-// applyRCSI runs the ALTER DATABASE, reads is_read_committed_snapshot_on back, and writes the change
-// row with the OFF statement as its rollback.
+// applyRCSI runs the ALTER DATABASE, reads is_read_committed_snapshot_on back, writes the change row
+// with the OFF statement as its rollback, and the decision record "Turned on" with the change's id
+// (docs/phase5m-contract.md, section 4).
 func applyRCSI(ctx context.Context, s *Service, serverID int64, g *genericFix) (domain.FixResult, error) {
 	name, fix, p := g.database.Name, g.fix, g.preview
 	if err := collect.ExecFix(ctx, g.db, p.Statement); err != nil {
@@ -203,6 +230,14 @@ func applyRCSI(ctx context.Context, s *Service, serverID int64, g *genericFix) (
 	}
 	id, err := s.store.InsertChange(ctx, change)
 	if err != nil {
+		return domain.FixResult{}, err
+	}
+	verdict := g.options[rcsiVerdictKey]
+	if verdict == "" {
+		verdict = domain.DecisionNotEnoughEvidence
+	}
+	if _, err := s.store.InsertDecision(ctx, domain.DecisionRecord{ServerID: serverID, Database: name, Decision: domain.DecisionRowVersioning,
+		DecidedAt: appliedAt, DecidedBy: windowsUser(), Choice: domain.ChoiceChange, Verdict: verdict, ChangeID: &id}); err != nil {
 		return domain.FixResult{}, err
 	}
 	return domain.FixResult{Preview: p, Before: fix.Current, After: after, Verified: f.RCSI, ChangeID: id, AppliedAt: appliedAt}, nil

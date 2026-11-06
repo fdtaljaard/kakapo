@@ -224,6 +224,11 @@ func (s *Service) ApplyFixWithOptions(ctx context.Context, serverID int64, dbNam
 		g.db.Close()
 		return domain.FixResult{}, err
 	}
+	if g.preview.Held != "" {
+		// docs/phase5m-contract.md, section 4: something the preview names holds Apply back.
+		g.db.Close()
+		return domain.FixResult{}, newError(KindConflict, "%s", g.preview.Held)
+	}
 	r, registered := registeredFixFor(fixID)
 	if registered && runsInBackground(r, g) {
 		// A long fix (docs/phase4f-contract.md) answers at once with a pending run; the run owns g.

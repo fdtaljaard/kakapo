@@ -803,7 +803,7 @@ func TestBuildDeadlockReport(t *testing.T) {
 		t.Errorf("empty %s", b)
 	}
 	b, _ = json.Marshal(r.Pairs[0])
-	if string(b) != `{"procedures":["dbo.IntegrationPost","dbo.USP_PICKING"],"count":10,"last":"2026-11-03T08:30:00Z","objects":["dbo.Pick","dbo.Stock"],"lastVictimStatement":"UPDATE dbo.Stock SET x = 1"}` {
+	if string(b) != `{"procedures":["dbo.IntegrationPost","dbo.USP_PICKING"],"count":10,"last":"2026-11-03T08:30:00Z","objects":["dbo.Pick","dbo.Stock"],"lastVictimStatement":"UPDATE dbo.Stock SET x = 1","withReader":0}` {
 		t.Errorf("pair JSON %s", b)
 	}
 }
@@ -840,7 +840,7 @@ func TestPerformanceDetailJSON(t *testing.T) {
 	now := time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
 	r := BuildDeadlockReport(DeadlockInputs{Database: "WarehouseLive", CapturedAt: now, Days: 7, Source: DeadlockSourceFile})
 	b, _ = json.Marshal(CardDetail{Card: c, Findings: fs, Checks: cs, Deadlocks: &r})
-	if !strings.Contains(string(b), `"deadlocks":{"capturedAt":"2026-11-03T09:30:00Z","durationSeconds":0,"days":7,"total":0,"source":"file","pairs":[],"findings":[]}`) {
+	if !strings.Contains(string(b), `"deadlocks":{"capturedAt":"2026-11-03T09:30:00Z","durationSeconds":0,"days":7,"total":0,"source":"file","pairs":[],"findings":[],"withReader":0,"withoutReader":0}`) {
 		t.Errorf("with a report: %s", b)
 	}
 	// Other cards carry neither deadlocks nor a clock.

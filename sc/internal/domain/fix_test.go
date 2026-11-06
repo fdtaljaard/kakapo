@@ -249,7 +249,7 @@ func TestFixDefsMatchTheCatalogue(t *testing.T) {
 	ids := []string{}
 	for _, d := range FixDefs {
 		ids = append(ids, d.ID)
-		if c, ok := CheckByID(d.CheckID); !ok || (c.Card != CardSetup && c.Card != CardUpkeep && c.Card != CardBackups && c.Card != CardPerformance && c.Card != CardStorage) || d.Card() != c.Card {
+		if c, ok := CheckByID(d.CheckID); !ok || (c.Card != CardSetup && c.Card != CardUpkeep && c.Card != CardBackups && c.Card != CardPerformance && c.Card != CardStorage && c.Card != CardDecisions) || d.Card() != c.Card {
 			t.Errorf("%s: check %s", d.ID, d.CheckID)
 		}
 	}

@@ -428,8 +428,8 @@ const (
 	qry01GrantDo    = " An oversized grant blocks other queries' memory (PRS01, RESOURCE_SEMAPHORE): the estimate is too high, usually a stale statistic or a wide SELECT."
 	qry01PlansDo    = " Plans that never get reused usually mean the values are typed into the SQL text (SRV06) or the options differ per connection (ARITHABORT, see below)."
 	qry01Arithabort = " In SSMS run SET ARITHABORT OFF before testing a query from the application, or you get a different plan than the application does."
-	act01RCSIOff    = " If the blocking keeps coming back, the lasting fixes are an index so each statement touches fewer rows, shorter transactions, or READ COMMITTED SNAPSHOT for the database (decide first: it uses TempDB for row versions)."
-	qry01RCSIOff    = " For the blocking: an index so it touches fewer rows, or READ COMMITTED SNAPSHOT for the database (decide first: it uses TempDB for row versions)."
+	act01RCSIOff    = " If the blocking keeps coming back, the lasting fixes are an index so each statement touches fewer rows, shorter transactions, or READ COMMITTED SNAPSHOT: see Decisions at the top of the page."
+	qry01RCSIOff    = " For the blocking: an index so it touches fewer rows, or READ COMMITTED SNAPSHOT: see Decisions at the top of the page."
 	rcsiOn          = " The database already has READ COMMITTED SNAPSHOT, so this blocking is writers against writers or a lock hint; the fix is in the code or the index."
 	prs02Why        = "Each one is a query that failed: the user saw an error or a timeout, and the work was not done."
 	prs02Do         = "Find the queries with the largest memory grants (PRS01's evidence while it happens, QRY01's memory grant warning) and fix their estimates; then check max server memory (INS02)."
@@ -856,6 +856,14 @@ func (b *perfBuild) blocking() (blocked int, longest int64) {
 // act02: one finding per transaction open more than 5 minutes in this database (PerformanceTriage.sql's
 // ACT02), then one for the user sessions sleeping with a transaction open more than 5 minutes
 // elsewhere on the instance (the scan's WRK07); High from 30 minutes.
+// Act02HighMinutes is ACT02's High: a transaction open 30 minutes or more. The row versioning decision
+// holds the rcsi fix back at the same age (docs/phase5m-contract.md, section 4).
+const Act02HighMinutes = 30
+
+// Act02Minutes is ACT02's own threshold: a transaction open 5 minutes or more is named (the open
+// transactions fragment of the read uses the same 5 minutes).
+const Act02Minutes = 5
+
 func (b *perfBuild) act02() {
 	f := b.f
 	if f.TransactionsError != "" {
@@ -866,7 +874,7 @@ func (b *perfBuild) act02() {
 	for _, x := range f.OpenTransactions {
 		seen[x.Session] = true
 		sev := SeverityMedium
-		if x.Minutes >= 30 {
+		if x.Minutes >= Act02HighMinutes {
 			sev = SeverityHigh
 		}
 		tail := "."

@@ -351,6 +351,12 @@ var Checks = []Check{
 		"Re-run after a week: fewer deadlocks for the top pair"},
 	{"BLK01", CardPerformance, "Blocking history", "What blocked users this week, and how often?", OwnerUs,
 		"Re-run after a week: fewer occurrences for the top blocker"},
+
+	// Phase 5m (docs/phase5m-contract.md): the decisions for a database. A decision is not a finding and no
+	// card lists it; its catalogue entry keeps its rule, sources and fix the one way.
+	{"DEC01", CardDecisions, "Row versioning (READ COMMITTED SNAPSHOT)",
+		"Should this database let readers use row versions instead of waiting for writers?", OwnerUs,
+		"After a few working days: the row says On and TMP03 is not raised; the tuning report's lock threads waiting went down."},
 }
 
 // CheckByID returns a check of the catalogue by its id.

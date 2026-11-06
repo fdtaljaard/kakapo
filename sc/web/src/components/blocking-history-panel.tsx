@@ -173,6 +173,8 @@ function HistoryBody({
   return (
     <div className={cn("grid gap-3", className)}>
       <p>{summary(h)}</p>
+      {/* Phase 5m: what READ COMMITTED SNAPSHOT would remove (docs/phase5m-contract.md, section 7). */}
+      {h.classLine && <p className="text-sm">{h.classLine}</p>}
       <p className="text-sm text-muted-foreground">{h.missedNote}</p>
       <p className="text-xs text-muted-foreground">
         as of {formatWhen(h.capturedAt)}, took {seconds.format(h.durationSeconds)} s · {sourceText[h.source] ?? h.source}

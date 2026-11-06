@@ -162,6 +162,15 @@ var migrations = []string{
 	   server_id INTEGER NOT NULL, db_name VARCHAR NOT NULL, captured_at TIMESTAMP NOT NULL,
 	   days INTEGER NOT NULL, source VARCHAR NOT NULL, leaders INTEGER NOT NULL, report_json VARCHAR NOT NULL
 	 );`,
+	// 12: every decision taken on a database, newest wins; never edited (docs/phase5m-contract.md, section 6)
+	`CREATE SEQUENCE IF NOT EXISTS seq_decision START 1;
+	 CREATE TABLE IF NOT EXISTS decision (
+	   id INTEGER PRIMARY KEY DEFAULT nextval('seq_decision'),
+	   server_id INTEGER NOT NULL, db_name VARCHAR NOT NULL, decision VARCHAR NOT NULL,
+	   decided_at TIMESTAMP NOT NULL, decided_by VARCHAR NOT NULL,
+	   choice VARCHAR NOT NULL,
+	   verdict VARCHAR NOT NULL, reason VARCHAR, review_on DATE, change_id INTEGER
+	 );`,
 }
 
 // InstallID returns the id of this data file, made once on first use. Stored passwords are

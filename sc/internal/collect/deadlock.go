@@ -327,14 +327,15 @@ type xdDeadlock struct {
 }
 
 type xdProcess struct {
-	ID       string    `xml:"id,attr"`
-	LockMode string    `xml:"lockMode,attr"`
-	DBName   string    `xml:"currentdbname,attr"`
-	Login    string    `xml:"loginname,attr"`
-	Host     string    `xml:"hostname,attr"`
-	App      string    `xml:"clientapp,attr"`
-	Frames   []xdFrame `xml:"executionStack>frame"`
-	InputBuf string    `xml:"inputbuf"`
+	ID        string    `xml:"id,attr"`
+	LockMode  string    `xml:"lockMode,attr"`
+	Isolation string    `xml:"isolationlevel,attr"`
+	DBName    string    `xml:"currentdbname,attr"`
+	Login     string    `xml:"loginname,attr"`
+	Host      string    `xml:"hostname,attr"`
+	App       string    `xml:"clientapp,attr"`
+	Frames    []xdFrame `xml:"executionStack>frame"`
+	InputBuf  string    `xml:"inputbuf"`
 }
 
 type xdFrame struct {
@@ -428,7 +429,7 @@ func ParseDeadlockEvent(eventXML string) (domain.DeadlockEvent, error) {
 }
 
 func (p xdProcess) process() domain.DeadlockProcess {
-	out := domain.DeadlockProcess{ID: p.ID, LockMode: p.LockMode, Database: p.DBName, Login: p.Login, Host: p.Host, App: p.App}
+	out := domain.DeadlockProcess{ID: p.ID, LockMode: p.LockMode, Isolation: p.Isolation, Database: p.DBName, Login: p.Login, Host: p.Host, App: p.App}
 	for _, f := range p.Frames {
 		name := strings.TrimSpace(f.ProcName)
 		if name == "" || strings.EqualFold(name, "adhoc") || strings.EqualFold(name, "unknown") {

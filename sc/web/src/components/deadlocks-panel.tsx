@@ -122,6 +122,12 @@ function ReportBody({ report: r, className }: { report: DeadlockReport; classNam
                       <span>{p.procedures[0]}</span>
                       <span>{p.procedures[1]}</span>
                     </div>
+                    {/* Phase 5m: the kind READ COMMITTED SNAPSHOT removes. */}
+                    {(p.withReader ?? 0) > 0 && (
+                      <span className="mt-1 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                        with a reader{p.withReader !== p.count ? ` (${p.withReader} of ${p.count})` : ""}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="align-top text-right tabular-nums">{p.count}</TableCell>
                   <TableCell className="align-top whitespace-normal">{formatWhen(p.last)}</TableCell>

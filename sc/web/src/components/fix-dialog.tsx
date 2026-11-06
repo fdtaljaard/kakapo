@@ -256,6 +256,15 @@ export function FixDialog({
             <PreviewBody preview={step.preview} />
           ))}
 
+        {/* Phase 5m: something the preview names holds Apply back (a transaction left open); Copy script stays. */}
+        {step.kind === "preview" && !refreshing && step.preview.held && (
+          <Alert className="border-amber-400 dark:border-amber-800">
+            <TriangleAlert className="size-4" />
+            <AlertTitle>Apply is held back</AlertTitle>
+            <AlertDescription className="break-words">{step.preview.held}</AlertDescription>
+          </Alert>
+        )}
+
         {step.kind === "preview" && step.error && (
           <Alert variant="destructive">
             <XCircle className="size-4" />
@@ -328,10 +337,12 @@ export function FixDialog({
                       disabled={refreshing}
                       onCopy={() => copyScript(step.preview)}
                     />
-                    <Button onClick={() => run(step.preview)} disabled={applying || refreshing}>
-                      {applying && <Loader2 className="size-4 animate-spin" />}
-                      {applying ? "Applying…" : "Apply"}
-                    </Button>
+                    {!step.preview.held && (
+                      <Button onClick={() => run(step.preview)} disabled={applying || refreshing}>
+                        {applying && <Loader2 className="size-4 animate-spin" />}
+                        {applying ? "Applying…" : "Apply"}
+                      </Button>
+                    )}
                   </>
                 ))}
             </>

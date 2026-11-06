@@ -80,7 +80,8 @@ var FixDefs = []FixDef{
 	{"create-index", "Create the suggested index", ScopeDatabase, "WRK03", "Index"},
 	{"drop-index", "Drop an index", ScopeDatabase, "WRK03", "Index"},
 	{"kill-session", "Kill the blocking session", ScopeServer, "ACT01", "Session"},
-	{"rcsi", "Turn on READ COMMITTED SNAPSHOT", ScopeDatabase, "ACT01", "READ_COMMITTED_SNAPSHOT"},
+	// Phase 5m (docs/phase5m-contract.md, section 4): the row versioning decision's fix.
+	{"rcsi", "Turn on READ COMMITTED SNAPSHOT", ScopeDatabase, "DEC01", "READ_COMMITTED_SNAPSHOT"},
 	{"force-plan", "Force the faster plan", ScopeDatabase, "QRY01", "Plan"},
 	{"unforce-plan", "Stop forcing the plan", ScopeDatabase, "QRY01", "Plan"},
 	{"evict-plan", "Remove the plan from the cache", ScopeServer, "QRY01", "Plan"},

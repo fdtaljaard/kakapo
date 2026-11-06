@@ -97,6 +97,9 @@ export interface FixPreview {
   // Why there is nothing to do, plainly, when changes is empty and nothing is wrong (kakapo's event session
   // is already installed); shown in place of the dialog's generic "Nothing to change" line.
   note?: string
+  // Phase 5m: why Apply is held back although the change could run (a transaction left open in the
+  // database); shown in place of Apply, Copy script stays.
+  held?: string
 }
 
 // Phase 5l: one drive's room for a change.
@@ -183,7 +186,74 @@ export interface Overview {
   changeWindow?: ChangeWindow
   // Phase 5i: the cards' findings that are badly wrong right now (docs/phase5i-contract.md, section 3).
   redFlags: RedFlags
+  // Phase 5m: the decisions for this database (docs/phase5m-contract.md); the first is row versioning.
+  decisions: Decision[]
   checkedAt: string
+}
+
+// Phase 5m: one row of the Decisions card (docs/phase5m-contract.md): the verdict, what kakapo found, what to
+// do first, what it costs, the buttons and the record.
+export type DecisionVerdict = "on" | "fix-first" | "not-enough-evidence" | "worth-considering" | "not-needed"
+
+export interface Decision {
+  decision: string // "row-versioning"
+  checkId: string // "DEC01"
+  title: string
+  question: string
+  verdict: DecisionVerdict
+  tag: string
+  tone: "green" | "amber" | "orange" | "grey"
+  sentence: string
+  found: DecisionLine[]
+  doFirst: { text: string; action: DecisionAction }[]
+  costs: DecisionLine[]
+  notMeasured?: string
+  facts: DecisionLine[]
+  actions: DecisionAction[]
+  thenCheck: string
+  sources: string[]
+  record?: DecisionRecord // the latest
+  recordLine?: string
+  reviewDue?: boolean
+  history: DecisionRecord[] // newest first
+}
+
+export interface DecisionLine {
+  label: string
+  text: string
+  window?: string
+}
+
+// Apply a fix (fixId, through its preview), or go to a page under the database (to: "blocking", "cards/storage").
+export interface DecisionAction {
+  label: string
+  fixId?: string
+  to?: string
+}
+
+export type DecisionChoice = "keep" | "change" | "later"
+
+export interface DecisionRecord {
+  id: number
+  serverId: number
+  database: string
+  decision: string
+  decidedAt: string
+  decidedBy: string
+  choice: DecisionChoice
+  verdict: DecisionVerdict
+  reason?: string
+  reviewOn?: string // "2027-02-04"
+  changeId?: number
+  line?: string
+  reviewDue?: boolean
+}
+
+export interface DecisionInput {
+  choice: "keep" | "later"
+  verdict: DecisionVerdict
+  reason: string
+  reviewOn: string // "" for 90 days from today
 }
 
 // Phase 5i: a finding the cards already raise that is a red flag. to is where its button goes, under the
@@ -460,6 +530,8 @@ export interface DeadlockReport {
   findings: Finding[] // one DLK01 finding per pair with count >= 1, ranked
   health?: HealthEvent[] // phase 3f: SYSTEM and IO_SUBSYSTEM warnings of the window, newest first, at most 50; omitted when none
   kakapoSince?: string // phase 5e: when kakapo's session files begin (UTC); the deadlocks before are system_health's
+  withReader?: number // phase 5m: deadlocks with a reader in them (S or IS at read committed); absent before 5m
+  withoutReader?: number
 }
 
 // Phase 3f, item 21: one sp_server_diagnostics_component_result event of the system_health session in
@@ -488,6 +560,21 @@ export interface BlockingHistory {
   notes: string[] // what could not be read
   kakapoSince?: string // phase 5e: when kakapo's session files begin (UTC); omitted when they were not read
   daySources?: { day: string; source: "kakapo" | "system_health" | "both" }[] // phase 5e: where each server day came from
+  classes?: BlockingClass[] // phase 5m: the waits by class; absent in a history read before 5m
+  classLine?: string // phase 5m: what READ COMMITTED SNAPSHOT would remove and what not
+}
+
+// Phase 5m: the waits of one class (docs/phase5m-contract.md, section 2).
+export interface BlockingClass {
+  class: "writes-behind-reads" | "reads-behind-writes" | "locking-readers" | "schema-locks" | "writes-behind-writes" | "unknown"
+  episodes: number
+  totalWaitSec: number
+  longestWaitSec: number
+  mostAtOnce: number
+  days: number
+  byDay: { day: string; waitSec: number }[]
+  waiters?: { program: string; login: string; host: string; episodes: number; waitSec: number }[]
+  blockers?: { program: string; login: string; host: string; episodes: number; waitSec: number }[]
 }
 
 // How a head blocker is classified (the live blocking page's kinds, plus a blocker in another database).
@@ -530,6 +617,7 @@ export interface DeadlockPair {
   last: string
   objects: string[] // the tables involved, distinct
   lastVictimStatement: string // first 500 chars
+  withReader?: number // phase 5m: how many had a reader in them (S or IS at read committed)
 }
 
 // Phase 3b: STO10, room to run DBCC CHECKDB on this database, read on request (docs/phase3b-contract.md).
@@ -691,6 +779,11 @@ export const api = {
   // ago, or before the exe restarted).
   fixRun: (serverId: number, database: string, runId: string) =>
     request<FixRun>(`${databasePath(serverId, database)}/fixes/runs/${encodeURIComponent(runId)}`),
+  // Phase 5m: the records of the row versioning decision, newest first; Record a decision (keep, later). 400 for
+  // keep without a reason, 404 for an unknown server.
+  decisions: (serverId: number, database: string) => request<DecisionRecord[]>(`${databasePath(serverId, database)}/decisions`),
+  recordDecision: (serverId: number, database: string, input: DecisionInput) =>
+    request<DecisionRecord>(`${databasePath(serverId, database)}/decisions`, { method: "POST", body: JSON.stringify(input) }),
   // Remembers the database on the registration, so the instance opens straight into it next time.
   rememberDatabase: (serverId: number, database: string) =>
     request<Server>(`/api/servers/${serverId}/database`, { method: "PUT", body: JSON.stringify({ database }) }),

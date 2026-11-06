@@ -1150,6 +1150,47 @@ func (f StorageFacts) tempdbUse() (tempdbUse, bool) {
 	return u, true
 }
 
+// raised says whether TMP03 fires: tempdb half full (and 512 MB or more, or 80 % full), or its log 70 %
+// full.
+func (u tempdbUse) raised() bool {
+	logPct := -1.0
+	if u.LogPct != nil {
+		logPct = *u.LogPct
+	}
+	return (u.UsedPct >= 50 && (u.AllocMB >= 512 || u.UsedPct >= 80)) || logPct >= 70
+}
+
+// short says whether the drive under tempdb has less free than a quarter of its size.
+func (u tempdbUse) short() bool {
+	volFree := int64(0)
+	if u.VolFreeMB != nil {
+		volFree = *u.VolFreeMB
+	}
+	return volFree < u.AllocMB/4
+}
+
+// TempdbRoom is tempdb's size and room as the Storage card read it (TMP03's facts), for the row
+// versioning decision's cost (docs/phase5m-contract.md, section 5): nothing is read twice.
+type TempdbRoom struct {
+	AllocMB      int64  `json:"allocMB"`
+	FreeMB       int64  `json:"freeMB"`
+	CanGrow      bool   `json:"canGrow"`
+	VolumeFreeMB *int64 `json:"volumeFreeMB,omitempty"`
+	// NoRoom: TMP03 is raised and says it cannot grow or the disk is short ("cannot grow", "the disk has
+	// only ..."): TempDB cannot hold more.
+	NoRoom bool `json:"noRoom"`
+}
+
+// TempdbRoomOf is tempdb's room from the storage facts; nil when it was not read.
+func TempdbRoomOf(f StorageFacts) *TempdbRoom {
+	u, ok := f.tempdbUse()
+	if !ok {
+		return nil
+	}
+	return &TempdbRoom{AllocMB: u.AllocMB, FreeMB: u.FreeMB, CanGrow: u.CanGrow, VolumeFreeMB: u.VolFreeMB,
+		NoRoom: u.raised() && (!u.CanGrow || u.short())}
+}
+
 // tmp03: tempdb more than half full, and whether it has room to grow.
 func (b *storageBuild) tmp03() {
 	u, ok := b.f.tempdbUse()
@@ -1165,14 +1206,10 @@ func (b *storageBuild) tmp03() {
 	if u.LogPct != nil {
 		logPct = *u.LogPct
 	}
-	if !((u.UsedPct >= 50 && (u.AllocMB >= 512 || u.UsedPct >= 80)) || logPct >= 70) {
+	if !u.raised() {
 		return
 	}
-	volFree := int64(0)
-	if u.VolFreeMB != nil {
-		volFree = *u.VolFreeMB
-	}
-	short := volFree < u.AllocMB/4
+	short := u.short()
 	rank := 3
 	if (u.UsedPct >= 80 || logPct >= 90) && (!u.CanGrow || short) {
 		rank = 2

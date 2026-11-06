@@ -129,6 +129,10 @@ type FixPreview struct {
 	// Note says plainly why there is nothing to do when Changes is empty and nothing is wrong (kakapo's
 	// event session is already installed); the dialog shows it in place of its generic line.
 	Note string `json:"note,omitempty"`
+	// Held says why Apply is held back although the change could run (docs/phase5m-contract.md, section
+	// 4: a transaction left open in the database); the dialog shows it in place of Apply, Copy script
+	// stays. "" when nothing holds it.
+	Held string `json:"held,omitempty"`
 }
 
 // FixInput is one value the user may set in a fix's preview (docs/phase3g-contract.md).

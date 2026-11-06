@@ -15,7 +15,7 @@ var blkWrite = regexp.MustCompile(`(?i)\b(INSERT|UPDATE|DELETE|MERGE)\s+(INTO\s+
 // temporary tables and table variables; nothing alters, kills or changes a setting.
 func TestBlockingReadsOnly(t *testing.T) {
 	for name, q := range map[string]string{"chain": blockingQuery, "kill target": killTargetQuery,
-		"kill status": Tag(killStatusQuery), "rcsi": Tag(rcsiQuery)} {
+		"kill status": Tag(killStatusQuery), "row versioning": rowVersioningQuery} {
 		if !strings.HasPrefix(q, KakapoTag+" "+safeSession) {
 			t.Errorf("%s query is not tagged with the safe session first: %.80s", name, q)
 		}
@@ -68,7 +68,7 @@ func TestBlockingQueryShape(t *testing.T) {
 	if !strings.Contains(killTargetQuery, "WHERE s.session_id = @session") || !strings.Contains(killTargetQuery, "msdb.dbo.sysjobs") {
 		t.Error("the kill target query reads the one session and its job")
 	}
-	if !strings.Contains(rcsiQuery, "is_read_committed_snapshot_on") || !strings.Contains(rcsiQuery, "s.session_id <> @@SPID") {
+	if !strings.Contains(rowVersioningQuery, "is_read_committed_snapshot_on") || !strings.Contains(rowVersioningQuery, "s.session_id <> @@SPID") {
 		t.Error("the rcsi query reads the setting and the other sessions")
 	}
 }

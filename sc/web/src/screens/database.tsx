@@ -2,6 +2,7 @@ import { useParams, useSearchParams } from "react-router-dom"
 import { XCircle } from "lucide-react"
 
 import { DatabaseHeader } from "@/components/database-header"
+import { DecisionsCard } from "@/components/decisions"
 import { InstanceCard, InstanceCardSkeleton } from "@/components/instance-card"
 import { LoadStrip } from "@/components/load-strip"
 import { PageCrumbs } from "@/components/page-crumbs"
@@ -17,7 +18,7 @@ import { useServers } from "@/hooks/use-servers"
 import { instancePath } from "@/lib/paths"
 
 // "/instances/:id/databases/:db": the header, the load strip with the red flags (phase 5i, ?days= 7, 14
-// or 30), the six cards and Recent changes for one database.
+// or 30), the decisions (phase 5m), the six cards and Recent changes for one database.
 export function DatabaseScreen() {
   const params = useParams()
   const id = Number(params.id)
@@ -94,6 +95,15 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
 
       {overview ? (
         <>
+          {/* Phase 5m: the decisions for this database, between the load strip and the six cards. */}
+          <DecisionsCard
+            decisions={overview.decisions ?? []}
+            serverId={serverId}
+            database={database}
+            server={server?.name ?? overview.instance.name}
+            checkedAt={overview.checkedAt}
+            onChanged={refresh}
+          />
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {overview.cards.map((card) => (
               <InstanceCard key={card.id} card={card} serverId={serverId} database={database} checking={loading} />

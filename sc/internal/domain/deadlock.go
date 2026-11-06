@@ -25,6 +25,21 @@ type DeadlockReport struct {
 	// KakapoSince is when kakapo's session files begin (UTC, docs/phase5e-contract.md): the deadlocks
 	// from then on are kakapo's, the ones before system_health's. Left out when they were not read.
 	KakapoSince *time.Time `json:"kakapoSince,omitempty"`
+	// WithReader and WithoutReader are the deadlocks of the window with a reader in them and without
+	// (docs/phase5m-contract.md, section 2); nil for a report read before phase 5m, whose pairs do not
+	// say.
+	WithReader    *int `json:"withReader,omitempty"`
+	WithoutReader *int `json:"withoutReader,omitempty"`
+}
+
+// CountReaders sets WithReader and WithoutReader from the pairs.
+func (r *DeadlockReport) CountReaders() {
+	with := 0
+	for _, p := range r.Pairs {
+		with += p.WithReader
+	}
+	without := r.Total - with
+	r.WithReader, r.WithoutReader = &with, &without
 }
 
 // MergeKakapoDeadlocks keeps one copy of each deadlock when kakapo's session files were read beside
@@ -136,6 +151,9 @@ type DeadlockPair struct {
 	Last                time.Time `json:"last"`
 	Objects             []string  `json:"objects"` // the tables involved, distinct
 	LastVictimStatement string    `json:"lastVictimStatement"`
+	// WithReader is how many of the pair's deadlocks had a reader in them: a process that wanted S or IS
+	// at read committed, the kind READ COMMITTED SNAPSHOT removes (docs/phase5m-contract.md).
+	WithReader int `json:"withReader"`
 	// LastLocks are the lock types of the last deadlock of the pair, for the finding's evidence.
 	LastLocks []string `json:"-"`
 }
@@ -144,6 +162,13 @@ type DeadlockPair struct {
 const (
 	DeadlockSourceFile       = "file"
 	DeadlockSourceRingBuffer = "ring-buffer"
+)
+
+// DLK01's thresholds per pair (docs/phase3e-contract.md), which the row versioning decision reuses for
+// the deadlocks with a reader (docs/phase5m-contract.md): Medium from 3 in the window, High from 10.
+const (
+	dlk01Medium = 3
+	dlk01High   = 10
 )
 
 // DeadlockDays is the window the report reads.
@@ -156,6 +181,7 @@ type DeadlockProcess struct {
 	Procedure string
 	Statement string
 	LockMode  string
+	Isolation string // the isolationlevel attribute of the graph: "read committed (2)"
 	Database  string
 	Login     string
 	Host      string
@@ -173,6 +199,13 @@ func (p DeadlockProcess) Label() string {
 	}
 	return "ad hoc: " + left(s, 100)
 }
+
+// Reader says whether this side is a reader RCSI would let through: it wanted S or IS at read
+// committed.
+func (p DeadlockProcess) Reader() bool { return readerMode(p.LockMode) && readCommitted(p.Isolation) }
+
+// WithReader says whether a deadlock had a reader in it (DeadlockProcess.Reader), on either side.
+func (e DeadlockEvent) WithReader() bool { return e.Victim.Reader() || e.Winner.Reader() }
 
 // DeadlockEvent is one xml_deadlock_report: when (UTC), the victim, the winner (the first other
 // process), the objects (schema.table, or "hobt {id}" when the name is not in the graph), the
@@ -246,6 +279,9 @@ func BuildDeadlockReport(in DeadlockInputs) DeadlockReport {
 		}
 		p := &r.Pairs[i]
 		p.Count++
+		if e.WithReader() {
+			p.WithReader++
+		}
 		for _, o := range e.Objects {
 			objects[k][o] = true
 		}
@@ -274,13 +310,14 @@ func BuildDeadlockReport(in DeadlockInputs) DeadlockReport {
 		return a.Procedures[0]+a.Procedures[1] < b.Procedures[0]+b.Procedures[1]
 	})
 
+	r.CountReaders()
 	chk, _ := CheckByID("DLK01")
 	for _, p := range r.Pairs {
 		sev := SeverityLow
 		switch {
-		case p.Count >= 10:
+		case p.Count >= dlk01High:
 			sev = SeverityHigh
-		case p.Count >= 3:
+		case p.Count >= dlk01Medium:
 			sev = SeverityMedium
 		}
 		on := "objects not named in the graph"

@@ -28,6 +28,7 @@ import {
   type Change,
   type ConnectionInfo,
   type DatabaseStatus,
+  type Decision,
   type DeadlockPair,
   type DeadlockReport,
   type HealthEvent,
@@ -2279,7 +2280,56 @@ function buildOverview(srv: Server, db: DatabaseStatus): Overview {
     recentChanges: withRecordedChanges(changesFor(srv, db.name, 10), srv.id, db.name),
     // Phase 5i: the mock has no load route, so no red flags either.
     redFlags: { flags: [], more: 0, rest: [] },
+    // Phase 5m: the row versioning decision, worth considering from a week of kakapo's session.
+    decisions: [mockRowVersioning()],
     checkedAt: now(),
+  }
+}
+
+// Phase 5m (docs/phase5m-contract.md): a row versioning row as the overview builds it.
+function mockRowVersioning(): Decision {
+  const win = "last 7 days, kakapo's event session"
+  return {
+    decision: "row-versioning",
+    checkId: "DEC01",
+    title: "Row versioning (READ COMMITTED SNAPSHOT)",
+    question: "Should this database let readers use row versions instead of waiting for writers?",
+    verdict: "worth-considering",
+    tag: "Worth considering",
+    tone: "amber",
+    sentence:
+      "Writes waited 1 h 10 min for reads and reads 12 min for writes over 7 days; READ COMMITTED SNAPSHOT would remove those waits.",
+    found: [
+      {
+        label: "Writes waiting for reads",
+        text: "10 min a day on average, on 5 of 7 days; longest 1 min 35 s (14 waits). Waiting: Scanner (picker, HH-01). Blocking: Report Server (rptsvc, RPT01).",
+        window: win,
+      },
+      { label: "Reads waiting for writes", text: "1 min a day on average, on 3 of 7 days; longest 40 s (6 waits).", window: win },
+      {
+        label: "Not removed by RCSI",
+        text: "Writes waiting for writes 9 (4 min 10 s), readers that keep their locks 0 (0 s), schema locks 0 (0 s).",
+        window: win,
+      },
+      {
+        label: "Deadlocks with a reader",
+        text: "2 of 5 deadlocks in 7 days had a reader in them; the most: dbo.A / dbo.B (2).",
+        window: "last 7 days, system_health",
+      },
+    ],
+    doFirst: [],
+    costs: [
+      { label: "Version store", text: "0 MB in tempdb now, 0.0 MB of it from this database.", window: "read 2026-11-06 09:00 UTC" },
+      { label: "Longest open transaction here", text: "None open now.", window: "read 2026-11-06 09:00 UTC" },
+    ],
+    notMeasured:
+      "How much version data this database would write cannot be read before it is on. Microsoft sizes the version store as about twice the version data written per minute times the longest transaction in minutes; the longest here now is 0 minutes. After the change, TMP03 shows what the version store holds: look again after a few working days.",
+    facts: [],
+    actions: [{ label: "Turn on READ COMMITTED SNAPSHOT", fixId: "rcsi" }],
+    thenCheck:
+      "After a few working days: the row says On and TMP03 is not raised; the tuning report's lock threads waiting went down.",
+    sources: ["Microsoft Learn: Transaction locking and row versioning guide"],
+    history: [],
   }
 }
 

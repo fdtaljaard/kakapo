@@ -24,11 +24,15 @@ decision says so when it is not installed.
 
 **Sources.**
 - Microsoft Learn: "Transaction locking and row versioning guide" (readers under READ COMMITTED SNAPSHOT take
-  no S locks but still take Sch-S; versions kept in tempdb's version store; 14 bytes added to each row
-  modified once versioning is on; the version store sized as about twice the version data generated per
-  minute times the longest transaction in minutes; update conflicts, error 3960, are SNAPSHOT isolation only;
-  setting the option needs no other connection in the database); "Accelerated database recovery" (with ADR
-  the versions are kept in the database's persistent version store, not tempdb);
+  no S locks but still take Sch-S; versions kept in tempdb's version store; turning either READ_COMMITTED_SNAPSHOT
+  or ALLOW_SNAPSHOT_ISOLATION on versions every change in the database, whether or not a reader uses the
+  versions; up to 14 bytes are added to a row the first time it is changed or inserted once versioning is on,
+  and with ADR on they already are; the common version store sized as about twice the version data generated
+  per minute times the longest transaction in minutes; update conflicts, error 3960, are SNAPSHOT isolation
+  only: RCSI without optimized locking has no update conflict detection; while the option is set only the
+  connection running ALTER DATABASE may be in the database, single-user mode is not needed); "Accelerated
+  database recovery" (SQL Server 2019 and later: with ADR the versions are kept in the database's persistent
+  version store, not tempdb, and the database needs the space for it);
   "sys.dm_tran_version_store_space_usage"; "sys.dm_tran_persistent_version_store_stats";
   "sys.dm_tran_active_snapshot_database_transactions"; "blocked process threshold (server configuration
   option)"; "Use the system_health session". To be re-read when building: each sentence the app shows cites
@@ -59,6 +63,21 @@ decision says so when it is not installed.
   comes from system_health's five-minute snapshots only.
 - system_health also records lock waits over 30 seconds as `wait_info` (predicate `duration > 30000 AND
   wait_type <= LCK_M_RX_X`). Not read in this phase (section 8).
+
+**Checked again when building (2026-11-06, Microsoft Learn and `localhost\SQL2022`).** The Microsoft facts above
+were re-read on the two pages and stand as now written; two were corrected from the first draft and one rule made
+consistent:
+- The 14 bytes are "up to 14 bytes", added when a row is changed *or inserted*; with ADR on rows already carry
+  them, so the preview's 14-byte warning is left out when ADR is on.
+- Snapshot isolation on is not "costs versions only when code asks": Microsoft says enabling either option
+  versions every change in the database even when no transaction uses row versioning. Section 5's fact is
+  rewritten: with snapshot isolation on, RCSI adds no new version data.
+- "Not needed now" no longer says "(or system_health with nothing found)": that case is Not enough evidence by
+  the table's own precedence and the tests.
+- Live: `ALTER DATABASE ... SET READ_COMMITTED_SNAPSHOT ON` without a termination option waited behind one other
+  connection in the database until an 8-second query timeout and the setting stayed off; with `WITH ROLLBACK
+  IMMEDIATE` it applied at once. Without ADR the persistent version store DMV still returns a row per database
+  (0 KB), so the read takes it only when ADR is on.
 
 ## 1. Database decisions (`components/decisions.tsx`)
 
@@ -142,7 +161,7 @@ snapshots, every five minutes"):
 | **Fix first** | RCSI is off and section 4 has an item | "Before deciding on row versioning, {the first item}." | the item's own button |
 | **Not enough evidence** | RCSI is off and: no blocking history read in the last 7 days, or the stored one has no `classes`, or only system_health covered the window and nothing reached Worth considering | "kakapo cannot tell yet whether readers and writers wait for each other here: {what is missing}." | Apply `install-xe-session` (5e) when it is not installed; Read blocking history when it is |
 | **Worth considering** | RCSI is off and the two classes RCSI removes together reach BLK01's Medium (2 episodes or more), or deadlocks with a reader reach DLK01's Medium (3 or more of a pair) | "Writes waited {t} for reads and reads {t2} for writes over {n} days; READ COMMITTED SNAPSHOT would remove those waits." | Apply `rcsi` (section 4) |
-| **Not needed now** | RCSI is off, the window is covered by kakapo's session (or system_health with nothing found), and neither class reaches Medium | "Readers and writers did not wait for each other enough to change this: {counts}." | none |
+| **Not needed now** | RCSI is off, the window is covered by kakapo's session, and neither class reaches Medium (system_health alone with nothing found is Not enough evidence, above) | "Readers and writers did not wait for each other enough to change this: {counts}." | none |
 
 **Worth considering** is "strongly" (the tag in orange, not amber) when either class reaches BLK01's High (10
 episodes, a 60-second wait, or 10 sessions at once) or deadlocks with a reader reach DLK01's High (10 of a
@@ -159,6 +178,7 @@ findings.
    and the change's `WITH ROLLBACK IMMEDIATE` would roll it back, which ACT02's Do this says not to do
    without knowing what it is. Button: ACT02's Investigate.
 2. **TempDB cannot hold more** (TMP03 raised with "cannot grow" or "the disk has only…"): Button: TMP03's.
+   Only when ADR is off: with ADR the versions are kept in the database, not in tempdb.
 
 The `rcsi` fix (`domain/blocking_fix.go`) keeps its statement, rollback and read-back. Its preview gains:
 - **The evidence line** of the decision, first ("Writes waited 1 h 10 min a day for reads over 7 days…"), or
@@ -169,8 +189,8 @@ The `rcsi` fix (`domain/blocking_fix.go`) keeps its statement, rollback and read
   {n} ({program} on {host}) has had a transaction open in {db} for {m} minutes. Deal with it first (ACT02)."),
   and the dialog shows it in place of Apply, the way a room line that does not fit does (5l). Copy script
   still works: the consultant may run it by hand, knowingly.
-- Warnings, added to the four of 4c: "Each row changed after this grows by 14 bytes; tables whose pages are
-  full will split pages for a while." "Readers that use NOLOCK or READ UNCOMMITTED read as before; readers
+- Warnings, added to the four of 4c: "Each row changed or inserted after this grows by up to 14 bytes; tables
+  whose pages are full will split pages for a while." (not with ADR on, see above) "Readers that use NOLOCK or READ UNCOMMITTED read as before; readers
   with REPEATABLE READ, SERIALIZABLE or lock hints keep locking." With ADR on: "Row versions are kept in this
   database's own file (ADR), not in tempdb."
 - `FixDef` for `rcsi` moves from check ACT01 to the decision (`DEC01`), so the change log row and the tuning
@@ -183,7 +203,7 @@ One small read, SELECTs only, tagged, each area in its own TRY, run with the ove
 | Area | Read |
 |---|---|
 | Settings | `is_read_committed_snapshot_on`, `snapshot_isolation_state_desc`, `is_accelerated_database_recovery_on` (`COL_LENGTH` guard: 2019+), `compatibility_level` |
-| Version store | tempdb's version store MB (as TMP03), this database's share from `sys.dm_tran_version_store_space_usage` (`OBJECT_ID` guard) |
+| Version store | tempdb's version store (as TMP03, read in KB so the share never looks larger than the whole), this database's share from `sys.dm_tran_version_store_space_usage` (`OBJECT_ID` guard) |
 | PVS | `persistent_version_store_size_kb` for this database (2019+, when ADR is on) |
 | Open transactions | the oldest transaction open in this database: minutes, session, status, program, host (ACT02's query, its database-filtered half, moved into one fragment both use) |
 | Sessions | the other sessions in the database now (the `rcsi` fix's count) |
@@ -196,8 +216,10 @@ version data this database would write cannot be read before it is on. Microsoft
 about twice the version data written per minute times the longest transaction in minutes; the longest here
 now is {m} minutes. After the change, TMP03 shows what the version store holds: look again after a few
 working days." Snapshot isolation on (without RCSI) and ADR are shown as facts with their sentence:
-snapshot isolation lets code ask for versions and costs versions only when it does; ADR moves the versions
-into this database and needs its free space (STO01, STO04) instead of tempdb's.
+snapshot isolation on already versions every change in the database (Microsoft: enabling it versions all
+data modifications even when no transaction uses row versioning), so RCSI adds no new version data and lets
+every reader at read committed use the versions; ADR moves the versions into this database and needs its
+free space (STO01, STO04) instead of tempdb's.
 
 ## 6. The decision record (`store/decision.go`, `components/decision-dialog.tsx`)
 
@@ -217,9 +239,11 @@ CREATE TABLE IF NOT EXISTS decision (
 **Record a decision** opens a small dialog: the choice (**Keep it as it is** / **Decide later**; **Change it**
 is the fix's Apply, which records itself), the reason (required for Keep), and **Review by** (default 90 days
 from today, under "More options" with the date picker, rule 5). The verdict at that moment is stored with
-it, so a later reader sees what the decision was made on. The row shows the latest record; the history of
-records is in the row's opened view, newest first. A record is never edited: a new one replaces it.
-`GET/POST /api/servers/{id}/databases/{db}/decisions`.
+it, so a later reader sees what the decision was made on (the verdict the row showed, sent with the record;
+POST reads no server). The row shows the latest record; the history of records is in the row's opened view,
+newest first. A record is never edited: a new one replaces it. `GET/POST
+/api/servers/{id}/databases/{db}/decisions`: GET returns the records, newest first, each with its line and
+whether its review is due; POST returns the new record (201).
 
 ## 7. Joining up the cards
 

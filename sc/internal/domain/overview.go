@@ -16,6 +16,9 @@ const (
 	CardUpkeep      CardID = "upkeep"
 	CardPerformance CardID = "performance"
 	CardDesign      CardID = "design"
+	// CardDecisions is the Decisions card above the six (docs/phase5m-contract.md): its checks are
+	// decisions, not findings, and no card lists them.
+	CardDecisions CardID = "decisions"
 )
 
 // Card colours. Each means one thing everywhere: act today, something to do, no problem found,
@@ -137,8 +140,11 @@ type Overview struct {
 	ChangeWindow *ChangeWindow `json:"changeWindow,omitempty"`
 	// RedFlags are the cards' findings that are badly wrong right now (docs/phase5i-contract.md,
 	// section 3), built from the findings above with no read of their own.
-	RedFlags  RedFlags  `json:"redFlags"`
-	CheckedAt time.Time `json:"checkedAt"`
+	RedFlags RedFlags `json:"redFlags"`
+	// Decisions are the decisions for this database (docs/phase5m-contract.md), built from what the
+	// overview reads, the stored reports and the row versioning read; the first is row versioning.
+	Decisions []Decision `json:"decisions"`
+	CheckedAt time.Time  `json:"checkedAt"`
 }
 
 // UptimeDays is the time since start in days, to one decimal.

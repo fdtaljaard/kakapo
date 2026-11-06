@@ -411,30 +411,15 @@ func killStatusOnly(ctx context.Context, db *sql.DB, session int) string {
 	return strings.Join(text, " ")
 }
 
-// rcsiQuery reads a database's READ COMMITTED SNAPSHOT setting and the sessions using it now.
-const rcsiQuery = safeSession + `SET NOCOUNT ON;
-DECLARE @users int = 0, @usersError nvarchar(2048);
-BEGIN TRY
-    SELECT @users = COUNT(*) FROM sys.dm_exec_sessions AS s
-    WHERE s.database_id = DB_ID(@db) AND s.session_id <> @@SPID AND s.is_user_process = 1;
-END TRY
-BEGIN CATCH
-    SET @usersError = ERROR_MESSAGE();
-END CATCH;
-SELECT d.is_read_committed_snapshot_on, @users, CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64))
-FROM sys.databases AS d WHERE d.name = @db;`
-
-// ReadRCSI reads the rcsi fix's facts: the setting, and how many other sessions use the database.
+// ReadRCSI reads the rcsi fix's facts through the row versioning read (docs/phase5m-contract.md,
+// section 5): the setting, the other sessions in the database, ADR and the oldest open transaction.
 func ReadRCSI(ctx context.Context, db *sql.DB, database string) (domain.RCSIFacts, error) {
-	f := domain.RCSIFacts{Database: database}
-	var version sql.NullString
-	err := db.QueryRowContext(ctx, Tag(rcsiQuery), sql.Named("db", database)).Scan(&f.RCSI, &f.Users, &version)
-	if errors.Is(err, sql.ErrNoRows) {
-		return f, fmt.Errorf("there is no database named %q", database)
-	}
+	f, err := ReadRowVersioning(ctx, db, database)
 	if err != nil {
-		return f, friendlyError(err)
+		return domain.RCSIFacts{Database: database}, err
 	}
-	f.ProductVersion = version.String
-	return f, nil
+	if f.SettingsError != "" {
+		return domain.RCSIFacts{Database: database}, errors.New(f.SettingsError)
+	}
+	return domain.RCSIFactsOf(f), nil
 }

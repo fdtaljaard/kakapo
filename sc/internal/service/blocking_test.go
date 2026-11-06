@@ -101,11 +101,11 @@ func TestKillFixGuards(t *testing.T) {
 
 func TestRCSIFixAlreadyOn(t *testing.T) {
 	var se *Error
-	if err := buildRCSIFix(&genericFix{}, domain.RCSIFacts{Database: "WMS", RCSI: true}); !errors.As(err, &se) || se.Kind != KindNotFound {
+	if err := buildRCSIFix(&genericFix{}, domain.RCSIFacts{Database: "WMS", RCSI: true}, nil); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("already on: want KindNotFound, got %v", err)
 	}
 	g := &genericFix{}
-	if err := buildRCSIFix(g, domain.RCSIFacts{Database: "WMS"}); err != nil || g.fix.Target != "ON" || g.preview.Rollback == "" {
+	if err := buildRCSIFix(g, domain.RCSIFacts{Database: "WMS"}, nil); err != nil || g.fix.Target != "ON" || g.preview.Rollback == "" {
 		t.Errorf("off: %v %+v", err, g.preview)
 	}
 }

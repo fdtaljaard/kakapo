@@ -5,8 +5,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import type { Finding } from "../src/api.ts"
-import { copyLabel, findingsFor, handoverAll, handoverText, scriptText } from "../src/lib/handover.ts"
+import type { Decision, Finding } from "../src/api.ts"
+import { copyLabel, decisionHandoverText, findingsFor, handoverAll, handoverText, scriptText } from "../src/lib/handover.ts"
 
 const ctx = { server: "CLIENTSQL01\\WMS", database: "GraniteTest", asOf: "09:21", version: "2026.11.03-abc123" }
 
@@ -101,4 +101,42 @@ test("copy all: the owner's actionable findings under the card, separated by das
 test("copy script: the statement, then the rollback commented out", () => {
   assert.equal(scriptText("ALTER X;", ""), "ALTER X;")
   assert.equal(scriptText("ALTER X;", "ALTER Y;\n\nGO"), "ALTER X;\n\n-- Rollback:\n-- ALTER Y;\n--\n-- GO")
+})
+
+test("a decision's row as a block (phase 5m): verdict, found, costs, record, sources", () => {
+  const d: Decision = {
+    decision: "row-versioning",
+    checkId: "DEC01",
+    title: "Row versioning (READ COMMITTED SNAPSHOT)",
+    question: "Should this database let readers use row versions instead of waiting for writers?",
+    verdict: "worth-considering",
+    tag: "Worth considering",
+    tone: "amber",
+    sentence: "Writes waited 1 h 10 min for reads.",
+    found: [{ label: "Writes waiting for reads", text: "10 min a day.", window: "last 7 days, kakapo's event session" }],
+    doFirst: [],
+    costs: [{ label: "Version store", text: "0 MB in tempdb now." }],
+    notMeasured: "Cannot be read before it is on.",
+    facts: [],
+    actions: [],
+    thenCheck: "After a few working days: the row says On.",
+    sources: ["Microsoft Learn: Transaction locking and row versioning guide"],
+    recordLine: "Kept off on 2026-11-06: vendor; review by 2027-02-04",
+    reviewDue: true,
+    history: [],
+  }
+  assert.equal(
+    decisionHandoverText(d, ctx),
+    [
+      "Row versioning (READ COMMITTED SNAPSHOT) (DEC01): Worth considering on CLIENTSQL01\\WMS / GraniteTest\nAs of 09:21",
+      "Question\nShould this database let readers use row versions instead of waiting for writers?",
+      "Verdict\nWrites waited 1 h 10 min for reads.",
+      "What kakapo found\n- Writes waiting for reads: 10 min a day. (last 7 days, kakapo's event session)",
+      "What it costs\n- Version store: 0 MB in tempdb now.\nCannot be read before it is on.",
+      "Decision\nKept off on 2026-11-06: vendor; review by 2027-02-04 (review due)",
+      "Then check\nAfter a few working days: the row says On.",
+      "Sources\nMicrosoft Learn: Transaction locking and row versioning guide",
+      "From kakapo build 2026.11.03-abc123",
+    ].join("\n\n"),
+  )
 })

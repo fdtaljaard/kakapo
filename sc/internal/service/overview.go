@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -109,6 +110,12 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
+	// The decisions (docs/phase5m-contract.md): the row versioning read, the reports read above, kakapo's
+	// session from the instance read, and TempDB's room and TMP03 from the Storage card's facts.
+	decision, err := s.overviewRowVersioning(ctx, db, serverID, d.Name, info.XESession, storage, all[domain.CardStorage], lastBlocking, lastDeadlocks)
+	if err != nil {
+		return domain.Overview{}, err
+	}
 	checkedAt := time.Now().UTC().Truncate(time.Microsecond)
 
 	info.ServerID, info.Name, info.Host = srv.ID, srv.Name, srv.Host
@@ -130,8 +137,29 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		RecentChanges: changes,
 		ChangeWindow:  window,
 		RedFlags:      domain.BuildRedFlags(all),
+		Decisions:     []domain.Decision{decision},
 		CheckedAt:     checkedAt,
 	}, nil
+}
+
+// overviewRowVersioning builds the row versioning decision of the database page from the row versioning
+// read (a failed read is the row's sentence, never the page's error) and what the overview read.
+func (s *Service) overviewRowVersioning(ctx context.Context, db *sql.DB, serverID int64, dbName string, helper *domain.XESession,
+	storage domain.StorageFacts, storageFindings []domain.Finding, blocking *domain.BlockingHistory, deadlocks *domain.DeadlockReport) (domain.Decision, error) {
+	in := domain.RowVersioningInputs{Database: dbName, Now: time.Now(), Blocking: blocking, Deadlocks: deadlocks, Helper: helper,
+		Tempdb: domain.TempdbRoomOf(storage)}
+	if f, err := collect.ReadRowVersioning(ctx, db, dbName); err != nil {
+		in.FactsError = err.Error()
+	} else {
+		in.Facts = &f
+	}
+	for i, x := range storageFindings {
+		if x.CheckID == "TMP03" {
+			in.TMP03 = &storageFindings[i]
+			break
+		}
+	}
+	return s.rowVersioningDecision(ctx, serverID, in)
 }
 
 // withStoredReports are the Performance card's findings with DLK01's and BLK01's from the stored

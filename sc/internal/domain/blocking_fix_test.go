@@ -108,30 +108,33 @@ func TestKillOptionsAndReadBack(t *testing.T) {
 }
 
 func TestRCSIPreview(t *testing.T) {
-	p, fix, err := BuildRCSIFix(RCSIFacts{Database: "WMS", Users: 37, ProductVersion: "16.0.4135.4"})
+	p, fix, err := BuildRCSIFix(RCSIFacts{Database: "WMS", Users: 37, ProductVersion: "16.0.4135.4"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fix.ID != FixRCSI || fix.Current != "OFF" || fix.Target != "ON" || len(p.Changes) != 1 ||
+	if fix.ID != FixRCSI || fix.CheckID != "DEC01" || fix.Current != "OFF" || fix.Target != "ON" || len(p.Changes) != 1 ||
 		p.Changes[0] != (Drift{Setting: "READ_COMMITTED_SNAPSHOT", Current: "OFF", Target: "ON"}) ||
 		p.Statement != "ALTER DATABASE [WMS] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE;" ||
-		p.Rollback != "ALTER DATABASE [WMS] SET READ_COMMITTED_SNAPSHOT OFF WITH ROLLBACK IMMEDIATE;" {
+		p.Rollback != "ALTER DATABASE [WMS] SET READ_COMMITTED_SNAPSHOT OFF WITH ROLLBACK IMMEDIATE;" || p.Held != "" || len(p.Needs) != 1 {
 		t.Errorf("preview %+v %+v", p, fix)
 	}
 	want := []string{
+		"kakapo has no evidence that readers and writers wait for each other here.",
 		"WITH ROLLBACK IMMEDIATE disconnects every user of WMS for a moment and undoes their open transactions (37 sessions are connected now), so apply it in a quiet minute.",
 		"Row versions are kept in tempdb: watch its size for a few days (the Storage card's tempdb checks).",
 		"Readers stop waiting for writers; writers still wait for writers, so blocking between two updates stays.",
 		"Check with the vendor that the application does not rely on readers being blocked to keep two users off the same row (rare).",
+		"Each row changed or inserted after this grows by up to 14 bytes; tables whose pages are full will split pages for a while.",
+		"Readers that use NOLOCK or READ UNCOMMITTED read as before; readers with REPEATABLE READ, SERIALIZABLE or lock hints keep locking.",
 		"Needs the ALTER permission on the database WMS.",
 	}
 	if strings.Join(p.Warnings, "\n") != strings.Join(want, "\n") {
 		t.Errorf("warnings:\n%s", strings.Join(p.Warnings, "\n"))
 	}
-	if p, _, _ := BuildRCSIFix(RCSIFacts{Database: "a]b"}); !strings.Contains(p.Statement, "[a]]b]") || !strings.Contains(p.Warnings[0], "nobody else is connected now") {
-		t.Errorf("quoted %q %q", p.Statement, p.Warnings[0])
+	if p, _, _ := BuildRCSIFix(RCSIFacts{Database: "a]b"}, nil); !strings.Contains(p.Statement, "[a]]b]") || !strings.Contains(p.Warnings[1], "nobody else is connected now") {
+		t.Errorf("quoted %q %q", p.Statement, p.Warnings[1])
 	}
-	if _, _, err := BuildRCSIFix(RCSIFacts{Database: "WMS", RCSI: true}); !errors.Is(err, ErrFixNotApplicable) {
+	if _, _, err := BuildRCSIFix(RCSIFacts{Database: "WMS", RCSI: true}, nil); !errors.Is(err, ErrFixNotApplicable) {
 		t.Errorf("already on: %v", err)
 	}
 }

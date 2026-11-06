@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"sqlmonitor/internal/domain"
 )
@@ -61,6 +62,10 @@ func (s *Store) LastDeadlockReport(ctx context.Context, serverID int64, dbName s
 	r.Pairs, r.Findings = []domain.DeadlockPair{}, []domain.Finding{}
 	if err := json.Unmarshal([]byte(pairs), &r.Pairs); err != nil {
 		return nil, fmt.Errorf("read the deadlock pairs of %s: %w", dbName, err)
+	}
+	// A report read before phase 5m has no withReader in its pairs: its readers stay unknown (nil).
+	if len(r.Pairs) == 0 || strings.Contains(pairs, `"withReader"`) {
+		r.CountReaders()
 	}
 	if err := json.Unmarshal([]byte(findings), &r.Findings); err != nil {
 		return nil, fmt.Errorf("read the deadlock findings of %s: %w", dbName, err)
