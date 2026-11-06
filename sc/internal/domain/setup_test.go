@@ -19,6 +19,7 @@ func goodFacts() SetupFacts {
 		ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", ProductLevel: "RTM", UpdateLevel: "CU25",
 		Edition: "Standard Edition (64-bit)", EngineEdition: 2, Collation: "Latin1_General_CI_AS",
 		CPUCount: 8, PhysicalMB: 32768, StartTime: setupNow.Add(-75 * time.Hour), CoresPerNode: 8,
+		OnlineSchedulers: 8, AffinityType: "AUTO", VirtualMachine: true, Sockets: 1, CoresPerSocket: 8,
 		MemoryModel: ptr("CONVENTIONAL"), IFI: ptr("Y"),
 		MaxServerMemoryMB: 28672, MaxDop: 8, CostThreshold: 50, OptimizeAdHoc: 1, BackupCompression: 1, ClrEnabled: 1,
 		ClrStrict: ptr(1), PlanCacheMB: 500, SingleUseMB: 50,
@@ -104,7 +105,7 @@ func TestSetupGreen(t *testing.T) {
 			t.Errorf("check %+v", s)
 		}
 	}
-	if strings.Join(ids, ",") != "INS01,INS02,INS03,INS04,INS05,INS06,INS07,INS08,INS09,INS10,INS11,INS12,INS13,INS14,INS15,INS16,"+
+	if strings.Join(ids, ",") != "INS01,INS02,INS03,INS04,INS05,INS06,INS07,INS08,INS09,INS10,INS11,INS12,INS13,INS14,INS15,INS16,INS17,"+
 		"DBC02,DBC03,DBC04,DBC05,DBC06,DBC07,DBC09,DBC10,DBC11,DBC13,DBC14,CFG01,CPY01,CPY02,CPY04,CPY06" {
 		t.Errorf("checks %v", ids)
 	}
@@ -117,7 +118,7 @@ func TestSetupGreyCards(t *testing.T) {
 	f := goodFacts()
 	f.Error = "could not read the setup facts: boom"
 	c, fs, cs := runSetup(f)
-	if c.Status != StatusGrey || c.StatusText != "Could not be read" || c.Note != f.Error || len(fs) != 0 || len(cs) != 32 ||
+	if c.Status != StatusGrey || c.StatusText != "Could not be read" || c.Note != f.Error || len(fs) != 0 || len(cs) != 33 ||
 		c.Facts == nil || len(c.Facts) != 0 || c.AsOf != nil {
 		t.Errorf("error: %+v", c)
 	}
@@ -410,7 +411,7 @@ func TestInstanceAreasNotRead(t *testing.T) {
 	f := goodFacts()
 	f.SysInfoError = "the login does not have VIEW SERVER STATE."
 	c, _, cs := runSetup(f)
-	for _, id := range []string{"INS02", "INS03", "INS04", "INS05", "INS08"} {
+	for _, id := range []string{"INS02", "INS03", "INS04", "INS05", "INS08", "INS17"} {
 		if s := statusOf(cs, id); s.Status != CheckSkipped || !strings.HasPrefix(s.Note, sysInfoNotRead) {
 			t.Errorf("%s: %+v", id, s)
 		}
@@ -694,7 +695,7 @@ func TestBuildCardsWithSetup(t *testing.T) {
 
 func TestSetupCatalogue(t *testing.T) {
 	checks := ChecksFor(CardSetup)
-	if len(checks) != 32 {
+	if len(checks) != 33 {
 		t.Fatalf("setup checks: %d", len(checks))
 	}
 	for _, c := range checks {
@@ -859,6 +860,113 @@ func TestINS16(t *testing.T) {
 	none(t, fs, "INS16")
 	if s := statusOf(cs, "INS16"); s.Status != CheckSkipped {
 		t.Errorf("INS16 skipped: %+v", s)
+	}
+}
+
+// vm8x1Shape is the case of docs/cases/2026-11-05-offline-schedulers.md: SQL Server 2022 Standard on a
+// VM that shows its 8 vCPUs as 8 sockets of 1 core; 4 schedulers online, 4 VISIBLE OFFLINE, nothing
+// queued, affinity AUTO.
+func vm8x1Shape() SetupFacts {
+	f := goodFacts()
+	f.Sockets, f.CoresPerSocket, f.OnlineSchedulers, f.OfflineSchedulers, f.CoresPerNode = 8, 1, 4, 4, 4
+	return f
+}
+
+func TestINS17(t *testing.T) {
+	c, fs, cs := runSetup(vm8x1Shape())
+	x := one(t, fs, "INS17")
+	if x.Severity != SeverityHigh || x.Owner != OwnerClientIT || x.When != WhenWindow || x.Effort != EffortQuickWin || x.FixID != "" ||
+		x.Object != `SQL01\WMS` ||
+		x.Finding != "SQL Server uses 4 of the server's 8 CPUs: the VM shows 8 sockets with 1 core each, and Standard edition uses at most 4 sockets." ||
+		x.DoThis != "Ask the client's IT to change the VM's processors to 1 socket with 8 cores (or 2 sockets with 4 cores each): the same 8 vCPUs, fewer sockets. It needs the VM powered off; nothing changes in SQL Server. "+ins17Check ||
+		x.Why != ins17Why ||
+		x.Evidence != "Standard Edition (64-bit) 16.0.4255.3. CPUs: 8 (8 sockets with 1 core, virtual machine). Schedulers: 4 online, 4 offline (VISIBLE OFFLINE). Affinity: AUTO. Runnable tasks now: 0 on the 4 online schedulers, so this is lost capacity, not pressure now." ||
+		x.ThenCheck != "Re-run after the change and the restart: INS17 gone, and scheduler_count equals cpu_count in sys.dm_os_sys_info." {
+		t.Errorf("INS17 8 x 1 VM shape: %+v", x)
+	}
+	if s := statusOf(cs, "INS17"); s.Status != CheckFinding || c.Status != StatusAmber {
+		t.Errorf("INS17 status %+v, card %+v", s, c)
+	}
+	// Not a red flag: High on the Setup card is a thing to do, not a fire.
+	if rf := BuildRedFlags(map[CardID][]Finding{CardSetup: fs}); len(rf.Flags) != 0 {
+		t.Errorf("INS17 is a red flag: %+v", rf)
+	}
+
+	// After the VM change (1 x 8, or 2 x 4): every scheduler online, no finding.
+	for _, layout := range [][2]int{{1, 8}, {2, 4}} {
+		f := goodFacts()
+		f.Sockets, f.CoresPerSocket = layout[0], layout[1]
+		_, fs, _ = runSetup(f)
+		none(t, fs, "INS17")
+	}
+
+	// Someone chose the offline schedulers with an affinity: INS16's business, not INS17's.
+	f := vm8x1Shape()
+	f.AffinityType = "MANUAL"
+	_, fs, _ = runSetup(f)
+	none(t, fs, "INS17")
+
+	// Busy now: the evidence says so, without "not pressure".
+	f = vm8x1Shape()
+	f.RunnableNow = 9
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); !strings.HasSuffix(x.Evidence, "Runnable tasks now: 9 on the 4 online schedulers.") {
+		t.Errorf("INS17 busy: %q", x.Evidence)
+	}
+
+	// Express on a 1 x 8 VM: one socket is fine, the 4-core limit is not.
+	f = goodFacts()
+	f.Edition, f.EngineEdition, f.CoresPerSocket, f.OnlineSchedulers, f.OfflineSchedulers = "Express Edition (64-bit)", 4, 8, 4, 4
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.When != WhenDecideFirst ||
+		x.Finding != "SQL Server uses 4 of the server's 8 CPUs: Express uses at most 4 cores." ||
+		!strings.HasPrefix(x.DoThis, "Ask the client's IT to take the 4 vCPUs SQL Server cannot use off the VM") {
+		t.Errorf("INS17 Express cores: %+v", x)
+	}
+
+	// Express on the 8 x 1 VM layout: the socket change, and the core limit after it.
+	f = vm8x1Shape()
+	f.Edition, f.EngineEdition, f.OnlineSchedulers, f.OfflineSchedulers = "Express Edition (64-bit)", 4, 1, 7
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.Finding != "SQL Server uses 1 of the server's 8 CPUs: the VM shows 8 sockets with 1 core each, and Express uses at most 1 socket." ||
+		!strings.HasPrefix(x.DoThis, "Ask the client's IT to change the VM's processors to 1 socket with 8 cores: the same 8 vCPUs") ||
+		!strings.Contains(x.DoThis, " Express uses at most 4 cores, so SQL Server will then use 4 of them; the other 4 can come off the VM.") {
+		t.Errorf("INS17 Express sockets: %+v", x)
+	}
+
+	// SQL Server 2025 Standard on 40 vCPUs in one socket: 32 cores, not 24.
+	f = goodFacts()
+	f.ProductVersion, f.CPUCount, f.CoresPerSocket, f.OnlineSchedulers, f.OfflineSchedulers = "17.0.4055.1", 40, 40, 32, 8
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.Finding != "SQL Server uses 32 of the server's 40 CPUs: Standard edition uses at most 32 cores." {
+		t.Errorf("INS17 2025: %+v", x)
+	}
+
+	// Web edition on a physical server with 8 sockets: the hardware, not a setting.
+	f = vm8x1Shape()
+	f.Edition, f.VirtualMachine = "Web Edition (64-bit)", false
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.When != WhenDecideFirst ||
+		x.Finding != "SQL Server uses 4 of the server's 8 CPUs: the server has 8 processor sockets and Web edition uses at most 4 sockets." ||
+		!strings.HasPrefix(x.DoThis, "This is the hardware, not a setting") || !strings.Contains(x.Evidence, "physical server") {
+		t.Errorf("INS17 physical: %+v", x)
+	}
+
+	// SQL Server 2016 SP1 shows no socket layout: the cause is not known, the error log tells.
+	f = vm8x1Shape()
+	f.ProductVersion, f.Sockets, f.CoresPerSocket = "13.0.4001.0", 0, 0
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.Finding != "SQL Server uses 4 of the server's 8 CPUs: 4 schedulers are offline." ||
+		x.DoThis != ins17UnknownDo+" "+ins17Check || !strings.Contains(x.Evidence, "socket layout not shown before SQL Server 2016 SP2") {
+		t.Errorf("INS17 unknown: %+v", x)
+	}
+
+	// Enterprise or Developer: no edition limit, so the cause is not known either.
+	f = vm8x1Shape()
+	f.Edition, f.EngineEdition = "Enterprise Edition (64-bit)", 3
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS17"); x.DoThis != ins17UnknownDo+" "+ins17Check {
+		t.Errorf("INS17 Enterprise: %+v", x)
 	}
 }
 

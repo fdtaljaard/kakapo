@@ -27,6 +27,16 @@ type SetupFacts struct {
 	StartTime    time.Time // sqlserver_start_time, server clock
 	CoresPerNode int       // the most visible online schedulers on one NUMA node
 	SysInfoError string
+	// INS17, in the same area: the schedulers SQL Server can and cannot use, the runnable tasks on
+	// the online ones right now, affinity_type_desc (AUTO, MANUAL), whether it runs in a virtual
+	// machine, and the processor layout Windows shows it (0 before 2016 SP2, which has no columns).
+	OnlineSchedulers  int // VISIBLE ONLINE
+	OfflineSchedulers int // VISIBLE OFFLINE
+	RunnableNow       int
+	AffinityType      string
+	VirtualMachine    bool // virtual_machine_type_desc is not NONE (also on a host with Hyper-V on)
+	Sockets           int  // socket_count
+	CoresPerSocket    int  // cores_per_socket
 
 	// sys.configurations value_in_use; ConfigError when not read.
 	MaxServerMemoryMB int64
@@ -509,7 +519,7 @@ func (b *setupBuild) instanceChecks() {
 		b.skip(configNotRead+f.ConfigError, "INS02", "INS03", "INS04", "INS05", "INS06", "INS09", "INS10", "INS11")
 	}
 	if f.SysInfoError != "" {
-		b.skip(sysInfoNotRead+f.SysInfoError, "INS02", "INS03", "INS04", "INS05", "INS08")
+		b.skip(sysInfoNotRead+f.SysInfoError, "INS02", "INS03", "INS04", "INS05", "INS08", "INS17")
 	}
 	if f.ConfigError == "" && f.SysInfoError == "" {
 		b.ins02and03()
@@ -538,6 +548,7 @@ func (b *setupBuild) instanceChecks() {
 	b.ins07()
 	if f.SysInfoError == "" {
 		b.ins08()
+		b.ins17()
 	}
 	if f.MemoryError != "" {
 		b.skip(memoryNotRead+f.MemoryError, "INS12")
@@ -951,6 +962,106 @@ func (b *setupBuild) ins16() {
 	finding := "Server options that are rarely needed are set: " + strings.Join(names, ", ") + "."
 	b.ins("INS16", 4, changeType, EffortQuickWin, finding, strings.Join(why, " "), do, strings.Join(names, "; ")+".", "")
 }
+
+// cpuLimit is an edition's compute capacity limit for one instance of the Database Engine: the
+// lesser of Sockets processor sockets or Cores cores (on a VM, logical processors). Microsoft Learn,
+// "Editions and supported features" 2016 to 2022 and "Compute capacity limits by edition"
+// (docs/cases/2026-11-05-offline-schedulers.md).
+type cpuLimit struct {
+	Edition        string // as the texts name it: "Standard edition"
+	Sockets, Cores int
+}
+
+// CPULimit is the edition's limit, false for the editions without one below the operating system's
+// (Enterprise core-based, Developer, Evaluation). Enterprise under Server + CAL licensing (20 cores)
+// is not told apart here: its Edition string does not say so reliably.
+func (f SetupFacts) CPULimit() (cpuLimit, bool) {
+	switch {
+	case f.EngineEdition == 4:
+		return cpuLimit{"Express", 1, 4}, true
+	case f.EngineEdition == 2 && strings.Contains(strings.ToLower(f.Edition), "web"):
+		return cpuLimit{"Web edition", 4, 16}, true
+	case f.EngineEdition == 2 && f.Major() >= 17:
+		return cpuLimit{"Standard edition", 4, 32}, true // SQL Server 2025 raised it from 24
+	case f.EngineEdition == 2:
+		return cpuLimit{"Standard edition", 4, 24}, true
+	}
+	return cpuLimit{}, false
+}
+
+// ins17: schedulers SQL Server cannot use (VISIBLE OFFLINE) when nobody chose them with an affinity
+// (MANUAL: INS16 shows the masks), with the cause named from the edition and the processor layout:
+// more sockets than the edition takes (on a VM, the exact change), more cores than it takes, or not
+// known. High whatever the load: CPUs the client pays for that no query can run on.
+func (b *setupBuild) ins17() {
+	f := b.f
+	if f.OfflineSchedulers <= 0 || strings.EqualFold(f.AffinityType, "MANUAL") {
+		return
+	}
+	total := f.OnlineSchedulers + f.OfflineSchedulers
+	uses := fmt.Sprintf("SQL Server uses %d of the server's %d CPUs", f.OnlineSchedulers, total)
+	lim, limited := f.CPULimit()
+	finding, do, changeType := "", "", "Planned"
+	switch {
+	case limited && f.Sockets > lim.Sockets && f.VirtualMachine:
+		finding = fmt.Sprintf("%s: the VM shows %s with %s each, and %s uses at most %s.", uses,
+			plural(int64(f.Sockets), "socket", "sockets"), plural(int64(f.CoresPerSocket), "core", "cores"), lim.Edition,
+			plural(int64(lim.Sockets), "socket", "sockets"))
+		do = fmt.Sprintf("Ask the client's IT to change the VM's processors to %s: the same %d vCPUs, fewer sockets. It needs the VM powered off; nothing changes in SQL Server.",
+			ins17Layout(f.CPUCount, lim.Sockets), f.CPUCount)
+		if f.CPUCount > lim.Cores {
+			do += fmt.Sprintf(" %s uses at most %d cores, so SQL Server will then use %d of them; the other %d can come off the VM.",
+				upperFirst(lim.Edition), lim.Cores, lim.Cores, f.CPUCount-lim.Cores)
+		}
+		changeType = "Offline"
+	case limited && f.Sockets > lim.Sockets:
+		finding = fmt.Sprintf("%s: the server has %d processor sockets and %s uses at most %s.", uses, f.Sockets, lim.Edition,
+			plural(int64(lim.Sockets), "socket", "sockets"))
+		do = fmt.Sprintf("This is the hardware, not a setting: only Enterprise edition uses more than %s. Decide with the client whether the unused CPUs are worth Enterprise, or a server with fewer, larger processors.",
+			plural(int64(lim.Sockets), "socket", "sockets"))
+	case limited && f.CPUCount > lim.Cores:
+		finding = fmt.Sprintf("%s: %s uses at most %d cores.", uses, lim.Edition, lim.Cores)
+		if f.VirtualMachine {
+			do = fmt.Sprintf("Ask the client's IT to take the %d vCPUs SQL Server cannot use off the VM (they are paid for and never used), or move to Enterprise edition if the workload needs them.", f.CPUCount-lim.Cores)
+		} else {
+			do = fmt.Sprintf("Only Enterprise edition uses more than %d cores. Decide with the client whether the unused cores are worth it.", lim.Cores)
+		}
+	default:
+		finding = fmt.Sprintf("%s: %s offline.", uses, plural(int64(f.OfflineSchedulers), "scheduler is", "schedulers are"))
+		do = ins17UnknownDo
+	}
+	layout := "socket layout not shown before SQL Server 2016 SP2"
+	if f.Sockets > 0 {
+		layout = fmt.Sprintf("%s with %s", plural(int64(f.Sockets), "socket", "sockets"), plural(int64(f.CoresPerSocket), "core", "cores"))
+	}
+	where := "physical server"
+	if f.VirtualMachine {
+		where = "virtual machine"
+	}
+	now := fmt.Sprintf("Runnable tasks now: %d on the %d online schedulers.", f.RunnableNow, f.OnlineSchedulers)
+	if f.RunnableNow == 0 {
+		now = fmt.Sprintf("Runnable tasks now: 0 on the %d online schedulers, so this is lost capacity, not pressure now.", f.OnlineSchedulers)
+	}
+	evidence := fmt.Sprintf("%s %s. CPUs: %d (%s, %s). Schedulers: %d online, %d offline (VISIBLE OFFLINE). Affinity: %s. %s",
+		f.Edition, f.ProductVersion, f.CPUCount, layout, where, f.OnlineSchedulers, f.OfflineSchedulers, orDash(f.AffinityType), now)
+	b.ins("INS17", 2, changeType, EffortQuickWin, finding, ins17Why, do+" "+ins17Check, evidence, "")
+}
+
+// ins17Layout is the VM processor layout to ask for: n cores in one socket, or two sockets of n/2
+// when the edition takes two and n splits evenly.
+func ins17Layout(n, sockets int) string {
+	one := fmt.Sprintf("1 socket with %d cores", n)
+	if sockets >= 2 && n >= 4 && n%2 == 0 {
+		return fmt.Sprintf("%s (or 2 sockets with %d cores each)", one, n/2)
+	}
+	return one
+}
+
+const (
+	ins17Why       = "An offline scheduler is a CPU SQL Server cannot use, whatever the load: the server has it, the client pays for it, and no query ever runs on it. Each edition uses at most a number of processor sockets and of cores, and on a VM every virtual socket counts as a socket, so a VM with many one-core sockets loses CPUs that one socket with many cores would keep."
+	ins17UnknownDo = "Ask the client's IT to read the startup line of the SQL Server error log: EXEC sys.xp_readerrorlog 0, 1, N'socket'; says how many sockets and cores SQL Server found and how many logical processors it uses. If it uses fewer than the server has, the edition's limit is the cause (an Enterprise Server + CAL licence takes 20 cores): give the VM fewer sockets with more cores, or move to an edition without the limit."
+	ins17Check     = "Then check: SELECT cpu_count, scheduler_count, socket_count, cores_per_socket FROM sys.dm_os_sys_info; (scheduler_count equals cpu_count) and EXEC sys.xp_readerrorlog 0, 1, N'socket'; (the startup line uses every logical processor)."
+)
 
 // Texts from 01-QuickScan.sql section 2 and PerformanceTriage.sql sections 2 and 3, verbatim.
 const (

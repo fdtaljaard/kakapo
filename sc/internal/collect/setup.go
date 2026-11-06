@@ -36,15 +36,27 @@ FROM sys.databases AS d WHERE d.name = @db;
 DECLARE @vss bit = CASE WHEN HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1 THEN 1 ELSE 0 END;
 DECLARE @noVss nvarchar(100) = N'the login does not have VIEW SERVER STATE.';
 
-/* CPUs, memory, start time, cores per NUMA node, memory model (INS02-INS05, INS08) */
-DECLARE @sysError nvarchar(2048), @cpu int, @physMB bigint, @start datetime, @cores int, @memModel nvarchar(60);
+/* CPUs, memory, start time, cores per NUMA node, memory model (INS02-INS05, INS08); the schedulers SQL Server
+   cannot use, the affinity, whether it runs in a VM and the processor layout (INS17; socket_count and
+   cores_per_socket from 2016 SP2) */
+DECLARE @sysError nvarchar(2048), @cpu int, @physMB bigint, @start datetime, @cores int, @memModel nvarchar(60),
+        @schedOnline int, @schedOffline int, @runnableNow int, @affType nvarchar(60), @vmType nvarchar(60), @sockets int, @coresPerSocket int;
 IF @vss = 0 SET @sysError = @noVss;
 ELSE
 BEGIN TRY
-    SELECT @cpu = cpu_count, @physMB = physical_memory_kb / 1024, @start = sqlserver_start_time FROM sys.dm_os_sys_info;
+    SELECT @cpu = cpu_count, @physMB = physical_memory_kb / 1024, @start = sqlserver_start_time,
+           @affType = CONVERT(nvarchar(60), affinity_type_desc), @vmType = CONVERT(nvarchar(60), virtual_machine_type_desc)
+    FROM sys.dm_os_sys_info;
     SELECT @cores = MAX(n.Schedulers)
     FROM (SELECT parent_node_id, COUNT(*) AS Schedulers
           FROM sys.dm_os_schedulers WHERE status = N'VISIBLE ONLINE' GROUP BY parent_node_id) AS n;
+    SELECT @schedOnline  = SUM(CASE WHEN status = N'VISIBLE ONLINE' THEN 1 ELSE 0 END),
+           @schedOffline = SUM(CASE WHEN status = N'VISIBLE OFFLINE' THEN 1 ELSE 0 END),
+           @runnableNow  = SUM(CASE WHEN status = N'VISIBLE ONLINE' THEN runnable_tasks_count ELSE 0 END)
+    FROM sys.dm_os_schedulers;
+    IF EXISTS (SELECT 1 FROM sys.all_columns WHERE object_id = OBJECT_ID(N'sys.dm_os_sys_info') AND name = N'socket_count')
+        EXEC sys.sp_executesql N'/* kakapo */ SELECT @s = socket_count, @c = cores_per_socket FROM sys.dm_os_sys_info;',
+            N'@s int OUTPUT, @c int OUTPUT', @s = @sockets OUTPUT, @c = @coresPerSocket OUTPUT;
     IF EXISTS (SELECT 1 FROM sys.all_columns WHERE object_id = OBJECT_ID(N'sys.dm_os_sys_info') AND name = N'sql_memory_model_desc')
         EXEC sys.sp_executesql N'/* kakapo */ SELECT @m = sql_memory_model_desc FROM sys.dm_os_sys_info;',
             N'@m nvarchar(60) OUTPUT', @m = @memModel OUTPUT;
@@ -190,6 +202,7 @@ SELECT CAST(CASE WHEN @dbid IS NULL THEN 0 ELSE 1 END AS bit),
        @state, @autoClose, @autoShrink, @pageVerify, @createStats, @updateStats, @compat, @ownerMissing, @trv, @trust, @dbColl,
        @userAccess,
        @sysError, @cpu, @physMB, @start, @cores, @memModel, @ifi,
+       @schedOnline, @schedOffline, @runnableNow, @affType, @vmType, @sockets, @coresPerSocket,
        @cfgError, @maxMem, @maxDop, @cost, @adhoc, @boost, @bkc, @ff, @clr, @clrStrict,
        @minMem, @lwp, @aff, @aff64, @affIO, @aff64IO,
        @pcError, @pcMB, @suMB,
@@ -339,11 +352,14 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 		physMB, maxMem, availMB                                    sql.NullInt64
 		pcMB, suMB                                                 sql.NullFloat64
 		start, lowLast, restoredAt, srcBackupAt                    sql.NullTime
+		schedOnline, schedOffline, runnableNow, sockets, coresPS   sql.NullInt32
+		affType, vmType                                            sql.NullString
 	)
 	if err := rows.Scan(&found, &f.ServerName, &f.ProductVersion, &f.ProductLevel, &update, &f.Edition, &f.EngineEdition, &f.Collation,
 		&state, &autoClose, &autoShrink, &pageVerify, &createStats, &updateStats, &compat, &ownerMiss, &trv, &trust, &dbColl,
 		&userAccess,
 		&sysErr, &cpu, &physMB, &start, &cores, &memModel, &ifi,
+		&schedOnline, &schedOffline, &runnableNow, &affType, &vmType, &sockets, &coresPS,
 		&cfgErr, &maxMem, &maxDop, &cost, &adhoc, &boost, &bkc, &ff, &clr, &clrStrict,
 		&minMem, &lwp, &aff, &aff64, &affIO, &aff64IO,
 		&pcErr, &pcMB, &suMB,
@@ -373,6 +389,11 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 
 	f.SysInfoError = sysErr.String
 	f.CPUCount, f.PhysicalMB, f.CoresPerNode = int(cpu.Int32), physMB.Int64, int(cores.Int32)
+	f.OnlineSchedulers, f.OfflineSchedulers, f.RunnableNow = int(schedOnline.Int32), int(schedOffline.Int32), int(runnableNow.Int32)
+	f.AffinityType, f.VirtualMachine = affType.String, vmType.Valid && vmType.String != "NONE"
+	if sockets.Valid && coresPS.Valid {
+		f.Sockets, f.CoresPerSocket = int(sockets.Int32), int(coresPS.Int32)
+	}
 	if start.Valid {
 		f.StartTime = naive(start.Time)
 	}

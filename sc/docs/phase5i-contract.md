@@ -123,7 +123,7 @@ High finding is a red flag. Any Critical finding of any card is.
 | Flag | Checks | At |
 |---|---|---|
 | Blocking now | ACT01 | High |
-| Pressure now (threads, memory grants, schedulers) | PRS01 | High, Critical |
+| Pressure now (threads, memory grants, CPU queue; offline schedulers moved to INS17 on 2026-11-06, see `docs/cases/2026-11-05-offline-schedulers.md`) | PRS01 | High, Critical |
 | Deadlocks | WRK06, DLK01, BLK01 (the last two from the stored reports, as the card) | High |
 | Waits that stop work (THREADPOOL, RESOURCE_SEMAPHORE) | WRK05 | High |
 | Space | STO01, STO04, STO11, STO12, TMP03 | High |

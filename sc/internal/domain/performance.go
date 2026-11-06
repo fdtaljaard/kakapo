@@ -440,8 +440,6 @@ const (
 	dlk01Do         = "The fix is ours: an index so each side touches fewer rows, the same order of touching the tables in both procedures, or READ COMMITTED SNAPSHOT for the database (decide first). Start with the victim's statement in the evidence."
 	prs01ThreadsWhy = "Every request needs a worker thread. When they run out, new requests queue for one and users see the server freeze."
 	prs01ThreadsDo  = "Find the blocking (ACT01) or the parallelism that uses up the threads (MAXDOP and cost threshold, INS04 and INS05). Never raise max worker threads; it hides the cause."
-	prs01OfflineWhy = "An offline scheduler is a CPU SQL Server cannot use: usually the edition's core limit, or a VM with more sockets than the edition takes."
-	prs01OfflineDo  = "Ask the client's IT to check the VM's sockets and cores against the edition's limit, and the SQL Server error log at startup."
 	prs01MemoryWhy  = "Queries waiting for memory cannot even start: other queries hold it all, usually a few huge sorts or hashes from bad estimates. A forced grant gave a query less memory than it asked for, so it spills to tempdb."
 	prs01MemoryDo   = "Find the queries with large memory grants (QRY01 shows memory grant warnings in their plans) and fix their estimates: statistics (MNT04), missing indexes, or the query itself."
 	prs01CPUWhy     = "Runnable tasks are queries ready to run with no free CPU to run on. Two or more per scheduler means the server is short of CPU right now."
@@ -666,8 +664,9 @@ type prs01Signal struct {
 	why, do        string
 }
 
-// prs01Signals are the signals that fire right now, most severe first: threads, offline
-// schedulers, memory, runnable tasks.
+// prs01Signals are the signals that fire right now, most severe first: threads, memory, runnable
+// tasks. Offline schedulers are not pressure: they hold whatever the load, so the Setup card's INS17
+// raises them with their cause; PRS01's evidence still counts them.
 func (f PerformanceFacts) prs01Signals() []prs01Signal {
 	out := []prs01Signal{}
 	if s := f.Schedulers; s != nil {
@@ -678,12 +677,6 @@ func (f PerformanceFacts) prs01Signals() []prs01Signal {
 					clause: fmt.Sprintf("%s of %s worker threads are in use (%d%%)", n0int(int64(s.CurrentWorkers)), n0int(int64(s.MaxWorkers)), int(pct)),
 					phrase: fmt.Sprintf("threads %d%%", int(pct)), why: prs01ThreadsWhy, do: prs01ThreadsDo})
 			}
-		}
-		if s.OfflineSchedulers > 0 && !s.AffinityManual {
-			total := int64(s.OnlineSchedulers + s.OfflineSchedulers)
-			out = append(out, prs01Signal{critical: true,
-				clause: fmt.Sprintf("%d of %d schedulers are offline", s.OfflineSchedulers, total),
-				phrase: plural(int64(s.OfflineSchedulers), "scheduler offline", "schedulers offline"), why: prs01OfflineWhy, do: prs01OfflineDo})
 		}
 	}
 	if g := f.Grants; g != nil && (g.Waiting > 0 || g.Forced > 0) {
@@ -715,8 +708,15 @@ func (f PerformanceFacts) prs01Signals() []prs01Signal {
 	return out
 }
 
-// prs01: one finding when any pressure signal fires; Critical for threads at 90% or an offline
-// scheduler, else High.
+// prs01OfflineRef points the evidence at INS17 when schedulers are offline and nobody chose them.
+func prs01OfflineRef(s *SchedulerLoad) string {
+	if s.OfflineSchedulers > 0 && !s.AffinityManual {
+		return " (see INS17)"
+	}
+	return ""
+}
+
+// prs01: one finding when any pressure signal fires; Critical for threads at 90%, else High.
 func (b *perfBuild) prs01() {
 	f := b.f
 	notes := []string{}
@@ -748,7 +748,7 @@ func (b *perfBuild) prs01() {
 	ev := []string{}
 	if s := f.Schedulers; s != nil {
 		ev = append(ev, fmt.Sprintf("Worker threads: %s in use of %s; %s tasks waiting for a thread.", n0int(int64(s.CurrentWorkers)), n0int(int64(s.MaxWorkers)), n0int(s.WorkQueue)),
-			fmt.Sprintf("Runnable tasks: %d on %d online schedulers (%d busy, at most %d on one); %d offline.", s.RunnableTasks, s.OnlineSchedulers, s.BusySchedulers, s.MaxRunnable, s.OfflineSchedulers))
+			fmt.Sprintf("Runnable tasks: %d on %d online schedulers (%d busy, at most %d on one); %d offline%s.", s.RunnableTasks, s.OnlineSchedulers, s.BusySchedulers, s.MaxRunnable, s.OfflineSchedulers, prs01OfflineRef(s)))
 	}
 	if g := f.Grants; g != nil {
 		ev = append(ev, fmt.Sprintf("Memory grants: %s waiting, %s granted, %s forced since restart.", n0int(g.Waiting), n0int(g.Granted), n0int(g.Forced)))

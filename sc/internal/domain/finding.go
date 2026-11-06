@@ -267,6 +267,8 @@ var Checks = []Check{
 		"Re-run after a restart: the same flags in INS15 (or none)."},
 	{"INS16", CardSetup, "Min server memory, lightweight pooling, affinity", "Are rarely-needed server options set?", OwnerUs,
 		"Re-run: INS16 gone."},
+	{"INS17", CardSetup, "SQL Server uses all the server's CPUs", "Can SQL Server use every CPU the server has?", OwnerClientIT,
+		"Re-run after the change and the restart: INS17 gone, and scheduler_count equals cpu_count in sys.dm_os_sys_info."},
 	{"DBC02", CardSetup, "AUTO_CLOSE is off", "Is AUTO_CLOSE off?", OwnerUs, "Re-run: DBC02 gone."},
 	{"DBC03", CardSetup, "AUTO_SHRINK is off", "Is AUTO_SHRINK off?", OwnerUs, "Re-run: DBC03 gone."},
 	{"DBC04", CardSetup, "Page verify uses CHECKSUM", "Is page verify CHECKSUM?", OwnerUs, "Re-run: DBC04 gone."},

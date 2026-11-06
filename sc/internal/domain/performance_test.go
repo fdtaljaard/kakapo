@@ -522,8 +522,6 @@ func TestPerformancePRS01(t *testing.T) {
 			"12 queries are waiting for memory right now; 3 memory grants were forced since restart.", "12 waiting for memory", ToneBad},
 		{"forced only", func(f *PerformanceFacts) { f.Grants.Forced = 1 }, SeverityHigh,
 			"1 memory grant was forced since restart.", "forced memory grants", ToneBad},
-		{"offline", func(f *PerformanceFacts) { f.Schedulers.OfflineSchedulers = 4 }, SeverityCritical,
-			"4 of 12 schedulers are offline.", "4 schedulers offline", ToneWorse},
 		{"memory and runnable", func(f *PerformanceFacts) { f.Grants.Waiting, f.Schedulers.RunnableTasks = 1, 20 }, SeverityHigh,
 			"1 query is waiting for memory right now; 20 tasks are waiting for a CPU on 8 schedulers (2.5 each on average).", "1 waiting for memory", ToneBad},
 	} {
@@ -547,6 +545,20 @@ func TestPerformancePRS01(t *testing.T) {
 	f.Schedulers.OfflineSchedulers, f.Schedulers.AffinityManual = 4, true
 	_, fs, _ := runPerf(f)
 	none(t, fs, "PRS01")
+	// Offline schedulers nobody chose are not pressure (the 8 x 1 VM case, docs/cases): INS17 on the
+	// Setup card raises them; PRS01 stays quiet, and its evidence points there when another signal fires.
+	f = goodPerf()
+	f.Schedulers.OnlineSchedulers, f.Schedulers.OfflineSchedulers, f.Schedulers.RunnableTasks, f.Schedulers.MaxRunnable, f.Schedulers.BusySchedulers = 4, 4, 0, 0, 0
+	_, fs, _ = runPerf(f)
+	none(t, fs, "PRS01")
+	if len(LiveFindings(f)) != 0 {
+		t.Errorf("live findings for offline schedulers: %+v", LiveFindings(f))
+	}
+	f.Grants.Waiting = 1
+	_, fs, _ = runPerf(f)
+	if x := one(t, fs, "PRS01"); x.Severity != SeverityHigh || !strings.Contains(x.Evidence, "; 4 offline (see INS17).") {
+		t.Errorf("PRS01 with offline schedulers: %+v", x)
+	}
 	// Why and do this name each signal that fired.
 	f = goodPerf()
 	f.Schedulers.CurrentWorkers, f.Grants.Waiting = 542, 2
