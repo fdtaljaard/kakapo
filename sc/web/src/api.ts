@@ -94,6 +94,9 @@ export interface FixPreview {
   express?: boolean // true: nothing will be applied; statement is a script to run by hand (Copy script)
   // Phase 5l: the free space on each drive the change uses (docs/phase5l-contract.md); "nofit" holds Apply back.
   room?: RoomLine[]
+  // Why there is nothing to do, plainly, when changes is empty and nothing is wrong (kakapo's event session
+  // is already installed); shown in place of the dialog's generic "Nothing to change" line.
+  note?: string
 }
 
 // Phase 5l: one drive's room for a change.

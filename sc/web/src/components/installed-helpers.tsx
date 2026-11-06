@@ -27,7 +27,10 @@ const stateBadge: Record<HelperState, { text: string; variant: "default" | "seco
 export function InstalledHelpers({ server }: { server: Server }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" })
   const [attempt, setAttempt] = useState(0)
-  const [fixing, setFixing] = useState<{ fixId: string; title: string } | null>(null)
+  // The database the fix goes through is kept with the dialog: the reload after an apply clears load, and
+  // a dialog that hung on it would close, open again and ask for a fresh preview instead of showing the
+  // result.
+  const [fixing, setFixing] = useState<{ fixId: string; title: string; database: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +88,7 @@ export function InstalledHelpers({ server }: { server: Server }) {
                 <HelperLine
                   helper={h}
                   canFix={database !== ""}
-                  onFix={() => h.fixId && setFixing({ fixId: h.fixId, title: fixTitle(h) })}
+                  onFix={() => h.fixId && setFixing({ fixId: h.fixId, title: fixTitle(h), database })}
                 />
               </li>
             ))}
@@ -93,10 +96,10 @@ export function InstalledHelpers({ server }: { server: Server }) {
         </Card>
       )}
 
-      {fixing && database && (
+      {fixing && (
         <FixDialog
           serverId={server.id}
-          database={database}
+          database={fixing.database}
           fixId={fixing.fixId}
           title={fixing.title}
           onClose={() => setFixing(null)}

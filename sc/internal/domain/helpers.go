@@ -327,13 +327,20 @@ func xeOthersWarn(others []string) string {
 }
 
 // BuildInstallXESessionFix builds install-xe-session's preview with the options (thresholdSeconds;
-// under More options folder, fileMB, files, dispatchSeconds). ErrFixNotApplicable when kakapo's session
-// exists already. A bad option, a folder that is not there, a session named kakapo that kakapo did not
-// create, a server older than 2012 or an Azure SQL server leave the preview without changes.
+// under More options folder, fileMB, files, dispatchSeconds). When kakapo's session exists already:
+// ErrFixNotApplicable with a preview whose Note says so plainly (running since when, where it keeps
+// what), which the dialog shows instead of an error, for instance when a page still offered Create. A bad
+// option, a folder that is not there, a session named kakapo that kakapo did not create, a server older
+// than 2012 or an Azure SQL server leave the preview without changes.
 func BuildInstallXESessionFix(f XEInstallFacts, options map[string]string) (FixPreview, Fix, error) {
 	s := f.Session
 	if s.Exists && s.Ours {
-		return FixPreview{}, Fix{}, ErrFixNotApplicable
+		fix := suFix(FixInstallXESession)
+		fix.Current = "installed"
+		row := BuildInstalledHelpers(f.HelperFacts, "").Helpers[0]
+		p := FixPreview{EngineVersion: f.ProductVersion, Changes: []Drift{}, Warnings: []string{},
+			Note: "Already installed. " + row.Sentence + " Nothing to create: the Installed helpers row on the instance page shows it, with Remove."}
+		return p, fix, ErrFixNotApplicable
 	}
 	blocked := []string{}
 	threshold, thIn, w := xeIntInput(options, OptionXEThreshold, "Keep blocks longer than (seconds)",

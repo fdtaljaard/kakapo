@@ -220,7 +220,13 @@ export const mockHelpers: FeatureMock = async (method, path, init) => {
   const options = (init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }).options : undefined) ?? {}
   const current = installed.get(serverId)
   if (fix[2] === installXESessionFixId) {
-    if (current) throw new ApiError("kakapo's event session already exists on SQL01\\SQL2022: the Installed helpers row on the instance page shows it", 404)
+    if (current) {
+      const note =
+        "Already installed. kakapo's event session is running, keeping every block over " +
+        `${current.thresholdSeconds} s and every deadlock on the server. Nothing to create: the Installed helpers row on the instance page shows it, with Remove.`
+      if (fix[3] === "preview") return { database: "", engineVersion: "16.0.4135.4", changes: [], statement: "", rollback: "", warnings: [], note }
+      throw new ApiError(note, 409)
+    }
     const preview = installPreview(options)
     if (fix[3] === "preview") return preview
     if (preview.changes.length === 0) throw new ApiError(preview.warnings[0], 409)

@@ -186,8 +186,15 @@ func TestInstallXESessionBlocked(t *testing.T) {
 	}
 	f = xeInstallFacts()
 	f.Session = xeOurs(false)
-	if _, _, err := BuildInstallXESessionFix(f, nil); err != ErrFixNotApplicable {
-		t.Errorf("kakapo's session exists: %v", err)
+	if p, _, err := BuildInstallXESessionFix(f, nil); err != ErrFixNotApplicable || len(p.Changes) != 0 || p.Statement != "" ||
+		p.Note != "Already installed. kakapo's event session exists but is stopped, so nothing new is kept; what it kept is still read from "+
+			`C:\Program Files\Microsoft SQL Server\MSSQL16.SQL2022\MSSQL\Log\kakapo*.xel. Nothing to create: the Installed helpers row on the instance page shows it, with Remove.` {
+		t.Errorf("kakapo's session exists, stopped: %v %q", err, p.Note)
+	}
+	f.Session = xeOurs(true)
+	if p, _, err := BuildInstallXESessionFix(f, nil); err != ErrFixNotApplicable ||
+		!strings.HasPrefix(p.Note, "Already installed. kakapo's event session is running since 2026-11-04 08:15 UTC, keeping every block over 5 s") {
+		t.Errorf("kakapo's session exists, running: %v %q", err, p.Note)
 	}
 }
 

@@ -126,6 +126,9 @@ type FixPreview struct {
 	// builder states the change will use; the service reads the drives and turns them into Room.
 	Room  []RoomLine `json:"room,omitempty"`
 	Needs []RoomNeed `json:"-"`
+	// Note says plainly why there is nothing to do when Changes is empty and nothing is wrong (kakapo's
+	// event session is already installed); the dialog shows it in place of its generic line.
+	Note string `json:"note,omitempty"`
 }
 
 // FixInput is one value the user may set in a fix's preview (docs/phase3g-contract.md).

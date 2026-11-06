@@ -76,8 +76,11 @@ func suApplyRefusal(g *genericFix) error {
 		return nil
 	}
 	msg := g.fix.Title + " cannot be applied as previewed"
-	if len(p.Warnings) > 0 {
+	switch {
+	case len(p.Warnings) > 0:
 		msg = p.Warnings[0]
+	case p.Note != "":
+		msg = p.Note
 	}
 	return newError(KindConflict, "%s", msg)
 }

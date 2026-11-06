@@ -524,7 +524,11 @@ function PreviewBody({ preview }: { preview: FixPreview }) {
         </div>
       )
     }
-    return <p className="text-muted-foreground">Nothing to change: the setting already has the recommended value.</p>
+    return (
+      <p className="text-muted-foreground">
+        {preview.note || "Nothing to change: the setting already has the recommended value."}
+      </p>
+    )
   }
   return (
     <div className="grid gap-4 min-w-0">

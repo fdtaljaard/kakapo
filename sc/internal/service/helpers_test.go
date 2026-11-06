@@ -68,11 +68,19 @@ func TestHelperPreviews(t *testing.T) {
 		!strings.HasPrefix(g.options[suDescriptionKey], "Created the event session kakapo on SQL01: ") || g.options[xeThresholdKey] != "0" {
 		t.Errorf("install preview %+v %v", g.preview, g.options)
 	}
-	// kakapo's session already there: nothing to apply, said plainly.
+	// kakapo's session already there (a page that still offered Create, or a preview asked for again
+	// right after the apply): a preview, not an error, that says so plainly; the apply is refused.
 	f := xeTestFacts()
 	f.Session = xeTestSession()
-	if err := installXEPreview(suTestFix(), f, nil); !errors.As(err, &se) || se.Kind != KindNotFound || !strings.Contains(err.Error(), "already exists") {
+	g = suTestFix()
+	if err := installXEPreview(g, f, nil); err != nil {
 		t.Errorf("exists: %v", err)
+	}
+	if len(g.preview.Changes) != 0 || g.preview.Statement != "" || !strings.HasPrefix(g.preview.Note, "Already installed. kakapo's event session is running") {
+		t.Errorf("exists: preview %+v", g.preview)
+	}
+	if err := suApplyRefusal(g); !errors.As(err, &se) || se.Kind != KindConflict || !strings.HasPrefix(err.Error(), "Already installed.") {
+		t.Errorf("exists: apply %v", err)
 	}
 	if err := removeXEPreview(suTestFix(), domain.XERemoveFacts{}, nil); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("nothing to remove: %v", err)

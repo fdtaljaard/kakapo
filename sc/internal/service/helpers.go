@@ -67,7 +67,10 @@ func prepareInstallXESession(ctx context.Context, s *Service, g *genericFix, _ d
 func installXEPreview(g *genericFix, f domain.XEInstallFacts, options map[string]string) error {
 	p, fix, err := domain.BuildInstallXESessionFix(f, options)
 	if errors.Is(err, domain.ErrFixNotApplicable) {
-		return newError(KindNotFound, "kakapo's event session already exists on %s: the Installed helpers row on the instance page shows it", suServerLabel(g, f.ServerName))
+		// kakapo's session is there already: the preview says so plainly, with nothing to apply (an
+		// apply is refused by suApplyRefusal), rather than failing as an error.
+		g.preview, g.fix = p, fix
+		return nil
 	}
 	if err != nil {
 		return err
