@@ -384,7 +384,7 @@ var wrk01Do = map[string]string{
 	waitPAR:     "Usually tuned with MAXDOP and cost threshold for parallelism (INS04, INS05). If those are fine, look at the biggest queries (QRY01) and missing indexes (WRK03).",
 	waitIO:      "Often caused by large scans from missing indexes (WRK03) or too little memory (INS02/INS03), not only slow disks. Compare with storage latency (STO09).",
 	waitLOG:     "Check log write latency (STO09). Fast storage for log files helps, as does the application batching many tiny transactions.",
-	waitLOCK:    "Find the blocking queries: ACT01 shows who blocks whom right now, and the Design card's lock waits per table show where it has been all week. Long transactions, missing indexes and large updates are the usual causes.",
+	waitLOCK:    "Find the blocking queries: ACT01 and the Blocking page show who blocks whom right now, and the blocking history (BLK01) shows who blocked users this week and how often. Long transactions, missing indexes and large updates are the usual causes.",
 	waitCPU:     "Find and tune the most CPU-expensive queries (QRY01) and check signal waits (WRK02).",
 	waitMEM:     "Usually large sorts or hashes from poor plans or out-of-date statistics (MNT04, QRY01). Also check max server memory.",
 	waitNET:     "Usually the application processes rows one at a time or fetches far more rows than it needs. Talk to the developers; it is rarely the network.",

@@ -120,7 +120,7 @@ function indexPreview(database: string, options: Record<string, string> = {}): F
     rollback: blocked ? "" : `DROP INDEX [${name}] ON [${database}].[dbo].[Pick];`,
     warnings: [
       ...(blocked ? [guard] : []),
-      "Creating an index locks the table while it builds (not online on this edition): users who write to it wait until it finishes, so apply it in a quiet moment.",
+      "On Standard or Web edition an index is built offline (ONLINE = OFF): while it builds, dbo.Pick (2,000,000 rows, 400 MB) is locked against inserts, updates and deletes, and users who write to it wait until it finishes (reads go on). Apply it in a quiet moment.",
       "Test on the sandbox first when the table is large: the build time and the effect on the queries show there.",
       "Needs the ALTER permission on dbo.Pick (db_ddladmin or db_owner in the database).",
     ],

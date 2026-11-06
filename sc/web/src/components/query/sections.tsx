@@ -1,9 +1,8 @@
 import type { QueryAction, QueryDetail, QueryHour, QueryTable } from "@/api-queries"
 import { ActionButton } from "@/components/query/action-button"
-import { formatMs, formatRows, formatWhole } from "@/components/query/format"
+import { formatMs, formatRows, formatWhole, serverWhen, type ServerClock } from "@/components/query/format"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { formatWhen } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 // The plain sentences first (domain.ExplainQuery): each one that names a fix carries its button.
@@ -26,7 +25,7 @@ export function ExplainList({ detail, onAction }: { detail: QueryDetail; onActio
 
 // "History": the runs per hour over the last 7 days, newest first, with the plans that ran; CPU per hour
 // drawn as a plain bar (its width against the busiest hour), no chart library.
-export function HistoryTable({ hours }: { hours: QueryHour[] }) {
+export function HistoryTable({ hours, clock }: { hours: QueryHour[]; clock: ServerClock }) {
   const most = Math.max(1, ...hours.map((h) => h.cpuMs))
   return (
     <div className="rounded-xl border">
@@ -46,7 +45,7 @@ export function HistoryTable({ hours }: { hours: QueryHour[] }) {
             <TableRow key={h.hour} className="hover:bg-transparent">
               <TableCell className="align-top whitespace-normal">
                 <div className="grid">
-                  <span className="whitespace-nowrap">{formatWhen(h.hour, "row")}</span>
+                  <span className="whitespace-nowrap">{serverWhen(clock, h.hour, "row")}</span>
                   <span className="text-muted-foreground sm:hidden">plan {h.plans.join(", ") || "—"}</span>
                 </div>
               </TableCell>

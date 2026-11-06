@@ -1,7 +1,6 @@
 import type { QueryDetail, QueryEvent, QueryHour } from "@/api-queries"
 import { chartPlans } from "@/components/query/plan-order"
-import { formatMs, formatWhole } from "@/components/query/format"
-import { formatWhen } from "@/lib/format"
+import { formatMs, formatWhole, serverWhen } from "@/components/query/format"
 
 // Phase 5j, "Over time": one bar per hour of the window. Top row: the CPU the query used, coloured by
 // plan (the plan in use blue, the plan that cost the most orange, any other light blue). Bottom row:
@@ -52,7 +51,7 @@ export function HistoryChart({ detail: d }: { detail: QueryDetail }) {
   }, [])
 
   const tip = (h: QueryHour) =>
-    `${formatWhen(h.hour, "row")}: ${formatWhole(h.runs)} runs, ${formatMs(h.avgDurationMs)} a run, ${formatMs(h.cpuMs)} of CPU, plan ${h.plans.join(", ")}`
+    `${serverWhen(d, h.hour, "row")}: ${formatWhole(h.runs)} runs, ${formatMs(h.avgDurationMs)} a run, ${formatMs(h.cpuMs)} of CPU, plan ${h.plans.join(", ")}`
 
   return (
     <div className="grid gap-2 min-w-0">
@@ -84,7 +83,7 @@ export function HistoryChart({ detail: d }: { detail: QueryDetail }) {
             key={`${e.at}${e.text}`}
             className="absolute top-0 bottom-5 border-l border-dashed border-muted-foreground/60"
             style={{ left: `${x}%` }}
-            title={`${formatWhen(e.at, "row")}: ${e.text}`}
+            title={`${serverWhen(d, e.at, "row")}: ${e.text}`}
           >
             {show && <span className="absolute -top-0.5 left-1 whitespace-nowrap text-[11px] text-muted-foreground">{eventLabel(e)}</span>}
           </div>

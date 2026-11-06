@@ -470,7 +470,9 @@ func (f ArchiveFacts) archiveChanges(plan ArchivePlan) []Drift {
 	switch {
 	case f.Estimate.Oldest != nil:
 		oldest = "oldest " + f.Estimate.Oldest.Format("2006-01-02")
-	case !plan.DateIndexed:
+	case !plan.DateIndexed && plan.KeyColumn == "":
+		// Clustered on an ascending identity, the estimate reads the oldest through that key (as IDX10
+		// does); only without one is it not read.
 		oldest = "oldest not read (" + plan.DateColumn + " is not indexed)"
 	}
 	leave := fmt.Sprintf("rows older than %d months leave nightly", plan.KeepMonths)

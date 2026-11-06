@@ -665,7 +665,7 @@ func TestUpkeepMNT07Silent(t *testing.T) {
 	c, fs, cs := runUpkeep(f)
 	x := one(t, fs, "MNT07")
 	if x.Severity != SeverityLow || x.When != WhenOnline || x.Effort != EffortQuickWin || x.Owner != OwnerClientIT ||
-		x.Finding != "2 alert(s) exist but tell no one: Error 823, Severity 024." || x.Why != mnt07SilentWhy ||
+		x.Finding != "2 alerts tell no one: Error 823, Severity 024." || x.Why != mnt07SilentWhy ||
 		x.DoThis != mnt07SilentDo || x.Evidence != "Operators with email: 1. Alerts enabled: 10." || x.Object != `SQL01\WMS` ||
 		x.FixID != FixOperatorAlerts {
 		t.Errorf("silent %+v", x)

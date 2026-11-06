@@ -139,6 +139,41 @@ func TestSeenChangesGroups(t *testing.T) {
 	}
 }
 
+// The same procedure altered twice within seconds (F5 pressed twice) is one row, "altered twice",
+// at the last alter; three times says so; a create stays its own row; another hour, login or
+// program is another row; and five other changes plus the repeats are still not a deploy.
+func TestSeenChangesFoldRepeatAlters(t *testing.T) {
+	a1 := ddl(5, TraceObjectAltered, 8272, "dbo", "GetOrders")
+	a2 := ddl(5, TraceObjectAltered, 8272, "dbo", "GetOrders")
+	a2.At = a1.At.Add(3 * time.Second)
+	got := BuildSeenChanges(1, []SchemaChangeFact{a1, a2}, t0)
+	want := `Procedure dbo.GetOrders altered twice by DOMAIN\jane on APP-SRV01 (Microsoft SQL Server Management Studio)`
+	if len(got) != 1 || got[0].Description != want || !got[0].ChangedAt.Equal(a2.At) || got[0].Object != "dbo.GetOrders" {
+		t.Fatalf("twice: %+v", got)
+	}
+	a3 := ddl(20, TraceObjectAltered, 8272, "dbo", "getorders")
+	a3.Schema = "DBO"
+	created := ddl(1, TraceObjectCreated, 8272, "dbo", "GetOrders")
+	got = BuildSeenChanges(1, []SchemaChangeFact{created, a1, a2, a3}, t0)
+	if len(got) != 2 || got[0].Description != strings.Replace(want, "altered twice", "created", 1) ||
+		!strings.HasPrefix(got[1].Description, "Procedure DBO.getorders altered 3 times by ") || !got[1].ChangedAt.Equal(a3.At) {
+		t.Errorf("three times: %+v", got)
+	}
+	nextHour := ddl(61, TraceObjectAltered, 8272, "dbo", "GetOrders")
+	bob := ddl(6, TraceObjectAltered, 8272, "dbo", "GetOrders")
+	bob.Login = `DOMAIN\bob`
+	if got := BuildSeenChanges(1, []SchemaChangeFact{a1, bob, nextHour}, t0); len(got) != 3 {
+		t.Errorf("other login and hour: %+v", got)
+	}
+	five := []SchemaChangeFact{}
+	for i := 0; i < 4; i++ {
+		five = append(five, ddl(i, TraceObjectCreated, 8278, "dbo", "V"+string(rune('1'+i))))
+	}
+	if got := BuildSeenChanges(1, append(five, a1, a2), t0); len(got) != 5 || got[4].ChangeType == ChangeTypeDeploy {
+		t.Errorf("four and a repeat: %+v", got)
+	}
+}
+
 func TestSeenWindowAndReplace(t *testing.T) {
 	oldest := time.Date(2026, 10, 2, 3, 47, 41, 0, time.UTC)
 	if got := SeenWindowStart(oldest); !got.Equal(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC)) {

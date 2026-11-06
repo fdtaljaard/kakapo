@@ -28,3 +28,28 @@ export function plainColumns(list: string): string {
     .filter(Boolean)
     .join(", ")
 }
+
+// The query page says every time on one clock, the server's, as the backend's sentences do (the plan
+// cache's times are the server's own; a browser in another time zone would otherwise show a third).
+// The summary line says "server time" once. An ISO time (UTC) is moved by the server's offset and
+// written in UTC: "15:10", "yesterday 09:00", "3 Nov 10:15"; at the start of a row "Today 15:10".
+export interface ServerClock {
+  capturedAt: string
+  utcOffsetMinutes: number
+}
+
+const utcTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })
+const utcDayMonth = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", timeZone: "UTC" })
+const utcDayMonthYear = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+
+export function serverWhen(c: ServerClock, iso: string, style: "inline" | "row" = "inline"): string {
+  const shift = (s: string) => new Date(new Date(s).getTime() + (c.utcOffsetMinutes ?? 0) * 60_000)
+  const d = shift(iso)
+  const now = shift(c.capturedAt)
+  const day = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate())
+  const days = Math.round((day(now) - day(d)) / 86_400_000)
+  if (days === 0) return style === "row" ? `Today ${utcTime.format(d)}` : utcTime.format(d)
+  if (days === 1) return `${style === "row" ? "Yesterday" : "yesterday"} ${utcTime.format(d)}`
+  const date = d.getUTCFullYear() === now.getUTCFullYear() ? utcDayMonth.format(d) : utcDayMonthYear.format(d)
+  return `${date} ${utcTime.format(d)}`
+}

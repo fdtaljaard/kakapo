@@ -1,8 +1,7 @@
 import type { QueryDetail, QueryEvent, QueryPlan, QueryVerdict } from "@/api-queries"
-import { formatMs, formatWhole } from "@/components/query/format"
+import { formatMs, formatWhole, serverWhen, type ServerClock } from "@/components/query/format"
 import { chartPlans, shownPlans, whenPlan } from "@/components/query/plan-order"
 import { Badge } from "@/components/ui/badge"
-import { formatWhen } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 // Phase 5j (docs/phase5j-contract.md): the top of the query page answers whether it still needs
@@ -42,7 +41,7 @@ function total(ms: number): string {
   return ms >= 7_200_000 ? `${(ms / 3_600_000).toFixed(1)} hours` : formatMs(ms)
 }
 
-export function VerdictCard({ verdict: v, text }: { verdict: QueryVerdict; text: string }) {
+export function VerdictCard({ verdict: v, text, clock }: { verdict: QueryVerdict; text: string; clock: ServerClock }) {
   const rows: [string, string, string][] = [
     ["Time per run", formatMs(v.before.avgDurationMs), formatMs(v.now.avgDurationMs)],
     ["CPU per run", formatMs(v.before.avgCpuMs), formatMs(v.now.avgCpuMs)],
@@ -86,7 +85,7 @@ export function VerdictCard({ verdict: v, text }: { verdict: QueryVerdict; text:
               <ul className="grid gap-1">
                 {v.changed.map((e) => (
                   <li key={`${e.at}${e.text}`} className="break-words">
-                    <span className="tabular-nums text-muted-foreground">{formatWhen(e.at, "row")}</span> {e.text}
+                    <span className="tabular-nums text-muted-foreground">{serverWhen(clock, e.at, "row")}</span> {e.text}
                   </li>
                 ))}
               </ul>
@@ -127,7 +126,7 @@ export function PlanTimeline({ detail: d }: { detail: QueryDetail }) {
           return (
             <li key={`${s.at}${s.event.text}`} className="relative py-2 text-sm text-muted-foreground">
               <span className="absolute -left-[18px] top-3 size-2.5 rounded-full border-2 border-muted-foreground bg-background" aria-hidden />
-              <span className="tabular-nums">{formatWhen(s.event.at, "row")}</span> {s.event.text}
+              <span className="tabular-nums">{serverWhen(d, s.event.at, "row")}</span> {s.event.text}
               {say && (
                 <span className="block text-xs">
                   {isIndex
@@ -154,7 +153,7 @@ export function PlanTimeline({ detail: d }: { detail: QueryDetail }) {
                 <span className="font-medium">Plan {p.planId}</span>
                 {p.active && <Badge className="bg-primary/10 text-primary">in use</Badge>}
                 {p.forced && <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400">forced</Badge>}
-                <span className="text-xs text-muted-foreground">{whenPlan(p)}</span>
+                <span className="text-xs text-muted-foreground">{whenPlan(d, p)}</span>
               </div>
               <p className="text-sm text-muted-foreground tabular-nums">
                 {formatWhole(p.runs)} runs · {formatMs(p.avgDurationMs)} each · {formatMs(p.avgCpuMs)} of CPU · {formatWhole(p.avgReads)} pages read

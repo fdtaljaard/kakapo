@@ -659,6 +659,18 @@ func TestArchiveStepThroughClusteredKey(t *testing.T) {
 		hasWarning(p, "create an index on LoggedAt first") {
 		t.Errorf("warnings %v", p.Warnings)
 	}
+	// The oldest is read through the key (as IDX10 reads it), so the table row never says "not read";
+	// when the read did not return it, it is unknown.
+	f.Estimate.Oldest = nil
+	p, _ = BuildArchiveFix(f, opts)
+	if strings.Contains(p.Changes[0].Current, "not read") || !strings.HasSuffix(p.Changes[0].Current, "oldest unknown") {
+		t.Errorf("table row %q", p.Changes[0].Current)
+	}
+	old := time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC)
+	f.Estimate = ArchiveEstimate{Known: true, Rows: 100, Estimated: true, Oldest: &old}
+	if p, _ = BuildArchiveFix(f, opts); !strings.HasSuffix(p.Changes[0].Current, "oldest 2019-03-01") {
+		t.Errorf("table row %q", p.Changes[0].Current)
+	}
 	// An indexed date column keeps the plain batch.
 	f.Columns[2].DateIndexed = true
 	if plan, _, _, _ = f.archivePlan(opts); plan.KeyColumn != "" || strings.Contains(plan.StepCommand(), "@from") {

@@ -258,10 +258,12 @@ JOIN @t AS x ON x.object_id = c.object_id
 WHERE TYPE_NAME(c.system_type_id) IN (N'datetime', N'datetime2', N'date')
 ORDER BY c.object_id, c.column_id;`
 
-// The estimate's two statements, run inside the database with @keep; {table}, {date} and {where}
-// are replaced by the quoted names and the canonical condition (archiveEstimateStatement). COUNT_BIG
-// on an indexed date column (a seek), with its lowest value; otherwise a 1 percent sample whose
-// share of matching rows the caller scales to the table's rows.
+// The estimate's two statements, run inside the database with @keep; {table}, {date}, {where} and
+// {oldest} are replaced by the quoted names, the canonical condition and the oldest read
+// (archiveEstimateStatement). COUNT_BIG on an indexed date column (a seek), with its lowest value;
+// otherwise a 1 percent sample whose share of matching rows the caller scales to the table's rows,
+// with the oldest read through the ascending identity that leads the clustered index when there is
+// one (as IDX10 reads it: the first row by that key, a seek), else not read.
 const (
 	archiveCountQuery = `SET NOCOUNT ON;
 DECLARE @cutoff datetime2 = DATEADD(MONTH, -@keep, SYSDATETIME());
@@ -269,7 +271,7 @@ SELECT COUNT_BIG(*), CAST(NULL AS bigint), (SELECT CONVERT(datetime2, MIN({date}
 FROM {table} WITH (READUNCOMMITTED) WHERE {where};`
 	archiveSampleQuery = `SET NOCOUNT ON;
 DECLARE @cutoff datetime2 = DATEADD(MONTH, -@keep, SYSDATETIME());
-SELECT COUNT_BIG(CASE WHEN {where} THEN 1 END), COUNT_BIG(*), CAST(NULL AS datetime2)
+SELECT COUNT_BIG(CASE WHEN {where} THEN 1 END), COUNT_BIG(*), {oldest}
 FROM {table} TABLESAMPLE SYSTEM (1 PERCENT) WITH (READUNCOMMITTED);`
 )
 
@@ -610,8 +612,16 @@ func archiveEstimateStatement(f domain.ArchiveFacts, dateColumn, condition strin
 	if sample {
 		q = archiveSampleQuery
 	}
-	r := strings.NewReplacer("{table}", domain.QuoteName(f.Schema)+"."+domain.QuoteName(f.Table),
-		"{date}", domain.QuoteName(date.Name), "{where}", where)
+	table := domain.QuoteName(f.Schema) + "." + domain.QuoteName(f.Table)
+	oldest := "CAST(NULL AS datetime2)"
+	for _, c := range f.Columns {
+		if c.ClusteredKey {
+			oldest = "(SELECT TOP (1) CONVERT(datetime2, " + domain.QuoteName(date.Name) + ") FROM " + table +
+				" WITH (READUNCOMMITTED) ORDER BY " + domain.QuoteName(c.Name) + ")"
+			break
+		}
+	}
+	r := strings.NewReplacer("{table}", table, "{date}", domain.QuoteName(date.Name), "{where}", where, "{oldest}", oldest)
 	return Tag(r.Replace(q)), nil
 }
 

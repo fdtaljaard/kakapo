@@ -1,5 +1,5 @@
 import type { QueryDetail, QueryPlan } from "@/api-queries"
-import { formatWhen } from "@/lib/format"
+import { serverWhen, type ServerClock } from "@/components/query/format"
 
 // Phase 5j: which plans the query page shows and in which colour, shared by the chart and the timeline.
 
@@ -20,10 +20,10 @@ export function chartPlans(d: QueryDetail): { inUse: number; costliest: number }
 
 const MANY = 5
 
-export function whenPlan(p: QueryPlan): string {
-  if (p.active && p.firstRun) return `since ${formatWhen(p.firstRun, "row")}`
-  const to = p.lastRun ? formatWhen(p.lastRun, "row") : ""
-  return p.firstRun ? `${formatWhen(p.firstRun, "row")} to ${to}` : `to ${to}`
+export function whenPlan(c: ServerClock, p: QueryPlan): string {
+  if (p.active && p.firstRun) return `since ${serverWhen(c, p.firstRun, "row")}`
+  const to = p.lastRun ? serverWhen(c, p.lastRun, "row") : ""
+  return p.firstRun ? `${serverWhen(c, p.firstRun, "row")} to ${to}` : `to ${to}`
 }
 
 export function shownPlans(d: QueryDetail): QueryPlan[] {

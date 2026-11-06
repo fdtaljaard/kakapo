@@ -115,7 +115,7 @@ func TestStorageCatalogue(t *testing.T) {
 			t.Errorf("%s owner %q", c.ID, c.Owner)
 		}
 	}
-	want := "STO01,STO02,STO03,STO04,STO05,STO06,STO07,STO08,STO09,TMP01,TMP02,TMP03,IDX01,IDX07,IDX10,IDX13,STO10,STO11,STO12"
+	want := "STO01,STO02,STO03,STO04,STO05,STO06,STO07,STO08,STO09,TMP01,TMP02,TMP03,IDX01,IDX06,IDX07,IDX10,IDX13,STO10,STO11,STO12"
 	if strings.Join(ids, ",") != want {
 		t.Errorf("storage checks %v", ids)
 	}
@@ -938,7 +938,7 @@ func TestStorageGrey(t *testing.T) {
 			t.Errorf("not online check %+v", c)
 		}
 	}
-	if len(checks) != 19 {
+	if len(checks) != 20 {
 		t.Errorf("%d checks", len(checks))
 	}
 
@@ -1407,5 +1407,41 @@ func TestStorageTMP02Growth(t *testing.T) {
 	f.SlowGrowthError = ""
 	if _, fs, _ := sbuild(f); !strings.HasSuffix(allOf(fs, "TMP02")[0].Evidence, " / growth 64 MB.") {
 		t.Errorf("not read, no reason: %q", allOf(fs, "TMP02")[0].Evidence)
+	}
+}
+
+// IDX06: a heap of 100 MB or a million rows is a Medium finding ending in the clustered index to
+// add; one with no other index says every query reads all of it; a small heap passes.
+func TestStorageIDX06(t *testing.T) {
+	f := sfacts()
+	f.Heaps = []TableSize{
+		{Name: "[dbo].[ImportRows]", DataMB: 1434, Rows: 13000000},
+		{Name: "[dbo].[Audit]", DataMB: 40, IndexMB: 12, IndexCount: 2, Rows: 1200000},
+		{Name: "[dbo].[Small]", DataMB: 99, Rows: 999999},
+	}
+	_, fs, checks := sbuild(f)
+	got := allOf(fs, "IDX06")
+	if len(got) != 2 || checkOf(checks, "IDX06").Status != CheckFinding {
+		t.Fatalf("IDX06 %+v", got)
+	}
+	x := got[0]
+	if x.Object != "[dbo].[ImportRows]" || x.Severity != SeverityMedium || x.When != WhenWindow || x.Effort != EffortModerate || x.Owner != OwnerUs ||
+		x.Finding != "Table has no index at all (a heap with no nonclustered index): 1.4 GB, 13,000,000 rows." ||
+		x.Why != idx06Why+idx06WhyNone || x.DoThis != idx06Do || x.Evidence != "Data 1,434 MB, 13,000,000 rows, no nonclustered index." ||
+		x.ThenCheck != "Re-run after adding the clustered index: IDX06 gone." {
+		t.Errorf("no index: %+v", x)
+	}
+	if y := got[1]; y.Finding != "Table has no clustered index (a heap): 40 MB, 1,200,000 rows." || y.Why != idx06Why ||
+		y.Evidence != "Data 40 MB, 1,200,000 rows, 2 nonclustered indexes, 12 MB." {
+		t.Errorf("heap with indexes: %+v", y)
+	}
+
+	f.Heaps = f.Heaps[2:]
+	if _, fs, checks = sbuild(f); len(allOf(fs, "IDX06")) != 0 || checkOf(checks, "IDX06").Status != CheckPassed {
+		t.Errorf("small heap: %+v", allOf(fs, "IDX06"))
+	}
+	f.TablesError = "denied"
+	if _, _, checks = sbuild(f); checkOf(checks, "IDX06").Status != CheckSkipped || checkOf(checks, "IDX06").Note != "Could not read the table sizes: denied" {
+		t.Errorf("unreadable: %+v", checkOf(checks, "IDX06"))
 	}
 }

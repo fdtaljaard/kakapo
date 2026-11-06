@@ -116,6 +116,20 @@ func TestArchiveEstimateStatement(t *testing.T) {
 			t.Errorf("sample lacks %q:\n%s", want, sample)
 		}
 	}
+	if !strings.Contains(sample, "COUNT_BIG(*), CAST(NULL AS datetime2)\n") {
+		t.Errorf("sample without a clustered identity reads an oldest:\n%s", sample)
+	}
+	// Clustered on an ascending identity: the sample reads the oldest through that key (a seek), as
+	// IDX10 does, so the preview does not contradict it.
+	keyed := archiveCollectFacts()
+	keyed.Columns[0].ClusteredKey = true
+	sample, err = archiveEstimateStatement(keyed, "Sent]On", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "COUNT_BIG(*), (SELECT TOP (1) CONVERT(datetime2, [Sent]]On]) FROM [dbo].[Mail]]Log] WITH (READUNCOMMITTED) ORDER BY [Id])\nFROM [dbo].[Mail]]Log] TABLESAMPLE"; !strings.Contains(sample, want) {
+		t.Errorf("sample lacks %q:\n%s", want, sample)
+	}
 	for _, bad := range []string{"Status = 'x'; DROP TABLE dbo.T", "Status = 'x' --", "Id IN (SELECT Id FROM T)", "Nope = 1", "@x = 1"} {
 		if stmt, err := archiveEstimateStatement(f, "LoggedAt", bad, false); err == nil || stmt != "" {
 			t.Errorf("condition %q reached a statement: %q", bad, stmt)

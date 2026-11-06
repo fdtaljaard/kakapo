@@ -351,3 +351,143 @@ func TestQueryDetailForceAdviceEvidence(t *testing.T) {
 		t.Errorf("reads only:\n%s", got)
 	}
 }
+
+// One plan cached twice (two entries of one plan hash, from connections with different SET options)
+// is one plan: its runs are added, it is not "two plans of similar speed", and the page says so. Every
+// time on the page is the server's clock, said once in the hand-over.
+func TestQueryDetailOnePlanCachedTwice(t *testing.T) {
+	now := time.Date(2026, 11, 5, 13, 10, 0, 0, time.UTC)
+	f := QueryFacts{Database: "WarehouseLive", QueryHash: "0x9F3A00112233AABB", ServerNow: now, UTCOffsetMinutes: 120, QueryStoreState: "OFF",
+		CachedPlans: []CachedPlanFact{
+			{PlanHandle: "0x06AA", PlanHash: "0xBB", Runs: 20, CPU: 20 * 2000, Duration: 20 * 4000, MaxDuration: 9000, Reads: 20 * 10, MinReads: 5, MaxReads: 20,
+				Created: now.Add(-30 * time.Minute), LastRun: now.Add(-time.Minute), Text: "SELECT 1", Plan: queryPlanXML},
+			{PlanHandle: "0x06BB", PlanHash: "0xbb", Runs: 10, CPU: 10 * 2000, Duration: 10 * 4000, MaxDuration: 12000, Reads: 10 * 10, MinReads: 3, MaxReads: 15,
+				Created: now.Add(-2 * time.Hour), LastRun: now.Add(-10 * time.Minute), Text: "SELECT 1"},
+		}}
+	d := BuildQueryDetail(f, true)
+	if len(d.Plans) != 1 {
+		t.Fatalf("plans %+v", d.Plans)
+	}
+	p := d.Plans[0]
+	if p.CachedCopies != 2 || p.Runs != 30 || p.MaxDurationMs != 12 || p.PlanHandle != "0x06AA" || !p.Active || p.Fastest ||
+		d.Summary.Window != "since 13:10" || d.UTCOffsetMinutes != 120 {
+		t.Errorf("merged plan %+v summary %+v", p, d.Summary)
+	}
+	var texts []string
+	for _, l := range d.Explain {
+		texts = append(texts, l.Text)
+	}
+	all := strings.Join(texts, "\n")
+	if strings.Contains(all, "plans of similar speed") || !strings.HasPrefix(texts[0], "It ran 30 times since 13:10") ||
+		!strings.Contains(all, "The plan in use is one plan cached twice, once for each set of SET options its connections use") {
+		t.Errorf("explain:\n%s", all)
+	}
+	if !strings.Contains(d.Handover, "Read at 2026-11-05 15:10 server time (UTC+2); every time here is the server's clock\n") ||
+		!strings.Contains(d.Handover, "- cached plan 0xBB (in use, one plan cached twice): 30 runs") {
+		t.Errorf("handover:\n%s", d.Handover)
+	}
+
+	// Query Store on: both cache entries of the plan's hash belong to its plan, none is listed again.
+	f.QueryStoreState = "READ_WRITE"
+	last := now.Add(-time.Minute)
+	f.Plans = []QueryStorePlanFact{{PlanID: 7, QueryID: 3, PlanHash: "0xBB", Runs: 30, CPU: 30 * 2000, Duration: 30 * 4000, LastRun: &last}}
+	if d = BuildQueryDetail(f, true); len(d.Plans) != 1 || d.Plans[0].PlanID != 7 || d.Plans[0].PlanHandle != "0x06AA" {
+		t.Errorf("with Query Store %+v", d.Plans)
+	}
+	for minutes, want := range map[int]string{0: "UTC", 120: "UTC+2", 330: "UTC+5:30", -180: "UTC-3"} {
+		if got := utcOffsetText(minutes); got != want {
+			t.Errorf("offset %d: %q", minutes, got)
+		}
+	}
+}
+
+// deletePlanXML is a DELETE from dbo.OrderLine as SQL Server 2022 plans it (the shape read live): the
+// clustered index delete, then a scan of each referencing table to check its foreign key, the
+// table itself among them for its self-reference.
+const deletePlanXML = `<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564" Build="16.0.4255.2"><BatchSequence><Batch><Statements>
+<StmtSimple StatementType="DELETE"><QueryPlan>
+<RelOp PhysicalOp="Sequence" LogicalOp="Sequence">
+<RelOp PhysicalOp="Clustered Index Delete" LogicalOp="Delete"><SimpleUpdate DMLRequestSort="0">
+<Object Database="[Shop]" Schema="[dbo]" Table="[OrderLine]" Index="[PK_OrderLine]"/></SimpleUpdate></RelOp>
+<RelOp PhysicalOp="Assert" LogicalOp="Assert"><RelOp PhysicalOp="Nested Loops" LogicalOp="Left Semi Join">
+<RelOp PhysicalOp="Clustered Index Scan" LogicalOp="Clustered Index Scan"><IndexScan><Object Database="[Shop]" Schema="[dbo]" Table="[StockMove]" Index="[PK_StockMove]"/></IndexScan></RelOp>
+<RelOp PhysicalOp="Clustered Index Scan" LogicalOp="Clustered Index Scan"><IndexScan><Object Database="[Shop]" Schema="[dbo]" Table="[OrderLine]" Index="[PK_OrderLine]"/></IndexScan></RelOp>
+</RelOp></RelOp></RelOp></QueryPlan></StmtSimple></Statements></Batch></BatchSequence></ShowPlanXML>`
+
+// A DELETE whose target is referenced by foreign keys without an index: one sentence per key the
+// plan checks, largest referencing table first, each with the create-index fix on its columns; a
+// small table, a key the plan does not read and an UPDATE that does not touch the key say nothing.
+func TestQueryDetailForeignKeysWithoutIndex(t *testing.T) {
+	now := time.Date(2026, 11, 5, 13, 10, 0, 0, time.UTC)
+	f := QueryFacts{Database: "Shop", QueryHash: "0x9F3A00112233AABB", ServerNow: now, QueryStoreState: "OFF",
+		CachedPlans: []CachedPlanFact{{PlanHandle: "0x06AA", PlanHash: "0xBB", Runs: 10, CPU: 10 * 2000, Duration: 10 * 900000, Reads: 10 * 531000,
+			Created: now.Add(-time.Hour), LastRun: now, Text: "DELETE FROM dbo.OrderLine WHERE Id = @id", Plan: deletePlanXML}},
+		UnindexedForeignKeys: []UnindexedForeignKeyFact{
+			{Name: "FK_OrderLine_Parent", Schema: "dbo", Table: "OrderLine", Columns: []string{"ParentLine_id"}, RefSchema: "dbo", RefTable: "OrderLine", Rows: 900000},
+			{Name: "FK_StockMove_Line", Schema: "dbo", Table: "StockMove", Columns: []string{"OrderLine_id", "Kind"}, RefSchema: "dbo", RefTable: "OrderLine", Rows: 13000000},
+			{Name: "FK_Note_Line", Schema: "dbo", Table: "Note", Columns: []string{"LineId"}, RefSchema: "dbo", RefTable: "OrderLine", Rows: 500000},
+			{Name: "FK_Tiny_Line", Schema: "dbo", Table: "OrderLine", Columns: []string{"Other_id"}, RefSchema: "dbo", RefTable: "OrderLine", Rows: 9999},
+		}}
+	if got := ShowplanDMLTargets("Shop", deletePlanXML); len(got) != 1 || got[0].Kind != "DELETE" || got[0].Table != "OrderLine" || got[0].Database != "Shop" {
+		t.Fatalf("targets %+v", got)
+	}
+	d := BuildQueryDetail(f, true)
+	lines := []ExplainLine{}
+	for _, l := range d.Explain {
+		if strings.Contains(l.Text, "checks foreign key") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("foreign key lines %+v", d.Explain)
+	}
+	want := "Each delete from dbo.OrderLine checks foreign key FK_StockMove_Line, and dbo.StockMove (13,000,000 rows) has no index that starts with its columns OrderLine_id, Kind, so SQL Server reads the whole of dbo.StockMove to check it. An index on dbo.StockMove (OrderLine_id, Kind) lets it seek instead."
+	if lines[0].Text != want || !strings.HasPrefix(lines[1].Text, "Each delete from dbo.OrderLine checks foreign key FK_OrderLine_Parent, and dbo.OrderLine (900,000 rows) has no index that starts with ParentLine_id") {
+		t.Errorf("lines:\n%s\n%s", lines[0].Text, lines[1].Text)
+	}
+	a := lines[0].Action
+	if a == nil || a.FixID != FixCreateIndex || a.Options[OptionTable] != "[Shop].[dbo].[StockMove]" || a.Options[OptionEquality] != "[OrderLine_id], [Kind]" {
+		t.Errorf("action %+v", a)
+	}
+	if s, err := ParseCreateIndexOptions(a.Options); err != nil || s.Table != "StockMove" || len(s.Keys()) != 2 {
+		t.Errorf("the create-index fix cannot read the options: %+v %v", s, err)
+	}
+	if d = BuildQueryDetail(f, false); strings.Contains(d.Handover, "checks foreign key") == false {
+		t.Errorf("the hand-over lacks the foreign keys:\n%s", d.Handover)
+	}
+	for _, l := range d.Explain {
+		if strings.Contains(l.Text, "checks foreign key") && l.Action != nil {
+			t.Errorf("an action on a database that cannot be changed: %+v", l)
+		}
+	}
+
+	// An UPDATE that reads no referencing table (it does not change the key): nothing said.
+	upd := strings.Replace(strings.Replace(deletePlanXML, `StatementType="DELETE"`, `StatementType="UPDATE"`, 1), `LogicalOp="Delete"`, `LogicalOp="Update"`, 1)
+	upd = upd[:strings.Index(upd, `<RelOp PhysicalOp="Assert"`)] + `</RelOp></QueryPlan></StmtSimple></Statements></Batch></BatchSequence></ShowPlanXML>`
+	f.CachedPlans[0].Plan = upd
+	if got := ShowplanDMLTargets("Shop", upd); len(got) != 1 || got[0].Kind != "UPDATE" {
+		t.Fatalf("update targets %+v", got)
+	}
+	for _, l := range BuildQueryDetail(f, true).Explain {
+		if strings.Contains(l.Text, "foreign key") {
+			t.Errorf("an update of other columns: %q", l.Text)
+		}
+	}
+}
+
+// An UPDATE that reads its own table (a seek before the update) does not say its self-reference: the
+// read is not the key's check.
+func TestQueryDetailForeignKeysUpdateReadsItself(t *testing.T) {
+	upd := strings.Replace(strings.Replace(deletePlanXML, `StatementType="DELETE"`, `StatementType="UPDATE"`, 1), `LogicalOp="Delete"`, `LogicalOp="Update"`, 1)
+	upd = strings.Replace(upd, `<RelOp PhysicalOp="Clustered Index Scan" LogicalOp="Clustered Index Scan"><IndexScan><Object Database="[Shop]" Schema="[dbo]" Table="[StockMove]" Index="[PK_StockMove]"/></IndexScan></RelOp>`, "", 1)
+	now := time.Date(2026, 11, 5, 13, 10, 0, 0, time.UTC)
+	f := QueryFacts{Database: "Shop", QueryHash: "0x9F3A00112233AABB", ServerNow: now, QueryStoreState: "OFF",
+		CachedPlans: []CachedPlanFact{{PlanHandle: "0x06AA", PlanHash: "0xBB", Runs: 10, Duration: 10, Created: now, LastRun: now, Plan: upd}},
+		UnindexedForeignKeys: []UnindexedForeignKeyFact{
+			{Name: "FK_OrderLine_Parent", Schema: "dbo", Table: "OrderLine", Columns: []string{"ParentLine_id"}, RefSchema: "dbo", RefTable: "OrderLine", Rows: 900000}}}
+	for _, l := range BuildQueryDetail(f, true).Explain {
+		if strings.Contains(l.Text, "foreign key") {
+			t.Errorf("self-reference on an update: %q", l.Text)
+		}
+	}
+}

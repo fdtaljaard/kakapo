@@ -223,6 +223,7 @@ type StorageFacts struct {
 	TotalDataMB   float64        // every user table's data (heap or clustered index)
 	TotalIndexMB  float64        // every user table's other indexes
 	Tables        []TableSize    // the 10 biggest of 1 MB or more, biggest first
+	Heaps         []TableSize    // the tables without a clustered index of 1 MB or more, biggest first (IDX06)
 	GrowingTables []GrowingTable // the 10 biggest that look like log or history tables
 	Identities    []IdentityColumn
 
@@ -353,6 +354,9 @@ const (
 	tmp03Why      = "When TempDB is full, every query that sorts, hashes or uses a temp table fails, in every database on the server."
 	tmp03Do       = "Find what is using it right now (sys.dm_db_session_space_usage shows the pages per session: a runaway report, a huge sort, or a session holding a temp table) and deal with that query. If this is its normal size, pre-size TempDB larger in a maintenance window and make sure it can grow."
 	idx01Why      = "The biggest tables in this database. Tables where indexes are much bigger than the data are flagged in IDX02."
+	idx06Why      = "Without a clustered index, an updated row that no longer fits is moved and leaves a forwarding pointer behind, so reads get slower over time, and the space of deleted rows is not always reused."
+	idx06WhyNone  = " With no other index either, every query on it reads the whole table."
+	idx06Do       = "Add a clustered index in a maintenance window (it rewrites the whole table and needs about its size free in the data files). Choose the key with the application's owner: usually the primary key or an ever-increasing ID column."
 	idx07WhyFile  = "Usually a copy of a bigger database, or data that was deleted. The empty space costs disk and backup storage at every copy."
 	idx07WhyLog   = "The log is not being emptied, usually because of missing log backups or a transaction left open (ACT02). It keeps growing until the disk is full."
 	idx10Why      = "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk."
@@ -444,6 +448,7 @@ func BuildStorageCard(f StorageFacts, def CardDef, lastRoom *CheckdbRoom, trend 
 	b.tmp02()
 	b.tmp03()
 	b.idx01()
+	b.idx06()
 	b.idx07(filesNote)
 	b.idx10()
 	b.idx13()
@@ -1700,4 +1705,40 @@ func groupThousands(s string) string {
 		out.WriteRune(r)
 	}
 	return sign + out.String() + frac
+}
+
+// IDX06's size bar (PerformanceTriage.sql IDX06, from sp_BlitzIndex check 44): a heap of 100 MB of
+// data or a million rows.
+const (
+	idx06MinMB   = 100
+	idx06MinRows = 1000000
+)
+
+// idx06: large tables without a clustered index (heaps), one finding per table, the biggest first.
+// A heap with no nonclustered index either says that every query reads all of it. Sources:
+// PerformanceTriage.sql IDX06; sp_BlitzIndex check 44; Microsoft Learn, "Heaps (tables without
+// clustered indexes)" (forwarding pointers, space reuse, when a heap is the wrong choice).
+func (b *storageBuild) idx06() {
+	f := b.f
+	if f.TablesError != "" {
+		b.skipped["IDX06"] = "Could not read the table sizes: " + f.TablesError
+		return
+	}
+	for _, t := range f.Heaps {
+		if t.DataMB < idx06MinMB && t.Rows < idx06MinRows {
+			continue
+		}
+		size := fmt.Sprintf("%s, %s rows", mbText(int64(math.Round(t.DataMB))), n0int(t.Rows))
+		finding := "Table has no clustered index (a heap): " + size + "."
+		why := idx06Why
+		indexes := "no nonclustered index"
+		if t.IndexCount > 0 {
+			indexes = plural(int64(t.IndexCount), "nonclustered index", "nonclustered indexes") + ", " + mbText(int64(math.Round(t.IndexMB)))
+		} else {
+			finding = "Table has no index at all (a heap with no nonclustered index): " + size + "."
+			why += idx06WhyNone
+		}
+		b.add("IDX06", 3, "Offline", EffortModerate, t.Name, finding, why, idx06Do,
+			fmt.Sprintf("Data %s MB, %s rows, %s.", n0(t.DataMB), n0int(t.Rows), indexes))
+	}
 }

@@ -221,6 +221,8 @@ var Checks = []Check{
 		"Re-run: TMP03 gone. Find the query that filled it in ACT03 or the live check."},
 	{"IDX01", CardStorage, "Where the space goes", "Where does the space go?", OwnerUs,
 		"Context only."},
+	{"IDX06", CardStorage, "Large tables without a clustered index (heaps)", "Which large tables are heaps?", OwnerUs,
+		"Re-run after adding the clustered index: IDX06 gone."},
 	{"IDX07", CardStorage, "Oversized or mostly empty files", "Are files mostly empty or is the log bigger than the data?", OwnerUs,
 		"Re-run: IDX07 gone."},
 	{"IDX10", CardStorage, "Application tables that only grow", "Which tables grow for ever?", OwnerVendor,

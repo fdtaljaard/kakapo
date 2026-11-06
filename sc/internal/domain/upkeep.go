@@ -639,7 +639,7 @@ func (b *upkeepBuild) mnt07() {
 	// With no operator every alert is silent, and the no-operator finding says so.
 	if f.Operators > 0 && len(f.SilentAlerts) > 0 {
 		b.add("MNT07", 4, "Online", EffortQuickWin, f.ServerName,
-			fmt.Sprintf("%d alert(s) exist but tell no one: %s.", len(f.SilentAlerts), strings.Join(f.SilentAlerts, ", ")),
+			fmt.Sprintf("%s no one: %s.", plural(int64(len(f.SilentAlerts)), "alert tells", "alerts tell"), strings.Join(f.SilentAlerts, ", ")),
 			mnt07SilentWhy, mnt07SilentDo, evidence, FixOperatorAlerts)
 	}
 	if f.Operators > 0 && len(f.MissingAlerts) == 0 {

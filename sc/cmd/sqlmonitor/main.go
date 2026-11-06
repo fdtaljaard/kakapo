@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"sqlmonitor/internal/api"
@@ -145,10 +146,7 @@ func alreadyRunning(url string) bool {
 func openAppWindow(url string) (cleanup func()) {
 	cleanup = func() {}
 	if runtime.GOOS == "windows" {
-		for _, edge := range []string{
-			filepath.Join(os.Getenv("ProgramFiles(x86)"), `Microsoft\Edge\Application\msedge.exe`),
-			filepath.Join(os.Getenv("ProgramFiles"), `Microsoft\Edge\Application\msedge.exe`),
-		} {
+		for _, edge := range edgeCandidates(edgeAppPaths(), os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles")) {
 			if _, err := os.Stat(edge); err != nil {
 				continue
 			}
@@ -172,6 +170,7 @@ func openAppWindow(url string) (cleanup func()) {
 			go func() { _ = cmd.Wait() }()
 			return cleanup
 		}
+		// The last resort: the default browser, which on a server can be Internet Explorer.
 		if err := exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start(); err == nil {
 			fmt.Println("Opened", url, "in your browser.")
 			return cleanup
@@ -179,4 +178,30 @@ func openAppWindow(url string) (cleanup func()) {
 	}
 	fmt.Println("Open", url, "in a browser.")
 	return cleanup
+}
+
+// edgeCandidates are the places msedge.exe may be, in the order they are tried: where the App
+// Paths registry key says it is (machine, then user), the per-user install under
+// %LOCALAPPDATA%, then the two Program Files folders. Quotes around a registry value are
+// removed, blanks and repeats left out; the caller tries each until one exists.
+func edgeCandidates(appPaths []string, localAppData, programFilesX86, programFiles string) []string {
+	const rel = `Microsoft\Edge\Application\msedge.exe`
+	out, seen := []string{}, map[string]bool{}
+	add := func(p string) {
+		p = strings.Trim(strings.TrimSpace(p), `"`)
+		if p == "" || seen[strings.ToLower(p)] {
+			return
+		}
+		seen[strings.ToLower(p)] = true
+		out = append(out, p)
+	}
+	for _, p := range appPaths {
+		add(p)
+	}
+	for _, base := range []string{localAppData, programFilesX86, programFiles} {
+		if strings.TrimSpace(base) != "" {
+			add(filepath.Join(base, rel))
+		}
+	}
+	return out
 }

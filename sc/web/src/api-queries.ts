@@ -11,6 +11,7 @@ export interface QueryDetail {
   queryHash: string // 0x...
   serverName: string
   capturedAt: string // UTC
+  utcOffsetMinutes: number // the server's offset: the page shows every time on the server's clock
   text: string
   objectName: string // schema.procedure; "" for ad hoc
   source: QueryDetailSource
@@ -87,6 +88,7 @@ export interface QueryPlan {
   queryId: number
   planHash: string
   planHandle: string // "" when not in the plan cache
+  cachedCopies?: number // a plan only in the plan cache: its entries there (one per set of SET options)
   source: "query-store" | "plan-cache"
   forced: boolean
   active: boolean // used most recently

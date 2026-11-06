@@ -224,6 +224,7 @@ func TestStorageFactsLive(t *testing.T) {
 	t.Logf("errors: files %q vol %q io %q cpu %q vlf %q temp %q space %q tables %q grow %q ident %q",
 		f.FilesError, f.VolumeError, f.LatencyError, f.CPUError, f.VLFError, f.TempdbError, f.SpaceUsedError,
 		f.TablesError, f.GrowingTablesError, f.IdentityError)
+	t.Logf("heaps %+v", f.Heaps)
 
 	kb, took, err := RunCheckdbEstimate(ctx, db, name)
 	if err != nil || kb <= 0 {

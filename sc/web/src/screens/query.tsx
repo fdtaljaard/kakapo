@@ -8,7 +8,7 @@ import { FixDialog } from "@/components/fix-dialog"
 import { StillRunningNotice } from "@/components/fix-progress"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
-import { formatMs, formatWhole } from "@/components/query/format"
+import { formatMs, formatWhole, serverWhen } from "@/components/query/format"
 import { HistoryChart } from "@/components/query/history-chart"
 import { PlanSays, PlansTable } from "@/components/query/plans"
 import { ExplainList, HistoryTable, StatementsTable, TablesTable, WaitsList } from "@/components/query/sections"
@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useServers } from "@/hooks/use-servers"
 import { useBuildVersion } from "@/lib/build-version"
-import { formatWhen } from "@/lib/format"
 import { cardPath, databasePagePath, instancePath } from "@/lib/paths"
 import { useCopy } from "@/lib/use-copy"
 
@@ -172,7 +171,7 @@ function SummaryLine({ detail: d }: { detail: QueryDetail }) {
     <div className="grid gap-1">
       <p className="text-xs text-muted-foreground">
         {sourceText[d.source]}
-        {d.source === "plan-cache" && s.window ? ` (${s.window})` : ""} · as of {formatWhen(d.capturedAt)}
+        {d.source === "plan-cache" && s.window ? ` (${s.window})` : ""} · as of {serverWhen(d, d.capturedAt)} server time
         {d.serverName ? ` · ${d.serverName}` : ""}
       </p>
       {s.runs > 0 && !d.verdict && (
@@ -241,7 +240,7 @@ function QueryBody({
   const hidden = d.plans.length - timeline.length
   return (
     <div className={loading ? "grid gap-6 opacity-60 transition-opacity" : "grid gap-6"}>
-      {v ? <VerdictCard verdict={v} text={d.text} /> : d.text && <StatementBlock label="Query text" text={d.text} />}
+      {v ? <VerdictCard verdict={v} text={d.text} clock={d} /> : d.text && <StatementBlock label="Query text" text={d.text} />}
 
       {d.history.length > 0 ? (
         <Section
@@ -250,7 +249,7 @@ function QueryBody({
           more={hoursToggle("hours")}
         >
           <HistoryChart detail={d} />
-          {hoursShown && <HistoryTable hours={d.history} />}
+          {hoursShown && <HistoryTable hours={d.history} clock={d} />}
         </Section>
       ) : (
         d.source !== "query-store" && (

@@ -332,7 +332,7 @@ BEGIN CATCH
 END CATCH;
 DECLARE @space TABLE (file_id int NOT NULL, used_mb bigint NULL);
 DECLARE @tables TABLE (object_id int NOT NULL, table_name nvarchar(300) NOT NULL, data_mb decimal(18, 2) NOT NULL,
-                       index_mb decimal(18, 2) NOT NULL, index_count int NOT NULL, rows_count bigint NOT NULL);
+                       index_mb decimal(18, 2) NOT NULL, index_count int NOT NULL, rows_count bigint NOT NULL, is_heap bit NOT NULL);
 DECLARE @ident TABLE (table_name nvarchar(300) NOT NULL, column_name sysname NOT NULL, type_name sysname NOT NULL,
                       last_value bigint NOT NULL, seed_value bigint NOT NULL, increment_value bigint NOT NULL,
                       pct_used decimal(9, 2) NOT NULL);
@@ -351,12 +351,13 @@ BEGIN TRY
         SELECT p.object_id, p.index_id, SUM(p.used_page_count) * 8 / 1024.0 AS size_mb, SUM(p.row_count) AS rows_count
         FROM sys.dm_db_partition_stats AS p
         GROUP BY p.object_id, p.index_id)
-    INSERT @tables (object_id, table_name, data_mb, index_mb, index_count, rows_count)
+    INSERT @tables (object_id, table_name, data_mb, index_mb, index_count, rows_count, is_heap)
     SELECT o.object_id, QUOTENAME(s.name) + N'.' + QUOTENAME(o.name),
            SUM(CASE WHEN i.index_id IN (0, 1) THEN ISNULL(ix.size_mb, 0) ELSE 0 END),
            SUM(CASE WHEN i.index_id > 1 THEN ISNULL(ix.size_mb, 0) ELSE 0 END),
            SUM(CASE WHEN i.index_id > 1 AND i.is_hypothetical = 0 AND i.is_disabled = 0 THEN 1 ELSE 0 END),
-           MAX(CASE WHEN i.index_id IN (0, 1) THEN ISNULL(ix.rows_count, 0) ELSE 0 END)
+           MAX(CASE WHEN i.index_id IN (0, 1) THEN ISNULL(ix.rows_count, 0) ELSE 0 END),
+           MAX(CASE WHEN i.index_id = 0 THEN 1 ELSE 0 END)
     FROM sys.indexes AS i
     JOIN sys.objects AS o ON o.object_id = i.object_id AND o.type = 'U' AND o.is_ms_shipped = 0
     JOIN sys.schemas AS s ON s.schema_id = o.schema_id
@@ -418,7 +419,9 @@ WHERE data_mb + index_mb >= 1 ORDER BY data_mb + index_mb DESC;
 SELECT table_name, column_name, type_name, last_value, seed_value, increment_value, pct_used FROM @ident
 ORDER BY pct_used DESC;
 SELECT table_name FROM @archTables ORDER BY table_name;
-SELECT @qsMb, @qsMax;`
+SELECT @qsMb, @qsMax;
+SELECT TOP (50) table_name, data_mb, index_mb, index_count, rows_count FROM @tables
+WHERE is_heap = 1 AND data_mb >= 1 ORDER BY data_mb DESC;`
 
 // StorageFacts reads what the Storage card needs about one database (docs/phase3b-contract.md),
 // SELECTs only. An area the login may not read (VIEW SERVER STATE, VIEW DATABASE STATE) carries
@@ -709,6 +712,19 @@ func readStorageDatabase(ctx context.Context, db *sql.DB, database string, f *do
 		if cur.Valid && max.Valid {
 			f.QueryStoreMB, f.QueryStoreMaxMB = &cur.Int64, &max.Int64
 		}
+	}
+
+	// 10: the heaps of 1 MB or more, biggest first (IDX06).
+	if err := nextResultSet(rows, "heaps"); err != nil {
+		return err
+	}
+	f.Heaps = []domain.TableSize{}
+	for rows.Next() {
+		var t domain.TableSize
+		if err := rows.Scan(&t.Name, &t.DataMB, &t.IndexMB, &t.IndexCount, &t.Rows); err != nil {
+			return err
+		}
+		f.Heaps = append(f.Heaps, t)
 	}
 	return friendlyErrOrNil(rows.Err())
 }

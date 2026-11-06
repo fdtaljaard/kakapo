@@ -497,12 +497,12 @@ func BuildOperatorAlertsFix(f AlertFacts, options map[string]string) (FixPreview
 }
 
 func alertsCurrent(operators, missing, silent int) string {
-	parts := []string{fmt.Sprintf("%d operator(s) with email", operators)}
+	parts := []string{plural(int64(operators), "operator", "operators") + " with email"}
 	if missing > 0 {
-		parts = append(parts, fmt.Sprintf("%d alert(s) missing", missing))
+		parts = append(parts, plural(int64(missing), "alert", "alerts")+" missing")
 	}
 	if silent > 0 {
-		parts = append(parts, fmt.Sprintf("%d alert(s) mail no one", silent))
+		parts = append(parts, plural(int64(silent), "alert mails", "alerts mail")+" no one")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -553,7 +553,26 @@ func OperatorAlertsDescription(server string, changes []Drift) string {
 			notified++
 		}
 	}
-	return fmt.Sprintf("%s on %s; %d alert(s) created, %d enabled again, %d more now mail it", operator, server, created, enabled, notified)
+	// Plain words, the clauses that did nothing left out: "...; created 10 alerts, turned 1 back
+	// on and set 2 more to mail it".
+	parts := []string{}
+	if created > 0 {
+		parts = append(parts, "created "+plural(int64(created), "alert", "alerts"))
+	}
+	if enabled > 0 {
+		parts = append(parts, "turned "+plural(int64(enabled), "disabled alert", "disabled alerts")+" back on")
+	}
+	if notified > 0 {
+		one, many := "alert", "alerts"
+		if created+enabled > 0 {
+			one, many = "more alert", "more alerts"
+		}
+		parts = append(parts, "set "+plural(int64(notified), one, many)+" to mail it")
+	}
+	if len(parts) == 0 {
+		return operator + " on " + server
+	}
+	return operator + " on " + server + "; " + qJoinAnd(parts)
 }
 
 // --- maintenance-job (MNT03) ---

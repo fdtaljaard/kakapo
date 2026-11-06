@@ -23,7 +23,7 @@ func TestOperatorAlertsCreatesEverything(t *testing.T) {
 		p.Inputs[0].Value != DefaultOperatorName || p.Inputs[1].Warning != emailMissing || p.Inputs[2].Kind != "bool" || p.Inputs[2].Value != "true" {
 		t.Errorf("no email %+v", p)
 	}
-	if fix.ID != FixOperatorAlerts || fix.CheckID != "MNT07" || fix.Current != "0 operator(s) with email, 10 alert(s) missing" {
+	if fix.ID != FixOperatorAlerts || fix.CheckID != "MNT07" || fix.Current != "0 operators with email, 10 alerts missing" {
 		t.Errorf("fix %+v", fix)
 	}
 	for _, bad := range []string{"not an address", "a@b", "x@y.co.za; y@z.com", "Jo <jo@x.com>"} {
@@ -65,7 +65,7 @@ func TestOperatorAlertsCreatesEverything(t *testing.T) {
 	if p.Warnings[len(p.Warnings)-1] != AlertsPermission(`SQL01\WMS`) || p.Options[OptionOperatorEmail] != "dba@client.co.za" || p.Options[OptionCreateAlerts] != "true" {
 		t.Errorf("warnings %q options %+v", p.Warnings, p.Options)
 	}
-	if d := OperatorAlertsDescription(`SQL01\WMS`, p.Changes); d != `Created the operator Database support (dba@client.co.za) on SQL01\WMS; 10 alert(s) created, 0 enabled again, 0 more now mail it` {
+	if d := OperatorAlertsDescription(`SQL01\WMS`, p.Changes); d != `Created the operator Database support (dba@client.co.za) on SQL01\WMS; created 10 alerts` {
 		t.Errorf("description %q", d)
 	}
 
@@ -127,7 +127,7 @@ func TestOperatorAlertsWithAnOperator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fix.Current != "1 operator(s) with email, 4 alert(s) missing, 2 alert(s) mail no one" || p.Inputs[0].Kind != "select" ||
+	if fix.Current != "1 operator with email, 4 alerts missing, 2 alerts mail no one" || p.Inputs[0].Kind != "select" ||
 		!reflect.DeepEqual(p.Inputs[0].Options, []string{"IT"}) || p.Inputs[0].Value != "IT" || len(p.Inputs) != 2 {
 		t.Errorf("fix %+v inputs %+v", fix, p.Inputs)
 	}
@@ -162,6 +162,9 @@ func TestOperatorAlertsWithAnOperator(t *testing.T) {
 	if !reflect.DeepEqual(p.Changes[0], Drift{"Operator", "IT (it@client.co.za)", "mailed by the alerts"}) || !suContains(suSettings(p.Changes), "Alert Severity 020") ||
 		!suContains(suSettings(p.Changes), "Alert Sev 22") || !suContains(suSettings(p.Changes), "Alert Severity 021") {
 		t.Errorf("changes %+v", p.Changes)
+	}
+	if d := OperatorAlertsDescription(`SQL01\WMS`, p.Changes); d != `Used the operator IT (it@client.co.za) on SQL01\WMS; created 3 alerts, turned 1 disabled alert back on and set 2 more alerts to mail it` {
+		t.Errorf("description %q", d)
 	}
 
 	// An operator the options name that has no email: choose one that has.
@@ -426,7 +429,7 @@ func TestAvailableUpkeepActionFixes(t *testing.T) {
 		if x.ID == FixMaintenanceJob && (x.Target != "kakapo: statistics (WarehouseLive) (daily 01:00)" || x.CheckID != "MNT03") {
 			t.Errorf("maintenance fix %+v", x)
 		}
-		if x.ID == FixOperatorAlerts && x.Current != "0 operator(s) with email" {
+		if x.ID == FixOperatorAlerts && x.Current != "0 operators with email" {
 			t.Errorf("alerts fix %+v", x)
 		}
 	}

@@ -55,7 +55,8 @@ func TestCreateIndexPreview(t *testing.T) {
 	if fix.ID != FixCreateIndex || fix.CheckID != "WRK03" || fix.Target != target || fix.Current != "none" {
 		t.Errorf("fix %+v", fix)
 	}
-	want := []string{warnIndexOffline, warnIndexLarge, warnIndexLock, warnIndexWrites,
+	offline := "On Standard or Web edition an index is built offline (ONLINE = OFF): while it builds, dbo.Pick (2,000,000 rows, 400 MB) is locked against inserts, updates and deletes, and users who write to it wait until it finishes (reads go on). Apply it in a quiet moment."
+	want := []string{offline, warnIndexLarge, warnIndexLock, warnIndexWrites,
 		"Needs the ALTER permission on dbo.Pick (db_ddladmin or db_owner in the database)."}
 	if !reflect.DeepEqual(p.Warnings, want) {
 		t.Errorf("warnings\n%q\nwant\n%q", p.Warnings, want)
@@ -93,6 +94,13 @@ func TestCreateIndexOnlineAndCompression(t *testing.T) {
 	p, _ = BuildCreateIndexFix(f, pickSpec(t, off), off)
 	if !strings.Contains(p.Statement, "ONLINE = OFF") || p.Options[OptionOnline] != "false" {
 		t.Errorf("online off: %s", p.Statement)
+	}
+	if !strings.HasPrefix(p.Warnings[0], "Built offline (ONLINE = OFF): while it builds, dbo.Pick (2,000,000 rows, 400 MB) is locked") {
+		t.Errorf("offline on Enterprise: %q", p.Warnings[0])
+	}
+	f.EngineEdition = 4
+	if p, _ = BuildCreateIndexFix(f, pickSpec(t, pickOptions), pickOptions); !strings.HasPrefix(p.Warnings[0], "On Express edition an index is built offline") {
+		t.Errorf("express: %q", p.Warnings[0])
 	}
 
 	for version, want := range map[string]bool{"12.0.6024.0": false, "13.0.1601.5": false, "13.0.4001.0": true, "15.0.2000.5": true} {
@@ -223,6 +231,25 @@ func TestCreateIndexGuards(t *testing.T) {
 		g[0].Text != "Column Gone is not in dbo.Pick (any more): the suggestion is out of date." ||
 		g[1].Text != "Column Notes is a nvarchar(max) column and cannot be an index key: include it instead." {
 		t.Errorf("columns: %+v", g)
+	}
+
+	// A (max) or xml column included: warned with the rows it is copied for, not blocked; a text
+	// column cannot be included at all.
+	f = pickFacts()
+	f.Rows = 13000000
+	f.Columns = append(f.Columns, TableColumn{"Payload", "xml", -1}, TableColumn{"Memo", "text", 16})
+	inc := map[string]string{OptionTable: "dbo.Pick", OptionEquality: "[Status]", OptionIncluded: "[Notes], [Payload]"}
+	g = guardsOf(t, f, inc)
+	want := "Column Notes is a nvarchar(max) column: the index keeps its own copy of it for every row of the table (13,000,000 rows), so the index can grow as large as the table"
+	if len(g) < 2 || g[0].Blocks || g[1].Blocks || !strings.HasPrefix(g[0].Text, want) || !strings.HasPrefix(g[1].Text, "Column Payload is a xml column: the index keeps") {
+		t.Errorf("max includes: %+v", g)
+	}
+	inc[OptionIncluded] = "[Memo]"
+	if g = guardsOf(t, f, inc); len(g) == 0 || !g[0].Blocks || g[0].Text != "Column Memo is a text column: SQL Server cannot include it in an index. Leave it out of the included columns." {
+		t.Errorf("text include: %+v", g)
+	}
+	if p, _ := BuildCreateIndexFix(f, pickSpec(t, inc), inc); p.Statement != "" {
+		t.Errorf("a text column was included: %s", p.Statement)
 	}
 }
 

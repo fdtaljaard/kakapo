@@ -404,6 +404,22 @@ func QueryDetail(ctx context.Context, db *sql.DB, database, hash string) (domain
 			plans = append(plans, c.Plan)
 		}
 	}
+	// A DELETE, or an UPDATE of a key, checks the foreign keys that reference its table: read those
+	// whose referencing columns lead no index.
+	if targets := domain.ShowplanDMLTargets(database, plans...); len(targets) > 0 {
+		tables := make([]domain.ShowplanObject, 0, len(targets))
+		for _, t := range targets {
+			tables = append(tables, t.ShowplanObject)
+		}
+		readCtx, cancel = context.WithTimeout(ctx, queryReadTimeout)
+		fks, err := ReadUnindexedForeignKeys(readCtx, db, database, tables)
+		cancel()
+		if err != nil {
+			f.ForeignKeysError = err.Error()
+		} else {
+			f.UnindexedForeignKeys = fks
+		}
+	}
 	if tables := domain.ShowplanTables(database, plans...); len(tables) > 0 {
 		readCtx, cancel = context.WithTimeout(ctx, queryReadTimeout)
 		facts, _, err := ReadTableStatistics(readCtx, db, database, tables)
@@ -716,4 +732,97 @@ func ReadCachedPlan(ctx context.Context, db *sql.DB, handle string, raw []byte) 
 	}
 	f.ObjectType, f.Text, f.ObjectName, f.Created = objType.String, text.String, object.String, naivePtr(created)
 	return f, nil
+}
+
+// unindexedForeignKeysQuery runs inside the database with @tables, an XML list <t s="schema"
+// n="table"/> of the tables a query deletes from or updates: every enabled foreign key that
+// references one of them where no enabled index of the referencing table (clustered or
+// nonclustered) has all the key's columns, in any order, as its first key columns. Per key: its
+// name, the referencing table and its rows (sys.partitions), the referenced table, and its columns
+// in the key's order, comma-separated and bracketed. Result sets: one row (error), the keys.
+var unindexedForeignKeysQuery = TagStatements(`SET NOCOUNT ON;
+DECLARE @err nvarchar(2048);
+DECLARE @names TABLE (object_id int NOT NULL PRIMARY KEY);
+DECLARE @fk TABLE (fk_id int NOT NULL, fk_name sysname NOT NULL, schema_name sysname NOT NULL, table_name sysname NOT NULL,
+                   ref_schema sysname NOT NULL, ref_table sysname NOT NULL, rows bigint NULL, cols nvarchar(max) NULL);
+BEGIN TRY
+    INSERT @names (object_id)
+    SELECT DISTINCT o.id
+    FROM (SELECT CONVERT(xml, @tables) AS doc) AS d
+    CROSS APPLY d.doc.nodes('/t') AS x(t)
+    CROSS APPLY (SELECT OBJECT_ID(QUOTENAME(x.t.value('@s', 'nvarchar(128)')) + N'.' + QUOTENAME(x.t.value('@n', 'nvarchar(128)')), N'U') AS id) AS o
+    WHERE o.id IS NOT NULL;
+
+    INSERT @fk (fk_id, fk_name, schema_name, table_name, ref_schema, ref_table, rows, cols)
+    SELECT fk.object_id, fk.name, OBJECT_SCHEMA_NAME(fk.parent_object_id), OBJECT_NAME(fk.parent_object_id),
+           OBJECT_SCHEMA_NAME(fk.referenced_object_id), OBJECT_NAME(fk.referenced_object_id),
+           (SELECT SUM(p.rows) FROM sys.partitions AS p WHERE p.object_id = fk.parent_object_id AND p.index_id IN (0, 1)),
+           STUFF((SELECT N',' + QUOTENAME(c.name)
+                  FROM sys.foreign_key_columns AS fkc
+                  JOIN sys.columns AS c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id
+                  WHERE fkc.constraint_object_id = fk.object_id
+                  ORDER BY fkc.constraint_column_id
+                  FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, N'')
+    FROM sys.foreign_keys AS fk
+    JOIN @names AS n ON n.object_id = fk.referenced_object_id
+    WHERE fk.is_disabled = 0
+      AND NOT EXISTS (
+          SELECT 1
+          FROM sys.indexes AS ix
+          WHERE ix.object_id = fk.parent_object_id AND ix.type IN (1, 2) AND ix.is_disabled = 0 AND ix.is_hypothetical = 0
+            AND NOT EXISTS (
+                SELECT 1
+                FROM sys.foreign_key_columns AS fkc
+                WHERE fkc.constraint_object_id = fk.object_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM sys.index_columns AS ic
+                      WHERE ic.object_id = ix.object_id AND ic.index_id = ix.index_id AND ic.column_id = fkc.parent_column_id
+                        AND ic.key_ordinal BETWEEN 1 AND (SELECT COUNT(*) FROM sys.foreign_key_columns AS k
+                                                          WHERE k.constraint_object_id = fk.object_id))));
+END TRY
+BEGIN CATCH
+    SET @err = ERROR_MESSAGE();
+END CATCH;
+SELECT @err;
+SELECT fk_name, schema_name, table_name, ref_schema, ref_table, ISNULL(rows, 0), ISNULL(cols, N'')
+FROM @fk ORDER BY rows DESC, schema_name, table_name, fk_name;`)
+
+// ReadUnindexedForeignKeys reads, inside a database, the foreign keys that reference the tables and
+// whose columns lead no index of the referencing table (unindexedForeignKeysQuery). SELECTs only.
+func ReadUnindexedForeignKeys(ctx context.Context, db *sql.DB, database string, tables []domain.ShowplanObject) ([]domain.UnindexedForeignKeyFact, error) {
+	rows, err := db.QueryContext(ctx, Tag(safeSession+"SET QUOTED_IDENTIFIER ON; EXEC "+domain.QuoteName(database)+".sys.sp_executesql @stmt, N'@tables nvarchar(max)', @tables = @tables;"),
+		sql.Named("stmt", unindexedForeignKeysQuery), sql.Named("tables", tablesXML(tables)))
+	if err != nil {
+		return nil, friendlyError(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, friendlyError(err)
+		}
+		return nil, errors.New("SQL Server returned nothing about the foreign keys")
+	}
+	var fkErr sql.NullString
+	if err := rows.Scan(&fkErr); err != nil {
+		return nil, err
+	}
+	if fkErr.String != "" {
+		return nil, errors.New(fkErr.String)
+	}
+	if err := nextResultSet(rows, "foreign keys"); err != nil {
+		return nil, err
+	}
+	out := []domain.UnindexedForeignKeyFact{}
+	for rows.Next() {
+		var k domain.UnindexedForeignKeyFact
+		var cols string
+		if err := rows.Scan(&k.Name, &k.Schema, &k.Table, &k.RefSchema, &k.RefTable, &k.Rows, &cols); err != nil {
+			return nil, err
+		}
+		if k.Columns, err = domain.SplitColumnList(cols); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, friendlyErrOrNil(rows.Err())
 }

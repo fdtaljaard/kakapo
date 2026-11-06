@@ -517,6 +517,25 @@ func createIndexGuards(f IndexFacts, p indexPlan) []IndexGuard {
 				out = append(out, IndexGuard{"COLUMN", fmt.Sprintf("Column %s is a %s column and cannot be an index key: include it instead.", k, typeText(c)), true})
 			}
 		}
+		// Included columns (Microsoft Learn, "Create indexes with included columns"): text, ntext and
+		// image cannot be included; a (max) or xml column can, but the index then keeps its own copy
+		// of every value, so it can grow as large as the table.
+		for _, inc := range p.included {
+			c, ok := f.column(inc)
+			if !ok {
+				continue
+			}
+			switch t := strings.ToLower(c.Type); {
+			case t == "text", t == "ntext", t == "image":
+				out = append(out, IndexGuard{"COLUMN", fmt.Sprintf("Column %s is a %s column: SQL Server cannot include it in an index. Leave it out of the included columns.", inc, typeText(c)), true})
+			case c.MaxLength < 0, t == "xml":
+				rows := ""
+				if f.Rows > 0 {
+					rows = " (" + n0int(f.Rows) + " rows)"
+				}
+				out = append(out, IndexGuard{"COLUMN", fmt.Sprintf("Column %s is a %s column: the index keeps its own copy of it for every row of the table%s, so the index can grow as large as the table and every change to the column is written twice. Leave it out of the included columns unless the query cannot do without it.", inc, typeText(c), rows), false})
+			}
+		}
 		if n := keyBytes(f, p.keys); n > 1700 {
 			out = append(out, IndexGuard{"COLUMN", fmt.Sprintf("The key columns can hold up to %s bytes, over SQL Server's 1,700-byte limit: a row with that much in them will fail to insert or update.", n0int(int64(n))), false})
 		}
@@ -581,7 +600,7 @@ func createIndexGuards(f IndexFacts, p indexPlan) []IndexGuard {
 }
 
 func typeText(c TableColumn) string {
-	if c.MaxLength < 0 {
+	if t := strings.ToLower(c.Type); c.MaxLength < 0 && (t == "varchar" || t == "nvarchar" || t == "varbinary") {
 		return c.Type + "(max)"
 	}
 	return c.Type
@@ -623,11 +642,10 @@ func indexPermission(table string) string {
 
 // Warnings of the create-index fix besides its guards.
 const (
-	warnIndexOffline = "Creating an index locks the table while it builds (not online on this edition): users who write to it wait until it finishes, so apply it in a quiet moment."
-	warnIndexOnline  = "Built online: users keep working, but it still needs a short lock at the start and at the end."
-	warnIndexLarge   = "Test on the sandbox first when the table is large: the build time and the effect on the queries show there."
-	warnIndexLock    = "If the table is busy, kakapo gives up after 10 seconds of waiting for its lock rather than queue in front of users; then try again in a quieter moment."
-	warnIndexWrites  = "Each index slows down every insert, update and delete on the table a little; drop it again (the change log holds the DROP INDEX) if it does not help."
+	warnIndexOnline = "Built online: users keep working, but it still needs a short lock at the start and at the end."
+	warnIndexLarge  = "Test on the sandbox first when the table is large: the build time and the effect on the queries show there."
+	warnIndexLock   = "If the table is busy, kakapo gives up after 10 seconds of waiting for its lock rather than queue in front of users; then try again in a quieter moment."
+	warnIndexWrites = "Each index slows down every insert, update and delete on the table a little; drop it again (the change log holds the DROP INDEX) if it does not help."
 )
 
 // largeTable says when "test on the sandbox first" is said: a million rows or an index over 1 GB.
@@ -691,7 +709,7 @@ func BuildCreateIndexFix(f IndexFacts, s CreateIndexSpec, options map[string]str
 	if p.online {
 		pv.Warnings = append(pv.Warnings, warnIndexOnline)
 	} else {
-		pv.Warnings = append(pv.Warnings, warnIndexOffline)
+		pv.Warnings = append(pv.Warnings, offlineIndexWarning(f))
 	}
 	if largeTable(f, p) {
 		pv.Warnings = append(pv.Warnings, warnIndexLarge)
@@ -840,4 +858,36 @@ func DropIndexReadBack(f IndexFacts, name string, stillThere bool) (after string
 		return fmt.Sprintf("%s is still on %s", name, f.TableName()), false
 	}
 	return fmt.Sprintf("%s is gone from %s", name, f.TableName()), true
+}
+
+// offlineIndexWarning says what an offline build (ONLINE = OFF) does to the table, with its size:
+// it holds a shared lock on the table while it builds, so reads go on and inserts, updates and
+// deletes wait (Microsoft Learn, "How online index operations work" and "Guidelines for online index
+// operations"). Online index operations are an Enterprise feature ("Editions and supported features
+// of SQL Server"), so Standard, Web and Express always build offline.
+func offlineIndexWarning(f IndexFacts) string {
+	size := ""
+	switch {
+	case f.Rows > 0 && f.DataMB > 0:
+		size = fmt.Sprintf(" (%s rows, %s)", n0int(f.Rows), mbText(int64(math.Max(1, math.Round(f.DataMB)))))
+	case f.Rows > 0:
+		size = fmt.Sprintf(" (%s rows)", n0int(f.Rows))
+	}
+	how := "Built offline (ONLINE = OFF)"
+	if !OnlineIndexEdition(f.EngineEdition) {
+		how = "On " + editionWords(f.EngineEdition) + " an index is built offline (ONLINE = OFF)"
+	}
+	return fmt.Sprintf("%s: while it builds, %s%s is locked against inserts, updates and deletes, and users who write to it wait until it finishes (reads go on). Apply it in a quiet moment.",
+		how, f.TableName(), size)
+}
+
+// editionWords names the edition family of SERVERPROPERTY('EngineEdition').
+func editionWords(engineEdition int) string {
+	switch engineEdition {
+	case 2:
+		return "Standard or Web edition"
+	case 4:
+		return "Express edition"
+	}
+	return "this edition"
 }

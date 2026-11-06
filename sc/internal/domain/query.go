@@ -72,10 +72,29 @@ type QueryFacts struct {
 	TablesError string
 	Tables      []QueryTableFact
 
+	// The foreign keys that reference a table the plans delete from or update and whose referencing
+	// columns lead no index (collect.ReadUnindexedForeignKeys); ForeignKeysError says why they could
+	// not be read.
+	UnindexedForeignKeys []UnindexedForeignKeyFact
+	ForeignKeysError     string
+
 	// The tables that only grow that nothing cleans up (GrowingCandidates, read beside the query):
 	// the page says "archive before an index" when the query reads much of one. nil when they or
 	// kakapo's archive jobs could not be read.
 	GrowingCandidates []GrowingTable
+}
+
+// UnindexedForeignKeyFact is an enabled foreign key of Schema.Table (the referencing table, with its
+// rows) on Columns, in the key's order, to RefSchema.RefTable, where no enabled index of the
+// referencing table has those columns, in any order, as its first key columns.
+type UnindexedForeignKeyFact struct {
+	Name      string
+	Schema    string
+	Table     string
+	Columns   []string
+	RefSchema string
+	RefTable  string
+	Rows      int64
 }
 
 // QueryStorePlanFact is one plan of the query in Query Store, with its runtime statistics over the
@@ -181,25 +200,26 @@ type QueryStatUpdateFact struct {
 
 // QueryDetail is the query's page (GET .../queries/{hash}).
 type QueryDetail struct {
-	Database        string          `json:"database"`
-	QueryHash       string          `json:"queryHash"`
-	ServerName      string          `json:"serverName"`
-	CapturedAt      time.Time       `json:"capturedAt"`
-	Text            string          `json:"text"`
-	ObjectName      string          `json:"objectName"` // "" for ad hoc
-	Source          string          `json:"source"`     // query-store, plan-cache, none
-	QueryStoreState string          `json:"queryStoreState"`
-	Summary         QuerySummary    `json:"summary"`
-	Verdict         *QueryVerdict   `json:"verdict"` // phase 5j; nil when it ran one way all week
-	Events          []QueryEvent    `json:"events"`  // plans begun and statistics updated in the window, oldest first
-	Explain         []ExplainLine   `json:"explain"`
-	Plans           []QueryPlan     `json:"plans"`
-	History         []QueryHour     `json:"history"`
-	Waits           []QueryWait     `json:"waits"`
-	Statements      []ProcStatement `json:"statements"`
-	Tables          []QueryTable    `json:"tables"`
-	Notes           []string        `json:"notes"` // what could not be read, and why
-	Handover        string          `json:"handover"`
+	Database         string          `json:"database"`
+	QueryHash        string          `json:"queryHash"`
+	ServerName       string          `json:"serverName"`
+	CapturedAt       time.Time       `json:"capturedAt"`
+	UTCOffsetMinutes int             `json:"utcOffsetMinutes"` // the server's offset: the page says every time on the server's clock
+	Text             string          `json:"text"`
+	ObjectName       string          `json:"objectName"` // "" for ad hoc
+	Source           string          `json:"source"`     // query-store, plan-cache, none
+	QueryStoreState  string          `json:"queryStoreState"`
+	Summary          QuerySummary    `json:"summary"`
+	Verdict          *QueryVerdict   `json:"verdict"` // phase 5j; nil when it ran one way all week
+	Events           []QueryEvent    `json:"events"`  // plans begun and statistics updated in the window, oldest first
+	Explain          []ExplainLine   `json:"explain"`
+	Plans            []QueryPlan     `json:"plans"`
+	History          []QueryHour     `json:"history"`
+	Waits            []QueryWait     `json:"waits"`
+	Statements       []ProcStatement `json:"statements"`
+	Tables           []QueryTable    `json:"tables"`
+	Notes            []string        `json:"notes"` // what could not be read, and why
+	Handover         string          `json:"handover"`
 }
 
 // QuerySummary is the query's numbers over the window, every plan together.
@@ -233,8 +253,9 @@ type QueryPlan struct {
 	PlanID             int64                `json:"planId"`  // 0 when only in the plan cache
 	QueryID            int64                `json:"queryId"` // Query Store's query id; 0 in the plan cache
 	PlanHash           string               `json:"planHash"`
-	PlanHandle         string               `json:"planHandle"` // "" when not in the plan cache
-	Source             string               `json:"source"`     // query-store, plan-cache
+	PlanHandle         string               `json:"planHandle"`             // "" when not in the plan cache
+	CachedCopies       int                  `json:"cachedCopies,omitempty"` // a plan only in the plan cache: its entries there (one per set of SET options); 0 otherwise
+	Source             string               `json:"source"`                 // query-store, plan-cache
 	Forced             bool                 `json:"forced"`
 	Active             bool                 `json:"active"`  // the plan used most recently
 	Fastest            bool                 `json:"fastest"` // the lowest average duration, of two or more that ran
@@ -348,13 +369,26 @@ type Showplan struct {
 	Parameters     []QueryPlanParameter
 	MissingIndexes []QueryMissingIndex
 	Objects        []ShowplanObject
+	// Modified are the tables a DELETE or UPDATE operator changes (the <Object> right under its
+	// <Update> or <SimpleUpdate>, the RelOp's LogicalOp Delete or Update), once per table and kind;
+	// Read are the tables the plan reads, every other <Object>, once per table (Index left empty).
+	// A foreign key check is a read of the referencing table in the plan of a DELETE or of an UPDATE
+	// of the referenced key (seen live: an UPDATE of other columns reads no referencing table).
+	Modified []ShowplanModified
+	Read     []ShowplanObject
+}
+
+// ShowplanModified is a table a plan deletes from or updates: Kind "DELETE" or "UPDATE".
+type ShowplanModified struct {
+	Kind string
+	ShowplanObject
 }
 
 // ParseShowplan reads a plan's XML as a stream (plans can be large): <ParameterList>'s
 // ColumnReference attributes, <MissingIndexes> (group impact, table, columns by usage) and every
 // <Object>. A plan that does not parse to its end gives what was read up to the error.
 func ParseShowplan(plan string) Showplan {
-	out := Showplan{Parameters: []QueryPlanParameter{}, MissingIndexes: []QueryMissingIndex{}, Objects: []ShowplanObject{}}
+	out := Showplan{Parameters: []QueryPlanParameter{}, MissingIndexes: []QueryMissingIndex{}, Objects: []ShowplanObject{}, Modified: []ShowplanModified{}, Read: []ShowplanObject{}}
 	if strings.TrimSpace(plan) == "" {
 		return out
 	}
@@ -370,6 +404,9 @@ func ParseShowplan(plan string) Showplan {
 		params  = map[string]bool{}
 		mis     = map[string]bool{}
 		objects = map[string]bool{}
+		relOps  []string // the LogicalOp of each open <RelOp>
+		read    = map[string]bool{}
+		changed = map[string]bool{}
 	)
 	attr := func(e xml.StartElement, name string) string {
 		for _, a := range e.Attr {
@@ -393,6 +430,8 @@ func ParseShowplan(plan string) Showplan {
 			name := t.Name.Local
 			stack = append(stack, name)
 			switch name {
+			case "RelOp":
+				relOps = append(relOps, attr(t, "LogicalOp"))
 			case "ColumnReference":
 				if parent != "ParameterList" {
 					continue
@@ -423,10 +462,35 @@ func ParseShowplan(plan string) Showplan {
 					objects[key] = true
 					out.Objects = append(out.Objects, o)
 				}
+				if o.Table == "" {
+					continue
+				}
+				table := ShowplanObject{Database: o.Database, Schema: o.Schema, Table: o.Table}
+				tkey := strings.ToLower(o.Database + "|" + o.Schema + "|" + o.Table)
+				logical := ""
+				if len(relOps) > 0 {
+					logical = relOps[len(relOps)-1]
+				}
+				switch {
+				case (parent == "Update" || parent == "SimpleUpdate") && (logical == "Delete" || logical == "Update"):
+					kind := strings.ToUpper(logical)
+					if !changed[kind+"|"+tkey] {
+						changed[kind+"|"+tkey] = true
+						out.Modified = append(out.Modified, ShowplanModified{Kind: kind, ShowplanObject: table})
+					}
+				case parent == "Update" || parent == "SimpleUpdate":
+					// an insert's target is neither a change of a key nor a read
+				case !read[tkey]:
+					read[tkey] = true
+					out.Read = append(out.Read, table)
+				}
 			}
 		case xml.EndElement:
 			if len(stack) > 0 {
 				stack = stack[:len(stack)-1]
+			}
+			if t.Name.Local == "RelOp" && len(relOps) > 0 {
+				relOps = relOps[:len(relOps)-1]
 			}
 			if t.Name.Local == "MissingIndex" && current != nil {
 				current.Equality = strings.Join(cols["EQUALITY"], ", ")
@@ -492,6 +556,40 @@ func ShowplanTables(database string, plans ...string) []ShowplanObject {
 		}
 	}
 	return out
+}
+
+// ShowplanDMLTargets are the tables of this database the plans delete from or update, once per
+// table and kind, as ShowplanTables names them (Database this database).
+func ShowplanDMLTargets(database string, plans ...string) []ShowplanModified {
+	out := []ShowplanModified{}
+	seen := map[string]bool{}
+	for _, p := range plans {
+		sp := ParseShowplan(p)
+		here := qPlanDatabase(database, sp.Objects)
+		for _, m := range sp.Modified {
+			key := strings.ToLower(m.Kind + "|" + m.Schema + "|" + m.Table)
+			if !qShowplanTableOf(here, m.ShowplanObject) || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, ShowplanModified{Kind: m.Kind, ShowplanObject: ShowplanObject{Database: database, Schema: m.Schema, Table: m.Table}})
+		}
+	}
+	return out
+}
+
+// qPlansRead says whether the plans read schema.table of this database.
+func qPlansRead(database, schema, table string, plans []string) bool {
+	for _, p := range plans {
+		sp := ParseShowplan(p)
+		here := qPlanDatabase(database, sp.Objects)
+		for _, o := range sp.Read {
+			if qShowplanTableOf(here, o) && strings.EqualFold(o.Schema, schema) && strings.EqualFold(o.Table, table) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // qPlanDatabase is the name this database has in a plan's objects: its own name when one object
@@ -602,7 +700,7 @@ const (
 // database fixes are not offered.
 func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 	d := QueryDetail{
-		Database: f.Database, QueryHash: f.QueryHash, ServerName: f.ServerName, CapturedAt: f.ServerNow,
+		Database: f.Database, QueryHash: f.QueryHash, ServerName: f.ServerName, CapturedAt: f.ServerNow, UTCOffsetMinutes: f.UTCOffsetMinutes,
 		Text: f.Text, ObjectName: f.ObjectName, QueryStoreState: f.QueryStoreState,
 		Explain: []ExplainLine{}, Plans: []QueryPlan{}, History: []QueryHour{}, Waits: []QueryWait{},
 		Statements: []ProcStatement{}, Tables: []QueryTable{}, Notes: []string{},
@@ -610,11 +708,12 @@ func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 	qsOn := qQueryStoreOn(f.QueryStoreState)
 
 	// Plans: Query Store's, each with its plan handle when the plan cache holds the same plan;
-	// then the cached plans Query Store does not have.
-	cachedByHash := map[string]*CachedPlanFact{}
-	for i := range f.CachedPlans {
-		c := &f.CachedPlans[i]
-		if _, ok := cachedByHash[strings.ToUpper(c.PlanHash)]; !ok && c.PlanHash != "" {
+	// then the cached plans Query Store does not have. The cache's entries of one plan hash are one
+	// plan (qMergeCachedPlans).
+	cached := qMergeCachedPlans(f.CachedPlans)
+	cachedByHash := map[string]cachedPlan{}
+	for _, c := range cached {
+		if c.PlanHash != "" {
 			cachedByHash[strings.ToUpper(c.PlanHash)] = c
 		}
 	}
@@ -631,11 +730,13 @@ func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 		}
 		d.Plans = append(d.Plans, qp)
 	}
-	for _, c := range f.CachedPlans {
+	for _, c := range cached {
 		if usedCache[c.PlanHandle] {
 			continue
 		}
-		d.Plans = append(d.Plans, qQueryPlanFromCache(c))
+		qp := qQueryPlanFromCache(c.CachedPlanFact)
+		qp.CachedCopies = c.copies
+		d.Plans = append(d.Plans, qp)
 	}
 	switch {
 	case len(f.Plans) > 0:
@@ -738,7 +839,7 @@ func BuildQueryDetail(f QueryFacts, canChange bool) QueryDetail {
 
 	for _, n := range []struct{ what, err string }{
 		{"Query Store", f.QueryStoreError}, {"History", f.HistoryError}, {"Waits", f.WaitsError},
-		{"Plan cache", f.PlanCacheError}, {"Statements of the procedure", f.StatementsError}, {"Tables", f.TablesError},
+		{"Plan cache", f.PlanCacheError}, {"Statements of the procedure", f.StatementsError}, {"Tables", f.TablesError}, {"Foreign keys", f.ForeignKeysError},
 	} {
 		if n.err != "" {
 			d.Notes = append(d.Notes, n.what+": could not be read: "+n.err)
@@ -807,6 +908,57 @@ func qQueryPlanFromCache(c CachedPlanFact) QueryPlan {
 		PlanTooBig: c.PlanChars > qPlanLimitChars, Warnings: []string{}, Parameters: []QueryPlanParameter{},
 		MissingIndexes: []QueryMissingIndex{}, Actions: []QueryAction{},
 	}
+}
+
+// cachedPlan is one plan of the plan cache: its entries of one plan hash taken together.
+type cachedPlan struct {
+	CachedPlanFact
+	copies int // the cache entries it was read from
+}
+
+// qMergeCachedPlans takes the plan cache's entries of one plan hash as one plan. SQL Server caches
+// a plan once for each set of SET options its connections use (Microsoft Learn, "Execution plan
+// caching and reuse": the SET options are part of a plan's cache key; sys.dm_exec_plan_attributes
+// set_options), so two entries with the same plan hash are the same plan cached twice, not two
+// plans: their runs and totals are added, the maxima and first and last times kept, and the
+// handle, text and plan XML are the most recently used entry's that has its XML. An entry without a
+// plan hash stays on its own. The order is the facts' (most recently used first).
+func qMergeCachedPlans(cs []CachedPlanFact) []cachedPlan {
+	out := []cachedPlan{}
+	at := map[string]int{}
+	for _, c := range cs {
+		key := strings.ToUpper(c.PlanHash)
+		i, ok := at[key]
+		if !ok || key == "" {
+			if key != "" {
+				at[key] = len(out)
+			}
+			out = append(out, cachedPlan{CachedPlanFact: c, copies: 1})
+			continue
+		}
+		m := &out[i]
+		m.copies++
+		m.Runs += c.Runs
+		m.CPU += c.CPU
+		m.Duration += c.Duration
+		m.Reads += c.Reads
+		m.MaxCPU, m.MaxDuration, m.MaxReads = max(m.MaxCPU, c.MaxCPU), max(m.MaxDuration, c.MaxDuration), max(m.MaxReads, c.MaxReads)
+		m.MinReads = min(m.MinReads, c.MinReads)
+		if c.Created.Before(m.Created) {
+			m.Created = c.Created
+		}
+		newer := c.LastRun.After(m.LastRun)
+		if newer {
+			m.LastRun = c.LastRun
+		}
+		if m.Plan == "" && c.Plan != "" || newer && c.Plan != "" {
+			m.PlanHandle, m.Plan, m.PlanChars = c.PlanHandle, c.Plan, c.PlanChars
+			if c.Text != "" {
+				m.Text = c.Text
+			}
+		}
+	}
+	return out
 }
 
 // qPlanLimitChars is the plan size kakapo still reads for warnings (2 MB of text), as collect
@@ -1198,6 +1350,11 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 		add(archiveFirstDo(archive, share), a)
 	}
 
+	// Foreign keys without an index on the referencing side (qForeignKeyLines).
+	for _, l := range qForeignKeyLines(f, d, canChange) {
+		add(l.Text, l.Action)
+	}
+
 	// The plans.
 	var active, fastest, forced *QueryPlan
 	ran := 0
@@ -1266,6 +1423,10 @@ func qExplainLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
 		add(fmt.Sprintf("%s plans of similar speed: the plan is not the problem; the cost is in the query itself or its indexes.", qCountWord(ran)), nil)
 	case ran == 1 && d.Source == QueryDetailFromQueryStore:
 		add("One plan in 7 days: the plan is stable, so the cost is in the query itself or its indexes.", nil)
+	}
+	if active != nil && active.CachedCopies > 1 {
+		add(fmt.Sprintf("The plan in use is one plan cached %s, once for each set of SET options its connections use (ARITHABORT, ANSI_NULLS and the like): its runs are counted together.",
+			timesWord(active.CachedCopies)), nil)
 	}
 	if forced != nil {
 		text := fmt.Sprintf("Plan %d is forced: SQL Server must use it.", forced.PlanID)
@@ -1518,7 +1679,9 @@ func QueryHandover(d QueryDetail) string {
 		b.WriteString("Procedure: " + d.ObjectName + "\n")
 	}
 	if !d.CapturedAt.IsZero() {
-		b.WriteString("Read at " + d.CapturedAt.UTC().Format("2006-01-02 15:04") + " UTC\n")
+		// One clock for the whole block, said once: the server's, as the sentences say their times.
+		at := d.CapturedAt.UTC().Add(time.Duration(d.UTCOffsetMinutes) * time.Minute)
+		b.WriteString("Read at " + at.Format("2006-01-02 15:04") + " server time (" + utcOffsetText(d.UTCOffsetMinutes) + "); every time here is the server's clock\n")
 	}
 
 	if len(d.Explain) > 0 {
@@ -1545,6 +1708,9 @@ func QueryHandover(d QueryDetail) string {
 			}
 			if p.Fastest {
 				marks = append(marks, "fastest")
+			}
+			if p.CachedCopies > 1 {
+				marks = append(marks, "one plan cached "+timesWord(p.CachedCopies))
 			}
 			name := qPlanName(p)
 			if p.PlanID == 0 {
@@ -1604,4 +1770,85 @@ func qIncludeText(included string) string {
 		return ""
 	}
 	return " include " + qUnbracketList(included)
+}
+
+// utcOffsetText is the server's offset as "UTC+2", "UTC+5:30", "UTC-3" or "UTC".
+func utcOffsetText(minutes int) string {
+	if minutes == 0 {
+		return "UTC"
+	}
+	sign := "+"
+	if minutes < 0 {
+		sign, minutes = "-", -minutes
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("UTC%s%d", sign, minutes/60)
+	}
+	return fmt.Sprintf("UTC%s%d:%02d", sign, minutes/60, minutes%60)
+}
+
+// queryFKMinRows is the referencing table's size from which a foreign key without an index is
+// said (PerformanceTriage.sql IDX14: tables of 10,000 rows or more).
+const queryFKMinRows = 10000
+
+// queryFKLinesMax is how many foreign keys the page names, the largest referencing tables first.
+const queryFKLinesMax = 5
+
+// qForeignKeyLines say, for a query that deletes from a table or updates its key, each foreign key
+// that references the table where the referencing columns lead no index: to check the key, SQL
+// Server reads the whole referencing table for every statement (Microsoft Learn, "Primary and
+// foreign key constraints": an index on the foreign key columns serves the check when the
+// referenced row is deleted or its key changed; PerformanceTriage.sql IDX14, from sp_BlitzIndex
+// check 72). Only for a key the plans really check, a read of the referencing table in a plan of
+// the DELETE or UPDATE, and a referencing table of queryFKMinRows or more. Each line ends in the
+// create-index fix on the key's columns when the database can be changed.
+func qForeignKeyLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine {
+	out := []ExplainLine{}
+	if d.Source == QueryDetailFromNothing || len(f.UnindexedForeignKeys) == 0 {
+		return out
+	}
+	plans := qPlanXMLs(f, d.Plans)
+	kinds := map[string]string{}
+	for _, m := range ShowplanDMLTargets(f.Database, plans...) {
+		key := strings.ToLower(m.Schema + "." + m.Table)
+		if kinds[key] == "" || m.Kind == "DELETE" {
+			kinds[key] = m.Kind
+		}
+	}
+	fks := append([]UnindexedForeignKeyFact{}, f.UnindexedForeignKeys...)
+	sort.SliceStable(fks, func(i, j int) bool { return fks[i].Rows > fks[j].Rows })
+	for _, k := range fks {
+		kind := kinds[strings.ToLower(k.RefSchema+"."+k.RefTable)]
+		// An UPDATE reads its own table whether or not it changes the key, so a self-reference is said
+		// for a DELETE only.
+		self := strings.EqualFold(k.Schema, k.RefSchema) && strings.EqualFold(k.Table, k.RefTable)
+		if kind == "UPDATE" && self {
+			continue
+		}
+		if kind == "" || k.Rows < queryFKMinRows || len(k.Columns) == 0 || !qPlansRead(f.Database, k.Schema, k.Table, plans) {
+			continue
+		}
+		if len(out) == queryFKLinesMax {
+			break
+		}
+		ref, table, cols := k.RefSchema+"."+k.RefTable, k.Schema+"."+k.Table, plainList(k.Columns)
+		doing := "Each delete from " + ref
+		if kind == "UPDATE" {
+			doing = "Each change to the key of " + ref
+		}
+		lead := "starts with " + cols
+		if len(k.Columns) > 1 {
+			lead = "starts with its columns " + cols
+		}
+		text := fmt.Sprintf("%s checks foreign key %s, and %s (%s) has no index that %s, so SQL Server reads the whole of %s to check it. An index on %s (%s) lets it seek instead.",
+			doing, k.Name, table, plural(k.Rows, "row", "rows"), lead, table, table, cols)
+		var a *QueryAction
+		if canChange {
+			opts := map[string]string{"source": "foreign-key", OptionTable: QuoteName(f.Database) + "." + QuoteName(k.Schema) + "." + QuoteName(k.Table),
+				OptionEquality: bracketList(k.Columns), OptionInequality: "", OptionIncluded: ""}
+			a = &QueryAction{FixID: FixCreateIndex, Label: "Create index", Title: "Create an index for foreign key " + k.Name, Options: opts}
+		}
+		out = append(out, ExplainLine{Text: text, Action: a})
+	}
+	return out
 }

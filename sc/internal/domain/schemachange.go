@@ -231,10 +231,15 @@ func BuildSeenChanges(serverID int64, facts []SchemaChangeFact, since time.Time)
 	}
 	out := []Change{}
 	for _, g := range groups {
-		if len(g.events) <= SeenGroupMax {
-			for _, x := range g.events {
+		if rows := foldRepeatAlters(g.events); len(rows) <= SeenGroupMax {
+			for _, r := range rows {
+				x := r.last
+				line := x.line()
+				if r.times > 1 {
+					line += " " + timesWord(r.times)
+				}
 				out = append(out, Change{ServerID: serverID, Database: x.Database, ChangedAt: x.At.UTC(), Object: orQ(x.object()),
-					ChangeType: schemaObjectTypes[x.ObjectType].changeType, Description: x.line() + seenBy(x.Login, []string{x.Host}, x.Program),
+					ChangeType: schemaObjectTypes[x.ObjectType].changeType, Description: line + seenBy(x.Login, r.hosts, x.Program),
 					Result: ChangeSeenOnServer})
 			}
 			continue
@@ -243,6 +248,45 @@ func BuildSeenChanges(serverID int64, facts []SchemaChangeFact, since time.Time)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ChangedAt.Before(out[j].ChangedAt) })
 	return out
+}
+
+// seenRow is one change row of a person-hour: an event, or the same object altered more than once
+// (an F5 pressed twice), at its last alter.
+type seenRow struct {
+	last  SchemaChangeFact
+	times int
+	hosts []string
+}
+
+// foldRepeatAlters folds the alters of the same object within one person-hour into one row, at
+// the last of them; creates and drops stay one row each. The events come in time order.
+func foldRepeatAlters(events []SchemaChangeFact) []seenRow {
+	out := []seenRow{}
+	altered := map[string]int{}
+	for _, x := range events {
+		key := fmt.Sprint(x.ObjectType) + "\x00" + strings.ToLower(x.object())
+		if i, ok := altered[key]; ok && x.EventClass == TraceObjectAltered {
+			r := &out[i]
+			r.last, r.times = x, r.times+1
+			if h := strings.TrimSpace(x.Host); h != "" && !containsFold(r.hosts, h) {
+				r.hosts = append(r.hosts, h)
+			}
+			continue
+		}
+		if x.EventClass == TraceObjectAltered {
+			altered[key] = len(out)
+		}
+		out = append(out, seenRow{last: x, times: 1, hosts: []string{x.Host}})
+	}
+	return out
+}
+
+// timesWord is "twice", "3 times".
+func timesWord(n int) string {
+	if n == 2 {
+		return "twice"
+	}
+	return fmt.Sprintf("%d times", n)
 }
 
 // deploy is a person-hour of more than SeenGroupMax events as one row: "Deploy by DOMAIN\build on

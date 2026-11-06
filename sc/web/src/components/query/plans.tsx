@@ -2,11 +2,10 @@ import { Download, TriangleAlert } from "lucide-react"
 
 import type { QueryAction, QueryDetail, QueryPlan } from "@/api-queries"
 import { ActionButton } from "@/components/query/action-button"
-import { formatMs, formatWhole, plainColumns } from "@/components/query/format"
+import { formatMs, formatWhole, plainColumns, serverWhen } from "@/components/query/format"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { formatWhen } from "@/lib/format"
 
 function planLabel(p: QueryPlan): string {
   return p.planId > 0 ? `Plan ${p.planId}` : "Cached plan"
@@ -19,6 +18,9 @@ function PlanBadges({ plan: p }: { plan: QueryPlan }) {
       {p.forced && <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400">forced</Badge>}
       {p.fastest && <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">fastest</Badge>}
       {p.source === "plan-cache" && <Badge variant="outline">plan cache only</Badge>}
+      {(p.cachedCopies ?? 0) > 1 && (
+        <Badge variant="outline">one plan, cached {p.cachedCopies === 2 ? "twice" : `${p.cachedCopies} times`}</Badge>
+      )}
     </span>
   )
 }
@@ -105,7 +107,7 @@ export function PlansTable({
               </TableCell>
               <TableCell className="hidden sm:table-cell align-top text-right tabular-nums">{formatWhole(p.avgReads)}</TableCell>
               <TableCell className="hidden lg:table-cell align-top whitespace-nowrap">
-                {p.lastRun ? formatWhen(p.lastRun, "row") : "—"}
+                {p.lastRun ? serverWhen(detail, p.lastRun, "row") : "—"}
               </TableCell>
             </TableRow>
           ))}

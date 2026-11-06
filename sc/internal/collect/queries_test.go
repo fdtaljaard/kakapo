@@ -13,7 +13,7 @@ import (
 
 var queryPageQueries = map[string]string{
 	"query store detail": queryDetailStoreQuery, "plan cache detail": queryDetailCacheQuery, "tables": queryTablesQuery,
-	"plan forcing": planForcingQuery, "cached plan": cachedPlanQuery,
+	"plan forcing": planForcingQuery, "cached plan": cachedPlanQuery, "unindexed foreign keys": unindexedForeignKeysQuery,
 }
 
 // The query page's reads are tagged (docs/phase3f-contract.md, item 2) and SELECTs only: no
@@ -92,4 +92,8 @@ func TestQueryDetailLive(t *testing.T) {
 	t.Logf("state %s, %d plans, %d cached, %d hours, %d waits, %d statements, %d tables; errors %q %q %q %q %q %q",
 		f.QueryStoreState, len(f.Plans), len(f.CachedPlans), len(f.History), len(f.Waits), len(f.Statements), len(f.Tables),
 		f.QueryStoreError, f.HistoryError, f.WaitsError, f.PlanCacheError, f.StatementsError, f.TablesError)
+	t.Logf("unindexed foreign keys %+v (error %q)", f.UnindexedForeignKeys, f.ForeignKeysError)
+	for _, l := range domain.BuildQueryDetail(f, true).Explain {
+		t.Logf("- %s", l.Text)
+	}
 }
