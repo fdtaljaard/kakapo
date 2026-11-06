@@ -44,7 +44,7 @@ func main() {
 	}
 }
 
-func run(port int, dataDir string, openWindow bool) error {
+func run(port int, dataDir string, openWindow bool) (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -54,6 +54,13 @@ func run(port int, dataDir string, openWindow bool) error {
 		defer f.Close()
 		log.SetOutput(io.MultiWriter(os.Stderr, f))
 	}
+	// Why it stopped, written while the log file is still open (main's log.Fatal comes after the
+	// file is closed, so a start that failed left no reason in the log).
+	defer func() {
+		if err != nil {
+			log.Printf("stopped: %v", err)
+		}
+	}()
 	api.Version = version
 	log.Printf("kakapo %s starting (pid %d)", version, os.Getpid())
 

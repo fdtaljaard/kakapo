@@ -1,14 +1,13 @@
-import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { ChevronRight, Database, Loader2, Plus, XCircle } from "lucide-react"
 
-import { api, type Server } from "@/api"
+import { type Server } from "@/api"
 import { PageShell } from "@/components/page-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useServers } from "@/hooks/use-servers"
-import { formatWhen, plural } from "@/lib/format"
+import { formatWhen } from "@/lib/format"
 import { instancePath, type FromHome } from "@/lib/paths"
 import { SetupScreen } from "@/screens/setup"
 
@@ -53,8 +52,8 @@ export function HomeScreen() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Database className="size-5" />
-          <h1 className="text-lg font-semibold">kakapo</h1>
-          <span className="text-sm text-muted-foreground">{plural(load.servers.length, "instance", "instances")}</span>
+          <h1 className="text-lg font-semibold">Instances</h1>
+          <span className="text-sm text-muted-foreground">{load.servers.length}</span>
         </div>
         <Button asChild>
           <Link to="/servers/new">
@@ -68,22 +67,8 @@ export function HomeScreen() {
           <ServerTile key={s.id} server={s} />
         ))}
       </div>
-      <BuildStamp />
     </PageShell>
   )
-}
-
-// Which build is running, so "am I on the new version" is never a guess.
-function BuildStamp() {
-  const [version, setVersion] = useState<string | null>(null)
-  useEffect(() => {
-    api
-      .health()
-      .then((h) => setVersion(h.version))
-      .catch(() => setVersion(null))
-  }, [])
-  if (!version) return null
-  return <p className="text-xs text-muted-foreground">kakapo build {version}</p>
 }
 
 function ServerTile({ server }: { server: Server }) {
