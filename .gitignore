@@ -1,0 +1,8 @@
+# third-party and client reference material, kept beside the code, never committed
+/research/
+
+# client case files and data copied in for review (the repository is public)
+/db/
+
+# Claude Code's local worktrees
+/.claude/
