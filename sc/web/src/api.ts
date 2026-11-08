@@ -480,7 +480,7 @@ export interface CardDetail {
 // Phase 5n: the Design card's fold (docs/phase5n-contract.md, section 3): foreign keys without an index on
 // tables of 10,000 rows or more with no delete seen in the window, largest first, one line each, no button.
 export interface DesignForeignKeys {
-  heading: string // "Would cost work if rows were deleted", or "Too early to tell" while the window is 7 days or less
+  heading: string // "Missing indexes on foreign keys, not needed yet", or "…, too early to tell" while the window is 7 days or less
   tooEarly: boolean
   window: string // "the restart on 1 Oct"; "" when not read
   keys: { name: string; table: string; rows: number; parent: string; columns: string[]; text: string }[]

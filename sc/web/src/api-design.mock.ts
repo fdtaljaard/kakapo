@@ -37,7 +37,7 @@ function designCard(over: Partial<Card>): Card {
 const foldKeys = [
   { name: "FK_Notes_Customers", table: "Notes", rows: 412_980, parent: "Customers", columns: ["CustomerId"] },
   { name: "FK_Moves_Batches", table: "Moves", rows: 88_120, parent: "Batches", columns: ["BatchNo", "Site"] },
-].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows) → ${k.parent}, on ${k.columns.join(", ")}` }))
+].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows): no index on ${k.columns.join(", ")}, its key to ${k.parent}` }))
 
 // The Design card's detail for a database, as GET .../cards/design answers it.
 export function designDetail(database: string): CardDetail {
@@ -45,7 +45,7 @@ export function designDetail(database: string): CardDetail {
     const keys = [
       { name: "FK_Lines_Orders", table: "Lines", rows: 1_376_845, parent: "Orders", columns: ["OrderId"], text: "" },
       ...foldKeys,
-    ].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows) → ${k.parent}, on ${k.columns.join(", ")}` }))
+    ].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows): no index on ${k.columns.join(", ")}, its key to ${k.parent}` }))
     return {
       card: designCard({
         statusText: "Too early to tell",
@@ -118,7 +118,7 @@ export function designDetail(database: string): CardDetail {
     findings: [finding],
     checks: [{ checkId: "IDX14", title: "Foreign keys without an index", status: "finding", note: "" }],
     fixes: [fix],
-    foreignKeys: { heading: "Would cost work if rows were deleted", tooEarly: false, window: "the restart on 1 Oct", keys: foldKeys },
+    foreignKeys: { heading: "Missing indexes on foreign keys, not needed yet", tooEarly: false, window: "the restart on 1 Oct", keys: foldKeys },
   }
 }
 

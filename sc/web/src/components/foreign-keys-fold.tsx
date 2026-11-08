@@ -5,14 +5,17 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 
 // Phase 5n: the Design card's fold (docs/phase5n-contract.md, section 3): the foreign keys without an index
 // on tables of 10,000 rows or more where no delete was seen in the window, largest table first, one line
-// each ("Lines (1,376,845 rows) → Orders, on OrderId") and no button: an index there costs writes for a
-// benefit not yet seen. The heading says "Too early to tell" while the window is 7 days or less. Nothing
+// each ("Lines (1,376,845 rows): no index on OrderId, its key to Orders") and no button: an index there
+// costs writes for a benefit not yet seen. The heading says "too early to tell" while the window is 7 days or less. Nothing
 // when there is no such key.
 export function ForeignKeysFold({ fold }: { fold: DesignForeignKeys }) {
   if (fold.keys.length === 0) return null
+  const since = fold.window || "SQL Server started counting"
+  const what =
+    "These foreign keys have no index. That costs work only when a row is deleted from the table the key points to: SQL Server then reads the whole table listed here to check that no row still points to it."
   const why = fold.tooEarly
-    ? `Deletes are counted only since ${fold.window}: too short to tell whether these keys cost work.`
-    : `No row was deleted from their parent tables since ${fold.window || "SQL Server started counting"}, so these cost nothing yet. An index here would cost writes for a benefit not yet seen.`
+    ? `${what} Deletes are counted only since ${since}, which is too short to tell whether that happens here.`
+    : `${what} Nothing was deleted from those tables since ${since}, so these indexes have not been needed. Adding them now would slow every insert and update on these tables for no gain.`
   return (
     <Collapsible className="rounded-xl border px-4 py-3">
       <CollapsibleTrigger asChild>
@@ -25,7 +28,7 @@ export function ForeignKeysFold({ fold }: { fold: DesignForeignKeys }) {
           <span className="min-w-0 flex-1 break-words font-medium">
             {fold.heading}{" "}
             <span className="font-normal text-muted-foreground">
-              ({fold.keys.length} foreign {fold.keys.length === 1 ? "key" : "keys"})
+              ({fold.keys.length})
             </span>
           </span>
         </button>

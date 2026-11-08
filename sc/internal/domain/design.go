@@ -137,10 +137,10 @@ const (
 	idx14Caveat  = "Deletes are counted since %s and may be more: SQL Server forgets them when it unloads the table's metadata."
 	idx14Skipped = "Could not read the deletes on the parent tables (sys.dm_db_index_operational_stats): "
 
-	// DesignFoldHeading and DesignFoldTooEarly head the card page's fold of the keys that would cost
-	// work if rows were deleted.
-	DesignFoldHeading  = "Would cost work if rows were deleted"
-	DesignFoldTooEarly = "Too early to tell"
+	// DesignFoldHeading and DesignFoldTooEarly head the card page's fold of the foreign keys without an
+	// index that have cost nothing yet (no delete from the table they point to in the window).
+	DesignFoldHeading  = "Missing indexes on foreign keys, not needed yet"
+	DesignFoldTooEarly = "Missing indexes on foreign keys, too early to tell"
 )
 
 // idx14Columns is "starts with OrderId", or "starts with its columns A, B" for a key of several.
@@ -251,11 +251,11 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 	case len(f.ForeignKeys) > 0:
 		c.Status, c.StatusText = StatusGreen, "No problem found"
 		if large > 0 {
-			parents := "their parent tables"
 			if large == 1 {
-				parents = "its parent table"
+				c.Verdict = fmt.Sprintf("1 foreign key has no index, but it has not cost work since %s: nothing was deleted from the table it points to.", since)
+			} else {
+				c.Verdict = fmt.Sprintf("%d foreign keys have no index, but none has cost work since %s: nothing was deleted from the tables they point to.", large, since)
 			}
-			c.Verdict = fmt.Sprintf("No foreign key cost work since %s. %d would if rows were deleted from %s.", since, large, parents)
 		} else {
 			c.Verdict = fmt.Sprintf("No foreign key cost work since %s. %s no index, all on tables under %s rows.",
 				since, plural(int64(len(f.ForeignKeys)), "foreign key has", "foreign keys have"), n0int(idx14MinRows))
@@ -364,7 +364,7 @@ type DesignForeignKeys struct {
 	Keys     []DesignForeignKeyLine `json:"keys"`
 }
 
-// DesignForeignKeyLine is one key of the fold: "Lines (1,376,845 rows) → Orders, on OrderId".
+// DesignForeignKeyLine is one key of the fold: "Lines (1,376,845 rows): no index on OrderId, its key to Orders".
 type DesignForeignKeyLine struct {
 	Name    string   `json:"name"`
 	Table   string   `json:"table"`
@@ -397,7 +397,7 @@ func BuildDesignForeignKeys(f DesignFacts) *DesignForeignKeys {
 	for _, k := range keys {
 		child, parent := designName(k.Schema, k.Table), designName(k.RefSchema, k.RefTable)
 		out.Keys = append(out.Keys, DesignForeignKeyLine{Name: k.Name, Table: child, Rows: k.Rows, Parent: parent, Columns: k.Columns,
-			Text: fmt.Sprintf("%s (%s) → %s, on %s", child, plural(k.Rows, "row", "rows"), parent, plainList(k.Columns))})
+			Text: fmt.Sprintf("%s (%s): no index on %s, its key to %s", child, plural(k.Rows, "row", "rows"), plainList(k.Columns), parent)})
 	}
 	return out
 }

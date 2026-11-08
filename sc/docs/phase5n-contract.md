@@ -83,7 +83,7 @@ the way Storage is (`service/overview.go`, `service/card.go` gains `case domain.
 | The foreign keys could not be read | grey | "Could not read the foreign keys: {error}" |
 | One or more IDX14 findings | amber | "3 foreign keys make deletes read whole tables, the biggest Orders.Lines (1.4 million rows)." |
 | No finding, the window is 7 days or less, and keys without an index exist | green | "Too early to tell which foreign keys cost work: deletes counted for 3 days, since the restore on 5 Nov. 20 foreign keys on large tables have no index." |
-| No finding, keys without an index exist | green | "No foreign key cost work since 1 Oct. 20 would if rows were deleted from their parent tables." |
+| No finding, keys without an index exist | green | "20 foreign keys have no index, but none has cost work since 1 Oct: nothing was deleted from the tables they point to." |
 | Every foreign key has an index | green | "Every foreign key has an index." |
 
 **Facts**: Foreign keys ("39, 37 without an index"); Costing work now (the count of findings, tone bad when one
@@ -133,10 +133,10 @@ times deletes, largest first.
   metadata."
 - **Action**: Apply `create-index` (section 4), and Copy (4a's hand-over block, addressed to the vendor).
 
-**Would cost work if rows were deleted** (no finding): keys without an index on referencing tables of 10,000
+**Missing indexes on foreign keys, not needed yet** (no finding): keys without an index on referencing tables of 10,000
 rows or more and no delete seen. Listed on the card page under a fold with that heading, largest referencing
-table first, each one line ("Lines (1,376,845 rows) → Orders, on OrderId"), no button: an index there costs
-writes for a benefit not yet seen. When the window is 7 days or less the fold's heading says "Too early to
+table first, each one line ("Lines (1,376,845 rows): no index on OrderId, its key to Orders"), no button: an index there costs
+writes for a benefit not yet seen. When the window is 7 days or less the fold's heading ends "too early to
 tell". Keys on smaller tables are counted in the facts and not listed.
 
 `CardDetail` gains `foreignKeys` (the fold's rows, the window), left out for every other card, as `drives` is

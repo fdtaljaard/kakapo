@@ -78,7 +78,7 @@ func TestIDX14Fires(t *testing.T) {
 	}
 	// The other key is in the fold, not raised.
 	fold := BuildDesignForeignKeys(f)
-	if fold == nil || len(fold.Keys) != 1 || fold.Keys[0].Name != "FK_Lines_Orders" || fold.Keys[0].Text != "Lines (1,376,845 rows) → Orders, on OrderId" ||
+	if fold == nil || len(fold.Keys) != 1 || fold.Keys[0].Name != "FK_Lines_Orders" || fold.Keys[0].Text != "Lines (1,376,845 rows): no index on OrderId, its key to Orders" ||
 		fold.Heading != DesignFoldHeading || fold.TooEarly || fold.Window != "the restart on 1 Oct" {
 		t.Errorf("fold %+v", fold)
 	}
@@ -157,7 +157,7 @@ func TestDesignVerdicts(t *testing.T) {
 	// No finding, keys exist, a long window.
 	f = dfacts()
 	c, _, _ := dbuild(f)
-	if c.Status != StatusGreen || c.Verdict != "No foreign key cost work since 1 Oct. 2 would if rows were deleted from their parent tables." {
+	if c.Status != StatusGreen || c.Verdict != "2 foreign keys have no index, but none has cost work since 1 Oct: nothing was deleted from the tables they point to." {
 		t.Errorf("no finding %+v", c)
 	}
 	wantFacts := []Fact{{"Foreign keys", "39, 2 without an index", ToneNormal}, {"Costing work now", "0", ToneNormal},
@@ -308,7 +308,7 @@ func TestDesignDetailJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"foreignKeys":{"heading":"Would cost work if rows were deleted","tooEarly":false,"window":"the restart on 1 Oct","keys":[{"name":"FK_Lines_Orders"`) {
+	if !strings.Contains(string(b), `"foreignKeys":{"heading":"Missing indexes on foreign keys, not needed yet","tooEarly":false,"window":"the restart on 1 Oct","keys":[{"name":"FK_Lines_Orders"`) {
 		t.Errorf("design JSON %s", b)
 	}
 	d.Card.ID = CardStorage
