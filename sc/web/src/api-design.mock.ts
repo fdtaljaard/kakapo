@@ -1,8 +1,9 @@
 import { ApiError, type Card, type CardDetail, type Finding, type Fix, type FixPreview, type FixResult } from "./api"
 import type { FeatureMock } from "./api.mock"
 
-// Phase 5n (docs/phase5n-contract.md): the Design card's fixture. WarehouseLive has deleted from Orders since
-// the restart, so IDX14 fires on Lines with its create-index fix; two other keys sit in the fold. The other
+// Phase 5n (docs/phase5n-contract.md): the Design card's fixture; phase 5o adds IDX04 and disable-index.
+// WarehouseLive has deleted from Orders since the restart, so IDX14 fires on Lines with its create-index fix;
+// two other keys sit in the fold. The other
 // databases were restored three days ago: too early to tell, every key in the fold. The create-index preview
 // of a foreign key (options.source "foreign-key") answers here with the preview's first line; the plan's
 // suggestions stay with api-sample.mock.ts.
@@ -54,12 +55,16 @@ export function designDetail(database: string): CardDetail {
         facts: [
           { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
           { label: "Costing work now", value: "0", tone: "normal" },
+          { label: "Duplicate indexes", value: "none", tone: "normal" },
           { label: "Counted since", value: "the restore on 5 Nov", tone: "normal" },
           { label: "Tables", value: "95", tone: "normal" },
         ],
       }),
       findings: [],
-      checks: [{ checkId: "IDX14", title: "Foreign keys without an index", status: "passed", note: "" }],
+      checks: [
+        { checkId: "IDX14", title: "Foreign keys without an index", status: "passed", note: "" },
+        { checkId: "IDX04", title: "Duplicate indexes", status: "passed", note: "" },
+      ],
       foreignKeys: { heading: "Too early to tell", tooEarly: true, window: "the restore on 5 Nov", keys },
     }
   }
@@ -104,21 +109,114 @@ export function designDetail(database: string): CardDetail {
   return {
     card: designCard({
       status: "amber",
-      statusText: "1 thing to do",
-      verdict: "1 foreign key makes deletes read a whole table: Lines (1.4 million rows).",
+      statusText: "3 things to do",
+      verdict:
+        "1 foreign key makes deletes read a whole table: Lines (1.4 million rows). 2 indexes copy another one: 1.3 GB and 4.3 million writes since 1 Oct for nothing. 2 indexes have the same keys as another but hold different columns: merging them is a job for someone experienced with indexes.",
       facts: [
         { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
         { label: "Costing work now", value: "1", tone: "bad" },
+        { label: "Duplicate indexes", value: "2, 1.3 GB", tone: "bad" },
         { label: "Counted since", value: "the restart on 1 Oct", tone: "normal" },
         { label: "Tables", value: "95", tone: "normal" },
       ],
-      toDo: 1,
-      fixable: 1,
+      toDo: 3,
+      fixable: 2,
     }),
-    findings: [finding],
-    checks: [{ checkId: "IDX14", title: "Foreign keys without an index", status: "finding", note: "" }],
-    fixes: [fix],
+    findings: [finding, ...duplicateFindings],
+    checks: [
+      { checkId: "IDX14", title: "Foreign keys without an index", status: "finding", note: "" },
+      { checkId: "IDX04", title: "Duplicate indexes", status: "finding", note: "" },
+    ],
+    fixes: [fix, disableFix("IX_B", "IX_A", "1.2 GB"), disableFix("IX_E", "IX_A", "85 MB")],
     foreignKeys: { heading: "Missing indexes on foreign keys, not needed yet", tooEarly: false, window: "the restart on 1 Oct", keys: foldKeys },
+  }
+}
+
+// Phase 5o (docs/phase5o-contract.md): IDX04 on WarehouseLive. Orders has two safe copies of IX_A (one Apply
+// each); Notes has two copies to merge (Copy only).
+const IDX04_WHY =
+  "Indexes with the same keys do the same job: SQL Server keeps every copy up to date on each insert, update and delete, and stores, backs up and maintains each one."
+const IDX04_THEN = "Re-run: IDX04 gone for that table; the keeper's reads went up by what the copy had."
+
+const duplicateFindings: Finding[] = [
+  {
+    checkId: "IDX04",
+    title: "Duplicate indexes",
+    severity: "Medium",
+    owner: "Us",
+    when: "Online",
+    effort: "Quick win",
+    object: "[dbo].[Orders]",
+    finding:
+      "IX_B is a copy of IX_A on Orders (CustomerId, OrderDate): 1.2 GB and 4.3 million writes since 1 Oct, for nothing. IX_A holds every column of IX_B. IX_E is a copy of IX_A on Orders (CustomerId, OrderDate): 85 MB and 2,140 writes since 1 Oct, for nothing. IX_A holds every column of IX_E.",
+    why: IDX04_WHY,
+    doThis:
+      "Disable IX_B and IX_E. Queries that used them use the copy named for each, which has the same keys and every column. Tell the vendor, so their next upgrade does not create them again.",
+    thenCheck: IDX04_THEN,
+    evidence:
+      "Safe to disable: [IX_B] (kept in [IX_A]), [IX_E] (kept in [IX_A]). [IX_A] (kept, most reads): keys CustomerId, OrderDate; includes Total; no filter; 1.3 GB; 91,204 reads and 4,302,140 writes since the restart on 1 Oct. [IX_B] (safe to disable, kept in [IX_A]): keys CustomerId, OrderDate; includes nothing; no filter; 1.2 GB; 12 reads and 4,300,000 writes since the restart on 1 Oct. [IX_E] (safe to disable, kept in [IX_A]): keys CustomerId, OrderDate; includes nothing; no filter; 85 MB; 0 reads and 2,140 writes since the restart on 1 Oct.",
+    fixId: "disable-index",
+  },
+  {
+    checkId: "IDX04",
+    title: "Duplicate indexes",
+    severity: "Low",
+    owner: "Us",
+    when: "Online",
+    effort: "Moderate",
+    object: "[dbo].[Notes]",
+    finding:
+      "IX_C and IX_D on Notes have the same keys (CustomerId) but each holds columns the other does not. One index with all their columns would replace them.",
+    why: IDX04_WHY,
+    doThis: "Copy for someone experienced with indexes, or for the vendor.",
+    thenCheck: IDX04_THEN,
+    evidence:
+      "Needs merging: [IX_C], [IX_D]. [IX_C] (needs merging): keys CustomerId; includes Status; no filter; 40 MB; 310 reads and 52,000 writes since the restart on 1 Oct. [IX_D] (needs merging): keys CustomerId; includes Total; no filter; 38 MB; 95 reads and 52,000 writes since the restart on 1 Oct.",
+  },
+]
+
+function disableFix(index: string, keeper: string, size: string): Fix {
+  return {
+    id: "disable-index",
+    title: "Disable a duplicate index",
+    scope: "database",
+    checkId: "IDX04",
+    setting: "Index",
+    current: `${index} on dbo.Orders (CustomerId, OrderDate), ${size}`,
+    target: "disabled",
+    needsRestart: false,
+    options: { table: "[dbo].[Orders]", index, keeper, object: "[dbo].[Orders]" },
+  }
+}
+
+// The disable-index preview: IX_E is named in a procedure (Apply held back); the others are shown.
+function disablePreview(database: string, options: Record<string, string>): FixPreview {
+  const index = options.index || "IX_B"
+  const keeper = options.keeper || "IX_A"
+  const bracketed = options.table || "[dbo].[Orders]"
+  const table = bracketed.split("].[").join(".").split("[").join("").split("]").join("")
+  const size = index === "IX_E" ? "85 MB" : index === "IX_Audit_Unit_Copy" ? "640 MB" : "1.2 GB"
+  return {
+    database,
+    engineVersion: "16.0.4135.4",
+    lead: `${index} is a copy of ${keeper}: ${size} and 4.3 million writes since 1 Oct, for nothing.`,
+    held:
+      index === "IX_E"
+        ? "IX_E is named in dbo.GetOpenOrders: a query that names a disabled index fails (error 315). Change the code first, or ask the vendor."
+        : undefined,
+    changes: [{ setting: "Index", current: `${index} on ${table}, ${size}`, target: "disabled" }],
+    statement: `ALTER INDEX [${index}] ON [${database}].${bracketed} DISABLE;`,
+    rollback: `ALTER INDEX [${index}] ON [${database}].${bracketed} REBUILD WITH (ONLINE = ON);`,
+    warnings: [
+      `Queries that read ${index} (12 times since 1 Oct) will read ${keeper} instead.`,
+      "Disabling needs a short lock on the table.",
+      "Undoing it rebuilds the index from the table: it takes as long as creating it, and the space comes back.",
+      "The rollback rebuilds it online (ONLINE = ON): users keep working, but it still needs a short lock at the start and at the end.",
+      `The ${size} freed stays inside the data file: the file does not shrink; new rows reuse the space.`,
+      "kakapo searched the database's code, plan guides and Query Store for the name; code outside SQL Server (an application that names the index in a hint) cannot be searched.",
+      `Needs the ALTER permission on ${table} (db_ddladmin or db_owner in the database).`,
+    ],
+    options,
   }
 }
 
@@ -154,6 +252,23 @@ function foreignKeyPreview(database: string, options: Record<string, string>): F
 }
 
 export const mockDesign: FeatureMock = async (method, path, init) => {
+  const disable = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/disable-index\/(preview|apply)$/)
+  if (disable && method === "POST") {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }) : {}
+    const options = body.options ?? {}
+    const preview = disablePreview(decodeURIComponent(disable[2]), options)
+    if (disable[3] === "preview") return preview
+    if (preview.held) throw new ApiError(preview.held, 409)
+    await delay(800)
+    return {
+      preview,
+      before: preview.changes[0].current,
+      after: `${options.index} is disabled; ${preview.changes[0].current.split(", ").pop()} freed inside the file.`,
+      verified: true,
+      changeId: 950 + Math.floor(Math.random() * 49),
+      appliedAt: now(),
+    } satisfies FixResult
+  }
   const fix = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/create-index\/(preview|apply)$/)
   if (!fix || method !== "POST") return undefined
   const options = init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }).options : undefined

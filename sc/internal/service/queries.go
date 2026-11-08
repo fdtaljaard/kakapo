@@ -49,5 +49,9 @@ func (s *Service) QueryDetail(ctx context.Context, serverID int64, dbName, hash 
 	}
 	// Archive before an index: the tables that only grow that nothing cleans up, in the server's clock.
 	f.GrowingCandidates = readGrowingCandidates(ctx, db, d.Name, f.ServerNow.Add(time.Duration(f.UTCOffsetMinutes)*time.Minute))
+	// The safe copies of the tables it reads, from the Design card's last stored read (docs/phase5o-contract.md, section 5).
+	if f.DuplicateFindings, err = s.store.LastFindings(ctx, serverID, d.Name, domain.CardDesign, "IDX04"); err != nil {
+		return domain.QueryDetail{}, err
+	}
 	return domain.BuildQueryDetail(f, d.CanFix()), nil
 }

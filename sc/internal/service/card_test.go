@@ -110,7 +110,7 @@ func TestDesignFactsNotOnline(t *testing.T) {
 	def, _ := domain.FindCardDef(domain.CardDesign)
 	c, findings, checks := domain.BuildDesignCard(f, def)
 	if c.Status != domain.StatusGrey || c.Note != "WarehouseLive is RESTORING, not online, so its design was not checked." || len(findings) != 0 ||
-		len(checks) != 1 || checks[0].Status != domain.CheckSkipped {
+		len(checks) != 2 || checks[0].Status != domain.CheckSkipped || checks[1].Status != domain.CheckSkipped {
 		t.Errorf("design card %+v %+v", c, checks)
 	}
 	if domain.BuildDesignForeignKeys(f) != nil {

@@ -180,6 +180,8 @@ export interface QueryTable {
   stale: boolean
   indexes: string[]
   action?: QueryAction // update-statistics-table
+  // Phase 5o: the table's indexes the Design card's last read found safe to disable (IDX04), with disable-index.
+  copies?: ExplainLine[]
 }
 
 const databasePath = (serverId: number, database: string) =>

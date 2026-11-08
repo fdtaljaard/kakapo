@@ -21,11 +21,14 @@ func init() {
 		longFix{timeout: indexApplyTimeout + runReadMargin, completed: createIndexCompleted})
 	registerLongFix(domain.FixDropIndex, prepareDropIndex, applyDropIndex,
 		longFix{timeout: indexApplyTimeout + runReadMargin, completed: dropIndexCompleted})
+	// Phase 5o (docs/phase5o-contract.md, section 3): disabling a copy takes a moment, so it is not long.
+	registerFix(domain.FixDisableIndex, prepareDisableIndex, applyDisableIndex)
 }
 
 const (
-	indexReadTimeout  = 60 * time.Second
-	indexApplyTimeout = 30 * time.Minute
+	indexReadTimeout    = 60 * time.Second
+	indexApplyTimeout   = 30 * time.Minute
+	disableApplyTimeout = 2 * time.Minute
 )
 
 // createIndexSpec reads the create-index options; a suggestion for another database is refused.
@@ -247,13 +250,109 @@ func dropIndexCompleted(ctx context.Context, s *Service, g *genericFix, startedA
 
 // logIndexChange writes the change row of an index fix with what was read back.
 func (s *Service) logIndexChange(ctx context.Context, change domain.Change, p domain.FixPreview, before, after string, verified bool, appliedAt time.Time) (domain.FixResult, error) {
-	change.Result = after + ", differs"
+	// A read-back that is a sentence ("IX_B is disabled; 4.5 MB freed inside the file.") loses its full stop in the row.
+	result := strings.TrimSuffix(after, ".")
+	change.Result = result + ", differs"
 	if verified {
-		change.Result = after + ", verified"
+		change.Result = result + ", verified"
 	}
 	id, err := s.store.InsertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
 	return domain.FixResult{Preview: p, Before: before, After: after, Verified: verified, ChangeID: id, AppliedAt: appliedAt}, nil
+}
+
+// disableIndexTarget reads the disable-index options: the table, the index and the copy that stays.
+func disableIndexTarget(options map[string]string, dbName string) (schema, table, index, keeper string, err error) {
+	keeper = strings.TrimSpace(options[domain.OptionKeeper])
+	if keeper == "" {
+		return "", "", "", "", newError(KindInvalid, "the index to disable needs the copy that stays (keeper)")
+	}
+	schema, table, index, err = dropIndexTarget(options, dbName)
+	return schema, table, index, keeper, err
+}
+
+// prepareDisableIndex reads the table again (collect.IndexFacts, the read as it is), the use counters'
+// window and the search for the index's name in the database's code, plan guides and Query Store, and
+// builds the preview (docs/phase5o-contract.md, sections 3 and 4). A search that could not run holds
+// Apply back, as an area that failed does.
+func prepareDisableIndex(ctx context.Context, s *Service, g *genericFix, _ domain.FixDef, options map[string]string) error {
+	schema, table, _, _, err := disableIndexTarget(options, g.database.Name)
+	if err != nil {
+		return err
+	}
+	f, err := readIndexFacts(ctx, g, schema, table)
+	if err != nil {
+		return err
+	}
+	readCtx, cancel := context.WithTimeout(ctx, indexReadTimeout)
+	defer cancel()
+	var window *domain.DesignWindow
+	now := time.Time{}
+	if u, err := collect.ReadUsageWindow(readCtx, g.db, g.database.Name); err == nil {
+		if w, ok := u.Window(); ok {
+			window, now = &w, u.ServerNow
+		}
+	}
+	index := strings.TrimSpace(options[domain.OptionIndex])
+	if x, ok := f.Index(index); ok {
+		index = x.Name
+	}
+	search, err := collect.SearchIndexName(readCtx, g.db, g.database.Name, index)
+	if err != nil {
+		search = domain.IndexNameSearch{Index: index, Error: err.Error()}
+	}
+	g.preview, g.fix = domain.BuildDisableIndexFix(f, &search, window, now, options)
+	return nil
+}
+
+// applyDisableIndex runs ALTER INDEX ... DISABLE, reads the table back (disabled, no pages left) and
+// writes the change row with the REBUILD as its rollback.
+func applyDisableIndex(ctx context.Context, s *Service, serverID int64, g *genericFix) (domain.FixResult, error) {
+	name, p := g.database.Name, g.preview
+	if len(p.Changes) == 0 || p.Statement == "" {
+		msg := "the index cannot be disabled as previewed"
+		if len(p.Warnings) > 0 {
+			msg = p.Warnings[0]
+		}
+		return domain.FixResult{}, newError(KindConflict, "%s", msg)
+	}
+	schema, table, index, keeper, err := disableIndexTarget(p.Options, name)
+	if err != nil {
+		return domain.FixResult{}, err
+	}
+	before, err := readIndexFacts(ctx, g, schema, table)
+	if err != nil {
+		return domain.FixResult{}, err
+	}
+	x, _ := before.Index(index)
+	applyCtx, cancel := context.WithTimeout(ctx, disableApplyTimeout)
+	err = collect.ExecFix(applyCtx, g.db, p.Statement)
+	cancel()
+	if err != nil {
+		return domain.FixResult{}, newError(KindUnreachable, "SQL Server did not disable the index %s on %s.%s: %v. Needs the ALTER permission on %s.%s.",
+			index, schema, table, err, schema, table)
+	}
+	appliedAt := time.Now().UTC().Truncate(time.Microsecond)
+	change := domain.Change{
+		ServerID:    serverID,
+		Database:    name,
+		ChangedAt:   appliedAt,
+		Object:      domain.IndexObject(schema, table, index),
+		ChangeType:  "INDEX",
+		Description: domain.DisableIndexChangeDescription(before, index, keeper, x.SizeMB, name),
+		Statement:   p.Statement,
+		Rollback:    p.Rollback,
+	}
+	f, err := readIndexFacts(ctx, g, schema, table)
+	if err != nil {
+		change.Result = "applied, but the index could not be read back: " + err.Error()
+		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+			return domain.FixResult{}, logErr
+		}
+		return domain.FixResult{}, newError(KindUnreachable, "the index %s was disabled on %s.%s, but could not be read back: %v", index, schema, table, err)
+	}
+	after, verified := domain.DisableIndexReadBack(f, index, x.SizeMB)
+	return s.logIndexChange(ctx, change, p, g.fix.Current, after, verified, appliedAt)
 }

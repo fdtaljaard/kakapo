@@ -28,7 +28,7 @@ later phase (D5); no source on disk has a rule for it (`is_ms_shipped = 0` is th
 | Phase | What | Sources |
 |---|---|---|
 | **5n (D1)** | Foreign keys without an index, database-wide, ranked by deletes on the parent: this contract | Microsoft Learn; PerformanceTriage.sql IDX14; sp_BlitzIndex 72 |
-| D2 | Exact duplicate indexes (IDX04) and Tuning Advisor leftovers (IDX05), with a new `disable-index` fix that refuses an index a foreign key depends on (`sys.foreign_keys.key_index_id`: disabling it disables the key) | triage IDX04/IDX05; sp_IndexCleanup rule 2 and its foreign-key guard (6210-6260); sp_BlitzIndex 1, 41 |
+| **5o (D2)** | Exact duplicate indexes (IDX04), with a new `disable-index` fix that refuses an index a foreign key depends on (`sys.foreign_keys.key_index_id`: disabling it disables the key): `docs/phase5o-contract.md`. Tuning Advisor leftovers (IDX05) not taken: they cost almost nothing, so they cannot show a cost | triage IDX04; sp_IndexCleanup rule 2 and its foreign-key guard (6210-6260); sp_BlitzIndex 1 |
 | D3 | Unused indexes (IDX03), counted from the latest of server start, last restore and database creation; held at 7 days or less, warned under 14; writes saved per day | sp_IndexCleanup rule 1 (4064-4085, 1990-2023, 4054-4061); `docs/darlingdata-review.md` |
 | D4 | Foreign keys and check constraints SQL Server no longer trusts, with a `WITH CHECK CHECK CONSTRAINT` fix whose preview says it reads the whole table and fails if rows break the rule | sp_Blitz 48 and 56; Microsoft Learn |
 | D5 | "Which objects are yours?" as a Database decision (the pattern of 5m), with the install batch as evidence; one Copy that gathers every vendor finding | kakapo |

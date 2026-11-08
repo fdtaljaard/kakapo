@@ -360,6 +360,9 @@ var Checks = []Check{
 	// raised only when rows were deleted from the referenced table in the window.
 	{"IDX14", CardDesign, "Foreign keys without an index", "Which foreign keys make deletes read a whole table?", OwnerUs,
 		"Re-run: IDX14 gone for that key; deletes on the parent table faster (the tuning report, when the deletes are in Query Store)."},
+	// Phase 5o (docs/phase5o-contract.md, section 2): duplicate indexes, the triage's IDX04 (Checks.csv 60).
+	{"IDX04", CardDesign, "Duplicate indexes", "Which indexes copy another one?", OwnerUs,
+		"Re-run: IDX04 gone for that table; the keeper's reads went up by what the copy had."},
 
 	// Phase 5m (docs/phase5m-contract.md): the decisions for a database. A decision is not a finding and no
 	// card lists it; its catalogue entry keeps its rule, sources and fix the one way.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -49,4 +50,38 @@ func (s *Store) InsertCardRead(ctx context.Context, serverID int64, dbName strin
 		return 0, fmt.Errorf("store the %s card of %s: %w", card.ID, dbName, err)
 	}
 	return id, nil
+}
+
+// LastFindings returns the findings of one check in the latest stored read of a card of a database
+// (docs/phase5o-contract.md, section 5: the query page reads IDX04 from the Design card's last read,
+// never a second read of the server). Empty when the card was never read or the check found nothing.
+// Fields the store does not keep (the fix) are left empty.
+func (s *Store) LastFindings(ctx context.Context, serverID int64, dbName string, card domain.CardID, checkID string) ([]domain.Finding, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT f.check_id, f.severity, f.owner, f.when_, f.effort, f.object, f.finding, f.why, f.do_this, f.then_check, f.evidence
+		FROM finding AS f
+		WHERE f.check_id = ? AND f.card_read_id = (
+			SELECT id FROM card_read WHERE server_id = ? AND db_name = ? AND card = ? ORDER BY captured_at DESC, id DESC LIMIT 1)`,
+		checkID, serverID, dbName, string(card))
+	if err != nil {
+		return nil, fmt.Errorf("read the last %s findings of %s: %w", checkID, dbName, err)
+	}
+	defer rows.Close()
+	out := []domain.Finding{}
+	for rows.Next() {
+		var f domain.Finding
+		var severity string
+		var owner, when, effort, object, finding, why, do, then, evidence sql.NullString
+		if err := rows.Scan(&f.CheckID, &severity, &owner, &when, &effort, &object, &finding, &why, &do, &then, &evidence); err != nil {
+			return nil, fmt.Errorf("read the last %s findings of %s: %w", checkID, dbName, err)
+		}
+		f.Severity = domain.Severity(severity)
+		f.Owner, f.When, f.Effort, f.Object, f.Finding = owner.String, when.String, effort.String, object.String, finding.String
+		f.Why, f.DoThis, f.ThenCheck, f.Evidence = why.String, do.String, then.String, evidence.String
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the last %s findings of %s: %w", checkID, dbName, err)
+	}
+	return out, nil
 }

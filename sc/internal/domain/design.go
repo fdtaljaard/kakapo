@@ -10,7 +10,8 @@ import (
 // Database design (docs/phase5n-contract.md): "Does the way it is built cost you anything?" A design
 // rule ships only when kakapo can show what it costs on this database and has a source with a
 // threshold (SCOPE rule 2). The first is IDX14, foreign keys without an index, raised only when rows
-// were deleted from the referenced table in the window.
+// were deleted from the referenced table in the window; the second IDX04, duplicate indexes, whose
+// safe copies end in the disable-index fix (docs/phase5o-contract.md).
 
 // DesignFacts is what the Design card reads about one database (collect.ReadDesignFacts), each area
 // with its own error. Every time is the server's own clock (GETDATE()), carried naive in a time.Time.
@@ -40,6 +41,23 @@ type DesignFacts struct {
 	CreateDate  time.Time
 	LastRestore *time.Time
 	WindowError string
+
+	// IndexTables are the indexes of every user table (collect.AllIndexFacts, docs/phase5o-contract.md
+	// section 1), for IDX04. IndexesError says they could not be read; UsageError that their reads and
+	// writes could not (each index's Reads and Writes are then -1).
+	IndexTables  []IndexFacts
+	IndexesError string
+	UsageError   string
+}
+
+// UsageWindowFacts are the moments the use and operational counters of a database start from: SQL
+// Server's start, the database's creation and its latest restore (nil when none or not read), with
+// the server's clock (collect.ReadUsageWindow; the Design card's read has them in DesignFacts).
+type UsageWindowFacts struct {
+	ServerNow   time.Time
+	StartedAt   time.Time
+	CreateDate  time.Time
+	LastRestore *time.Time
 }
 
 // IDX14's bars (PerformanceTriage.sql IDX14, 1556-1580): a referencing table of 10,000 rows or more;
@@ -70,20 +88,29 @@ type DesignWindow struct {
 // Window is the deletes' window: from the latest of the restart, the last restore and the
 // database's creation to ServerNow. false when the window could not be read.
 func (f DesignFacts) Window() (DesignWindow, bool) {
-	if f.WindowError != "" || f.StartedAt.IsZero() {
+	if f.WindowError != "" {
 		return DesignWindow{}, false
 	}
-	w := DesignWindow{Since: f.StartedAt, Kind: DesignSinceRestart}
-	if f.LastRestore != nil && f.LastRestore.After(w.Since) {
-		w.Since, w.Kind = *f.LastRestore, DesignSinceRestore
+	return UsageWindowFacts{ServerNow: f.ServerNow, StartedAt: f.StartedAt, CreateDate: f.CreateDate, LastRestore: f.LastRestore}.Window()
+}
+
+// Window is when the counters started: the latest of the restart, the last restore and the database's
+// creation, to ServerNow (sp_IndexCleanup.sql 1990-2005). false when the start is not known.
+func (u UsageWindowFacts) Window() (DesignWindow, bool) {
+	if u.StartedAt.IsZero() {
+		return DesignWindow{}, false
 	}
-	if f.CreateDate.After(w.Since) {
-		w.Since, w.Kind = f.CreateDate, DesignSinceCreated
+	w := DesignWindow{Since: u.StartedAt, Kind: DesignSinceRestart}
+	if u.LastRestore != nil && u.LastRestore.After(w.Since) {
+		w.Since, w.Kind = *u.LastRestore, DesignSinceRestore
 	}
-	span := f.ServerNow.Sub(w.Since)
+	if u.CreateDate.After(w.Since) {
+		w.Since, w.Kind = u.CreateDate, DesignSinceCreated
+	}
+	span := u.ServerNow.Sub(w.Since)
 	w.Days = int(span.Hours() / 24)
 	w.TooEarly = span <= designEarlyDays*24*time.Hour
-	day := designDay(w.Since, f.ServerNow)
+	day := designDay(w.Since, u.ServerNow)
 	switch w.Kind {
 	case DesignSinceRestore:
 		w.Text = "the restore on " + day
@@ -176,32 +203,38 @@ func idx14Evidence(k UnindexedForeignKeyFact, w DesignWindow) string {
 
 // BuildDesignCard answers "Does the way it is built cost you anything?" for one database from what
 // was read: the card, the IDX14 findings ordered by referencing rows times deletes (largest first),
-// and the checks. The verdict is the first that applies: the foreign keys could not be read (grey);
-// one or more findings (amber); too early to tell (green); none cost work (green); every foreign key
-// has an index (green).
+// then the IDX04 findings ordered by the safe copies' size (docs/phase5o-contract.md), and the checks.
+// The verdict is the first that applies: nothing could be read (grey); one or more findings (amber,
+// one clause per check that has findings, IDX14's first); the foreign keys, their deletes or the
+// indexes could not be read (grey); too early to tell (green); none cost work (green); every foreign
+// key has an index (green).
 func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus) {
 	c := Card{ID: def.ID, Title: def.Title, Question: def.Question, Facts: []Fact{}}
 	findings := []Finding{}
 	grey := func(note string) (Card, []Finding, []CheckStatus) {
 		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", note
-		return c, findings, designChecks(findings, note)
+		return c, findings, designChecks(findings, note, note)
 	}
 	switch {
 	case f.Error != "":
 		return grey(f.Error)
 	case f.State != "" && f.State != "ONLINE":
 		return grey(fmt.Sprintf("%s is %s, not online, so its design was not checked.", f.Database, f.State))
-	case f.ForeignKeysError != "":
-		return grey("Could not read the foreign keys: " + f.ForeignKeysError)
 	}
 
 	w, windowOK := f.Window()
-	skipped := ""
+	fkSkipped := ""
 	switch {
+	case f.ForeignKeysError != "":
+		fkSkipped = "Could not read the foreign keys: " + f.ForeignKeysError
 	case f.DeletesError != "":
-		skipped = idx14Skipped + f.DeletesError
+		fkSkipped = idx14Skipped + f.DeletesError
 	case !windowOK:
-		skipped = "Could not read when SQL Server started counting the deletes: " + f.WindowError
+		fkSkipped = "Could not read when SQL Server started counting the deletes: " + f.WindowError
+	}
+	dupSkipped := ""
+	if f.IndexesError != "" {
+		dupSkipped = idx04Skipped + f.IndexesError
 	}
 	large := 0
 	for _, k := range f.ForeignKeys {
@@ -209,37 +242,58 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 			large++
 		}
 	}
-	if skipped == "" {
-		findings = idx14Findings(f, w)
+	idx14 := []Finding{}
+	if fkSkipped == "" {
+		idx14 = idx14Findings(f, w)
 	}
-	checks := designChecks(findings, skipped)
-	c.Facts = designFacts(f, w, windowOK, findings, skipped)
+	var window *DesignWindow
+	if windowOK {
+		window = &w
+	}
+	groups := []DuplicateGroup{}
+	if dupSkipped == "" {
+		groups = firingGroups(f.IndexTables)
+	}
+	idx04 := idx04Findings(groups, window, f.ServerNow)
+	findings = append(append(findings, idx14...), idx04...)
+	checks := designChecks(findings, fkSkipped, dupSkipped)
+	c.Facts = designFacts(f, w, windowOK, idx14, groups, fkSkipped, dupSkipped)
 	asOf := f.ServerNow
 	c.AsOf = &asOf
-	if skipped != "" {
-		// Without the deletes or their window IDX14 cannot answer; nothing is raised.
-		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", skipped
-		return c, findings, checks
-	}
 
-	since := designDay(w.Since, f.ServerNow)
-	switch n := len(findings); {
-	case n > 0:
+	if n := len(findings); n > 0 {
 		c.Status, c.StatusText = StatusAmber, "1 thing to do"
 		if n > 1 {
 			c.StatusText = fmt.Sprintf("%d things to do", n)
 		}
-		big := f.ForeignKeys[0]
-		for _, k := range f.ForeignKeys {
-			if idx14Fires(k) && (!idx14Fires(big) || k.Rows > big.Rows) {
-				big = k
+		clauses := []string{}
+		if len(idx14) > 0 {
+			clauses = append(clauses, idx14Verdict(f, len(idx14)))
+		}
+		if len(idx04) > 0 {
+			clauses = append(clauses, idx04Verdict(groups, window, f.ServerNow))
+		}
+		c.Verdict = strings.Join(clauses, " ")
+		c.ToDo = n
+		for _, x := range findings {
+			if x.FixID != "" {
+				c.Fixable++
 			}
 		}
-		if n == 1 {
-			c.Verdict = fmt.Sprintf("1 foreign key makes deletes read a whole table: %s (%s).", designName(big.Schema, big.Table), designRows(big.Rows))
-		} else {
-			c.Verdict = fmt.Sprintf("%d foreign keys make deletes read whole tables, the biggest on %s (%s).", n, designName(big.Schema, big.Table), designRows(big.Rows))
-		}
+		return c, findings, checks
+	}
+	switch {
+	case fkSkipped != "":
+		// Without the foreign keys, their deletes or their window IDX14 cannot answer; nothing is raised.
+		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", fkSkipped
+		return c, findings, checks
+	case dupSkipped != "":
+		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", dupSkipped
+		return c, findings, checks
+	}
+
+	since := designDay(w.Since, f.ServerNow)
+	switch {
 	case large > 0 && w.TooEarly:
 		c.Status, c.StatusText = StatusGreen, "Too early to tell"
 		keys := fmt.Sprintf("%d foreign keys on large tables have", large)
@@ -265,8 +319,22 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 	default:
 		c.Status, c.StatusText, c.Verdict = StatusGreen, "No problem found", "Every foreign key has an index."
 	}
-	c.ToDo, c.Fixable = len(findings), len(findings)
 	return c, findings, checks
+}
+
+// idx14Verdict is IDX14's clause of the verdict (docs/phase5n-contract.md): the key on the largest
+// referencing table.
+func idx14Verdict(f DesignFacts, n int) string {
+	big := f.ForeignKeys[0]
+	for _, k := range f.ForeignKeys {
+		if idx14Fires(k) && (!idx14Fires(big) || k.Rows > big.Rows) {
+			big = k
+		}
+	}
+	if n == 1 {
+		return fmt.Sprintf("1 foreign key makes deletes read a whole table: %s (%s).", designName(big.Schema, big.Table), designRows(big.Rows))
+	}
+	return fmt.Sprintf("%d foreign keys make deletes read whole tables, the biggest on %s (%s).", n, designName(big.Schema, big.Table), designRows(big.Rows))
 }
 
 // designDays is "3 days", "1 day" or "less than a day".
@@ -312,11 +380,15 @@ func idx14Findings(f DesignFacts, w DesignWindow) []Finding {
 	return out
 }
 
-// designChecks says what became of IDX14: skipped with its note, a finding, or passed.
-func designChecks(findings []Finding, skipped string) []CheckStatus {
+// designChecks says what became of IDX14 and IDX04: skipped with its note, a finding, or passed.
+func designChecks(findings []Finding, fkSkipped, dupSkipped string) []CheckStatus {
 	out := []CheckStatus{}
 	for _, c := range ChecksFor(CardDesign) {
 		st := CheckStatus{CheckID: c.ID, Title: c.Title, Status: CheckPassed}
+		skipped := fkSkipped
+		if c.ID == "IDX04" {
+			skipped = dupSkipped
+		}
 		switch {
 		case skipped != "":
 			st.Status, st.Note = CheckSkipped, skipped
@@ -332,15 +404,34 @@ func designChecks(findings []Finding, skipped string) []CheckStatus {
 	return out
 }
 
-// designFacts are the four lines on the card: Foreign keys, Costing work now, Counted since, Tables.
-func designFacts(f DesignFacts, w DesignWindow, windowOK bool, findings []Finding, skipped string) []Fact {
+// designFacts are the five lines on the card: Foreign keys, Costing work now (IDX14), Duplicate
+// indexes (IDX04: "2, 1.2 GB" safe to disable, "3 to merge", or "none"), Counted since, Tables.
+func designFacts(f DesignFacts, w DesignWindow, windowOK bool, idx14 []Finding, groups []DuplicateGroup, fkSkipped, dupSkipped string) []Fact {
 	keys := Fact{Label: "Foreign keys", Value: fmt.Sprintf("%d without an index", len(f.ForeignKeys)), Tone: ToneNormal}
-	if f.CountsError == "" {
+	switch {
+	case f.ForeignKeysError != "":
+		keys.Value = "could not be read"
+	case f.CountsError == "":
 		keys.Value = fmt.Sprintf("%d, %d without an index", f.EnabledForeignKeys, len(f.ForeignKeys))
 	}
-	costing := Fact{Label: "Costing work now", Value: fmt.Sprint(len(findings)), Tone: tone(len(findings) > 0)}
-	if skipped != "" {
+	costing := Fact{Label: "Costing work now", Value: fmt.Sprint(len(idx14)), Tone: tone(len(idx14) > 0)}
+	if fkSkipped != "" {
 		costing.Value = "could not be read"
+	}
+	dups := Fact{Label: "Duplicate indexes", Value: "none", Tone: ToneNormal}
+	safe, merge, safeMB := 0, 0, 0.0
+	for _, g := range groups {
+		safe += len(g.Safe())
+		merge += len(g.Merging())
+		safeMB += g.SafeMB()
+	}
+	switch {
+	case dupSkipped != "":
+		dups.Value = "could not be read"
+	case safe > 0:
+		dups.Value, dups.Tone = fmt.Sprintf("%d, %s", safe, sizeText(safeMB)), ToneBad
+	case merge > 0:
+		dups.Value, dups.Tone = fmt.Sprintf("%d to merge", merge), ToneBad
 	}
 	since := Fact{Label: "Counted since", Value: "could not be read", Tone: ToneNormal}
 	if windowOK {
@@ -350,7 +441,479 @@ func designFacts(f DesignFacts, w DesignWindow, windowOK bool, findings []Findin
 	if f.CountsError == "" {
 		tables.Value = n0int(int64(f.UserTables))
 	}
-	return []Fact{keys, costing, since, tables}
+	return []Fact{keys, costing, dups, since, tables}
+}
+
+// IDX04, duplicate indexes (docs/phase5o-contract.md, section 2; PerformanceTriage.sql 426-458 and
+// 570-630, taken as it is). Copies are the enabled clustered and nonclustered, non-hypothetical
+// indexes of one table with the same key columns in the same order and direction and the same filter.
+// The keeper is ranked: primary key first, clustered before nonclustered, unique first, more reads,
+// larger, lower index id. A plain copy (nonclustered, not unique, not a primary key) is safe to disable
+// when another copy holds every one of its columns (the clustered index holds them all) and that copy
+// ranks higher, or is the clustered index, or holds a column it does not (identical copies: only the
+// lower-ranked one); the other plain copies of the group need merging, unless a wider index starts
+// with the same keys and holds every column (the triage's IDX08 then, not here). Rank 3 when the safe
+// copies of a group are 50 MB or more, else 4.
+const idx04Rank3MB = 50
+
+// Texts of IDX04 (docs/phase5o-contract.md, section 2). Why: Microsoft Learn, "Index architecture and
+// design guide" (every index is kept up to date by each insert, update and delete); Do this: the owner
+// rule of docs/phase5n-contract.md (an index is invisible to the application) and the triage's
+// "disable rather than drop" (PerformanceTriage.sql 510); the merge case: PerformanceTriage.sql 601.
+const (
+	idx04Why       = "Indexes with the same keys do the same job: SQL Server keeps every copy up to date on each insert, update and delete, and stores, backs up and maintains each one."
+	idx04DoOne     = "Disable %s. Queries that used it use %s, which has the same keys and every column. Tell the vendor, so their next upgrade does not create it again."
+	idx04DoMany    = "Disable %s. Queries that used them use the copy named for each, which has the same keys and every column. Tell the vendor, so their next upgrade does not create them again."
+	idx04DoMerge   = "Copy for someone experienced with indexes, or for the vendor."
+	idx04Skipped   = "Could not read the indexes: "
+	idx04SafeMark  = "Safe to disable: "
+	idx04MergeMark = "Needs merging: "
+)
+
+// DuplicateCopy is one index of an IDX04 group, ranked (1 is the keeper).
+type DuplicateCopy struct {
+	Index ExistingIndex
+	Rank  int
+	// KeptIn is the copy that stays when this one is disabled: set only on a safe copy. It is the
+	// best-ranked copy that holds every one of its columns and is not itself safe to disable.
+	KeptIn string
+	// Merge says this plain copy is not safe and no wider index covers it: it needs merging.
+	Merge bool
+}
+
+// DuplicateGroup is one set of copies of one table: the same keys, in the same order and direction,
+// and the same filter.
+type DuplicateGroup struct {
+	Schema string
+	Table  string
+	Keys   []IndexKey
+	Filter string
+	Copies []DuplicateCopy // ranked, the keeper first
+}
+
+// Safe are the copies that are safe to disable, largest first.
+func (g DuplicateGroup) Safe() []DuplicateCopy {
+	out := []DuplicateCopy{}
+	for _, c := range g.Copies {
+		if c.KeptIn != "" {
+			out = append(out, c)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Index.SizeMB > out[j].Index.SizeMB })
+	return out
+}
+
+// Merging are the plain copies that need merging, by name: none, or two or more.
+func (g DuplicateGroup) Merging() []DuplicateCopy {
+	out := []DuplicateCopy{}
+	for _, c := range g.Copies {
+		if c.Merge {
+			out = append(out, c)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Index.Name) < strings.ToLower(out[j].Index.Name) })
+	return out
+}
+
+// SafeMB is the size of the safe copies.
+func (g DuplicateGroup) SafeMB() float64 {
+	mb := 0.0
+	for _, c := range g.Safe() {
+		mb += c.Index.SizeMB
+	}
+	return mb
+}
+
+// Fires says whether the group is an IDX04 finding: a safe copy, or two or more copies to merge.
+func (g DuplicateGroup) Fires() bool { return len(g.Safe()) > 0 || len(g.Merging()) >= 2 }
+
+// duplicateCandidate is an index IDX04 groups: enabled, clustered or nonclustered, not hypothetical,
+// with key columns.
+func duplicateCandidate(x ExistingIndex) bool {
+	return (x.Type == 1 || x.Type == 2) && !x.IsHypothetical && !x.IsDisabled && len(x.Keys) > 0
+}
+
+// keeperBefore is the triage's keeper order: primary key, clustered, unique, more reads, larger,
+// lower index id.
+func keeperBefore(a, b ExistingIndex) bool {
+	switch {
+	case a.IsPrimaryKey != b.IsPrimaryKey:
+		return a.IsPrimaryKey
+	case a.Type != b.Type:
+		return a.Type < b.Type
+	case a.IsUnique != b.IsUnique:
+		return a.IsUnique
+	case a.Reads != b.Reads:
+		return a.Reads > b.Reads
+	case a.SizeMB != b.SizeMB:
+		return a.SizeMB > b.SizeMB
+	}
+	return a.IndexID < b.IndexID
+}
+
+// keeperWhy says why the first ranks before the second: "primary key", "clustered", "unique", "most
+// reads", "larger", "lowest index id".
+func keeperWhy(a, b ExistingIndex) string {
+	switch {
+	case a.IsPrimaryKey != b.IsPrimaryKey:
+		return "primary key"
+	case a.Type != b.Type:
+		return "clustered"
+	case a.IsUnique != b.IsUnique:
+		return "unique"
+	case a.Reads != b.Reads:
+		return "most reads"
+	case a.SizeMB != b.SizeMB:
+		return "larger"
+	}
+	return "lowest index id"
+}
+
+// coveredByWider says whether a wider index starts with the same keys and holds every column of a
+// (the triage's #Wider, 459-474): such a copy is the triage's IDX08, not a copy to merge.
+func coveredByWider(f IndexFacts, a ExistingIndex) bool {
+	for _, b := range f.Indexes {
+		if b.IndexID == a.IndexID || !duplicateCandidate(b) || b.Filter != a.Filter || len(b.Keys) <= len(a.Keys) {
+			continue
+		}
+		prefix := true
+		for i, k := range a.Keys {
+			if !strings.EqualFold(b.Keys[i].Name, k.Name) || b.Keys[i].Descending != k.Descending {
+				prefix = false
+				break
+			}
+		}
+		if prefix && holdsEvery(b, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasColumnNotIn says whether c holds a column d does not.
+func hasColumnNotIn(c, d ExistingIndex) bool {
+	cols := indexColumns(d)
+	for _, n := range indexColumns(c) {
+		if !containsFold(cols, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// DuplicateGroups are a table's IDX04 groups of two or more copies, in the order of their best copy's
+// index id, each ranked, with its safe copies and the copies that need merging.
+func DuplicateGroups(f IndexFacts) []DuplicateGroup {
+	groups := []DuplicateGroup{}
+	for _, x := range f.Indexes {
+		if !duplicateCandidate(x) {
+			continue
+		}
+		placed := false
+		for i := range groups {
+			if sameKeys(groups[i].Copies[0].Index, x) {
+				groups[i].Copies = append(groups[i].Copies, DuplicateCopy{Index: x})
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			groups = append(groups, DuplicateGroup{Schema: f.Schema, Table: f.Table, Keys: x.Keys, Filter: x.Filter, Copies: []DuplicateCopy{{Index: x}}})
+		}
+	}
+	out := []DuplicateGroup{}
+	for _, g := range groups {
+		if len(g.Copies) < 2 {
+			continue
+		}
+		sort.SliceStable(g.Copies, func(i, j int) bool { return keeperBefore(g.Copies[i].Index, g.Copies[j].Index) })
+		for i := range g.Copies {
+			g.Copies[i].Rank = i + 1
+		}
+		// Safe: the triage's CoveredBy rule.
+		safe := make([]bool, len(g.Copies))
+		for i, d := range g.Copies {
+			if !plainIndex(d.Index) {
+				continue
+			}
+			for j, c := range g.Copies {
+				if i != j && holdsEvery(c.Index, d.Index) && (j < i || c.Index.Type == 1 || hasColumnNotIn(c.Index, d.Index)) {
+					safe[i] = true
+					break
+				}
+			}
+		}
+		// The copy that stays for each safe copy: the best-ranked one that holds every column and is not
+		// itself safe (one always exists: holding every column carries along a chain of safe copies).
+		for i, d := range g.Copies {
+			if !safe[i] {
+				continue
+			}
+			for j, c := range g.Copies {
+				if i != j && !safe[j] && holdsEvery(c.Index, d.Index) {
+					g.Copies[i].KeptIn = c.Index.Name
+					break
+				}
+			}
+		}
+		// Merging: the plain copies left, unless a wider index covers them; only two or more make a merge
+		// (the triage's MergeCount >= 2: one plain copy left is simply the one kept).
+		merge := 0
+		for i, d := range g.Copies {
+			g.Copies[i].Merge = plainIndex(d.Index) && !safe[i] && !coveredByWider(f, d.Index)
+			if g.Copies[i].Merge {
+				merge++
+			}
+		}
+		if merge < 2 {
+			for i := range g.Copies {
+				g.Copies[i].Merge = false
+			}
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// firingGroups are the IDX04 groups that fire across the tables, the safe copies' size largest first.
+func firingGroups(tables []IndexFacts) []DuplicateGroup {
+	out := []DuplicateGroup{}
+	for _, t := range tables {
+		for _, g := range DuplicateGroups(t) {
+			if g.Fires() {
+				out = append(out, g)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].SafeMB() > out[j].SafeMB() })
+	return out
+}
+
+// TableHasDuplicates says whether a table has an IDX04 finding: the create-index guard then names the
+// Design card (docs/phase5o-contract.md, section 5).
+func TableHasDuplicates(f IndexFacts) bool {
+	for _, g := range DuplicateGroups(f) {
+		if g.Fires() {
+			return true
+		}
+	}
+	return false
+}
+
+// groupKeys is "(CustomerId, OrderDate)", with the filter when there is one.
+func groupKeys(g DuplicateGroup) string {
+	s := "(" + keyText(g.Keys) + ")"
+	if g.Filter != "" {
+		s += " where " + g.Filter
+	}
+	return s
+}
+
+// copyWhy says what becomes of one copy in the evidence: kept and why, safe to disable, or to merge.
+func copyWhy(g DuplicateGroup, c DuplicateCopy) string {
+	switch {
+	case c.KeptIn != "":
+		return "safe to disable, kept in " + QuoteName(c.KeptIn)
+	case c.Merge:
+		return "needs merging"
+	case c.Index.IsPrimaryKey:
+		return "kept, primary key"
+	case c.Index.Type == 1:
+		return "kept, clustered"
+	case c.Index.IsUnique:
+		return "kept, unique"
+	}
+	for _, d := range g.Copies {
+		if strings.EqualFold(d.KeptIn, c.Index.Name) && c.Rank != 1 {
+			return "kept, holds every column of " + QuoteName(d.Index.Name)
+		}
+	}
+	if c.Rank == 1 {
+		return "kept, " + keeperWhy(c.Index, g.Copies[1].Index)
+	}
+	return "kept, a wider index starts with the same keys"
+}
+
+// idx04Evidence starts with the safe copies ("Safe to disable: [IX_B] (kept in [IX_A])."), which
+// IDX04SafeCopies reads back from a stored finding, or the copies to merge, then each copy: its keys,
+// included columns, filter, size, reads and writes in the window, and what becomes of it.
+func idx04Evidence(g DuplicateGroup, w *DesignWindow) string {
+	parts := []string{}
+	if safe := g.Safe(); len(safe) > 0 {
+		list := []string{}
+		for _, c := range safe {
+			list = append(list, QuoteName(c.Index.Name)+" (kept in "+QuoteName(c.KeptIn)+")")
+		}
+		parts = append(parts, idx04SafeMark+strings.Join(list, ", ")+".")
+	} else {
+		list := []string{}
+		for _, c := range g.Merging() {
+			list = append(list, QuoteName(c.Index.Name))
+		}
+		parts = append(parts, idx04MergeMark+strings.Join(list, ", ")+".")
+	}
+	since := "since SQL Server started counting"
+	if w != nil {
+		since = "since " + w.Text
+	}
+	for _, c := range g.Copies {
+		x := c.Index
+		inc := "nothing"
+		if len(x.Included) > 0 {
+			inc = plainList(x.Included)
+		}
+		filter := "no filter"
+		if x.Filter != "" {
+			filter = "filter " + x.Filter
+		}
+		use := "reads and writes not read"
+		if x.Reads >= 0 && x.Writes >= 0 {
+			use = fmt.Sprintf("%s and %s %s", plural(x.Reads, "read", "reads"), plural(x.Writes, "write", "writes"), since)
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s): keys %s; includes %s; %s; %s; %s.", QuoteName(x.Name), copyWhy(g, c), keyText(x.Keys), inc, filter, sizeText(x.SizeMB), use))
+	}
+	return strings.Join(parts, " ")
+}
+
+// idx04Findings raises one IDX04 finding per group that fires, in the groups' order.
+func idx04Findings(groups []DuplicateGroup, w *DesignWindow, now time.Time) []Finding {
+	chk, _ := CheckByID("IDX04")
+	since := UsageSince(w, now)
+	out := []Finding{}
+	for _, g := range groups {
+		table := designName(g.Schema, g.Table)
+		safe, merge := g.Safe(), g.Merging()
+		sentences, names := []string{}, []string{}
+		for _, c := range safe {
+			sentences = append(sentences, fmt.Sprintf("%s is a copy of %s on %s %s: %s, for nothing. %s holds every column of %s.",
+				c.Index.Name, c.KeptIn, table, groupKeys(g), copyCost(c.Index, since), c.KeptIn, c.Index.Name))
+			names = append(names, c.Index.Name)
+		}
+		mergeNames := []string{}
+		for _, c := range merge {
+			mergeNames = append(mergeNames, c.Index.Name)
+		}
+		if len(merge) >= 2 {
+			other := "the other does not"
+			if len(merge) > 2 {
+				other = "the others do not"
+			}
+			sentences = append(sentences, fmt.Sprintf("%s on %s have the same keys (%s) but each holds columns %s. One index with all their columns would replace them.",
+				andList(mergeNames), table, keyText(g.Keys), other))
+		}
+		x := Finding{CheckID: "IDX04", Title: chk.Title, Owner: chk.Owner, When: WhenOnline, Effort: EffortModerate,
+			Object: QuoteName(g.Schema) + "." + QuoteName(g.Table), Finding: strings.Join(sentences, " "), Why: idx04Why,
+			ThenCheck: chk.ThenCheck, Evidence: idx04Evidence(g, w)}
+		rank := 4
+		if g.SafeMB() >= idx04Rank3MB {
+			rank = 3
+		}
+		x.Severity = SeverityFromRank(rank)
+		switch {
+		case len(safe) == 1:
+			x.DoThis = fmt.Sprintf(idx04DoOne, safe[0].Index.Name, safe[0].KeptIn)
+		case len(safe) > 1:
+			x.DoThis = fmt.Sprintf(idx04DoMany, andList(names))
+		}
+		if len(merge) >= 2 {
+			if x.DoThis != "" {
+				x.DoThis += fmt.Sprintf(" %s need merging: %s", andList(mergeNames), strings.ToLower(idx04DoMerge[:1])+idx04DoMerge[1:])
+			} else {
+				x.DoThis = idx04DoMerge
+			}
+		}
+		if len(safe) > 0 {
+			x.FixID, x.Effort = FixDisableIndex, EffortQuickWin
+		}
+		out = append(out, x)
+	}
+	return out
+}
+
+// idx04Verdict is IDX04's clause of the verdict: "2 indexes copy another one: 1.2 GB and 4.3 million
+// writes since 27 Oct for nothing.", and the copies to merge.
+func idx04Verdict(groups []DuplicateGroup, w *DesignWindow, now time.Time) string {
+	safe, merge, mb, writes, usage := 0, 0, 0.0, int64(0), true
+	for _, g := range groups {
+		for _, c := range g.Safe() {
+			safe++
+			mb += c.Index.SizeMB
+			if c.Index.Writes < 0 {
+				usage = false
+			} else {
+				writes += c.Index.Writes
+			}
+		}
+		merge += len(g.Merging())
+	}
+	out := []string{}
+	if safe > 0 {
+		cost := sizeText(mb)
+		if usage {
+			cost += " and " + countText(writes) + " " + pluralWord(writes, "write", "writes")
+			if s := UsageSince(w, now); s != "" {
+				cost += " " + s
+			}
+		}
+		lead := fmt.Sprintf("%d indexes copy another one", safe)
+		if safe == 1 {
+			lead = "1 index copies another one"
+		}
+		out = append(out, fmt.Sprintf("%s: %s for nothing.", lead, cost))
+	}
+	if merge > 0 {
+		out = append(out, fmt.Sprintf("%d indexes have the same keys as another but hold different columns: merging them is a job for someone experienced with indexes.", merge))
+	}
+	return strings.Join(out, " ")
+}
+
+// IDX04SafeCopies reads the safe copies back from an IDX04 finding's evidence ("Safe to disable: [IX_B]
+// (kept in [IX_A]), [IX_E] (kept in [IX_A])."): each copy and the copy that stays. The query page reads
+// them from the Design card's last stored read (docs/phase5o-contract.md, section 5). nil when the
+// evidence does not start that way.
+func IDX04SafeCopies(evidence string) [][2]string {
+	if !strings.HasPrefix(evidence, idx04SafeMark) {
+		return nil
+	}
+	rest := evidence[len(idx04SafeMark):]
+	out := [][2]string{}
+	for {
+		index, after, ok := cutBracketed(rest)
+		if !ok || !strings.HasPrefix(after, " (kept in ") {
+			return out
+		}
+		keeper, after, ok := cutBracketed(after[len(" (kept in "):])
+		if !ok || !strings.HasPrefix(after, ")") {
+			return out
+		}
+		out = append(out, [2]string{index, keeper})
+		after = after[1:]
+		if !strings.HasPrefix(after, ", ") {
+			return out
+		}
+		rest = after[2:]
+	}
+}
+
+// cutBracketed reads a [bracketed] name at the start of s (]] inside is ]) and returns it and the rest.
+func cutBracketed(s string) (name, rest string, ok bool) {
+	if !strings.HasPrefix(s, "[") {
+		return "", s, false
+	}
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		if s[i] != ']' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+1 < len(s) && s[i+1] == ']' {
+			b.WriteByte(']')
+			i++
+			continue
+		}
+		return b.String(), s[i+1:], true
+	}
+	return "", s, false
 }
 
 // DesignForeignKeys is the card page's fold (docs/phase5n-contract.md, section 3): the keys without an
@@ -429,11 +992,33 @@ func ForeignKeyIndexOptions(database string, k UnindexedForeignKeyFact) map[stri
 
 // AvailableDesignFixes are the fixes of the Design card's findings: one create-index per IDX14
 // finding, as performanceIndexFixes does for WRK03, carrying the finding's check (IDX14) and its
-// object, so the card page sends them with the first preview.
+// object, so the card page sends them with the first preview; and one disable-index per safe copy of
+// an IDX04 finding (docs/phase5o-contract.md, section 2), with its table, the index, the copy that
+// stays and the finding's object.
 func AvailableDesignFixes(f DesignFacts, findings []Finding) []Fix {
 	out := []Fix{}
 	def, _ := FindFixDef(FixCreateIndex)
+	disable, _ := FindFixDef(FixDisableIndex)
 	for _, x := range findings {
+		if x.CheckID == "IDX04" && x.FixID == FixDisableIndex {
+			for _, t := range f.IndexTables {
+				if QuoteName(t.Schema)+"."+QuoteName(t.Table) != x.Object {
+					continue
+				}
+				for _, g := range DuplicateGroups(t) {
+					for _, c := range g.Safe() {
+						if !strings.Contains(x.Evidence, QuoteName(c.Index.Name)+" (kept in "+QuoteName(c.KeptIn)+")") {
+							continue
+						}
+						opts := DisableIndexOptions(t.Schema, t.Table, c.Index.Name, c.KeptIn)
+						opts[OptionObject] = x.Object
+						out = append(out, Fix{ID: disable.ID, Title: disable.Title, Scope: disable.Scope, CheckID: x.CheckID, Setting: disable.Setting,
+							Current: disableCurrent(t, c.Index), Target: "disabled", Options: opts})
+					}
+				}
+			}
+			continue
+		}
 		if x.CheckID != "IDX14" || x.FixID != FixCreateIndex {
 			continue
 		}

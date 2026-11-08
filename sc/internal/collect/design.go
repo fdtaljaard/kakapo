@@ -11,8 +11,10 @@ import (
 )
 
 // The Design card's read (docs/phase5n-contract.md, section 2): the foreign keys without an index for
-// every referenced table (unindexedForeignKeysQuery with @tables NULL, the query page's own read), then
-// one batch inside the database with the deletes on their referenced tables, the counts and the window.
+// every referenced table (unindexedForeignKeysQuery with @tables NULL, the query page's own read), the
+// indexes of every user table (indexFactsQuery with @table NULL, the index fixes' own read,
+// docs/phase5o-contract.md), then one batch inside the database with the deletes on their referenced
+// tables, the counts and the window.
 // SELECTs only, the safe session, each area in its own TRY.
 
 // designQuery runs inside the database (EXEC [db].sys.sp_executesql) with @objects, an XML list
@@ -90,7 +92,8 @@ func objectsXML(keys []domain.UnindexedForeignKeyFact) string {
 
 // ReadDesignFacts reads what the Design card needs about one database (docs/phase5n-contract.md,
 // section 2): the foreign keys without an index (ReadUnindexedForeignKeys for every referenced table),
-// the deletes on their referenced tables, the counts and the window's start. SELECTs only. An area that
+// every user table's indexes (AllIndexFacts, for IDX04), the deletes on their referenced tables, the
+// counts and the window's start. SELECTs only. An area that
 // fails says so in its error; the error returned means the batch itself could not run. LastRestore is
 // the caller's, from the Backups read.
 func ReadDesignFacts(ctx context.Context, db *sql.DB, database string) (domain.DesignFacts, error) {
@@ -99,6 +102,14 @@ func ReadDesignFacts(ctx context.Context, db *sql.DB, database string) (domain.D
 		f.ForeignKeysError = err.Error()
 	} else {
 		f.ForeignKeys = keys
+	}
+	// IDX04 (docs/phase5o-contract.md, section 1): every user table's indexes, the per-table read with a
+	// NULL table.
+	f.IndexTables = []domain.IndexFacts{}
+	if tables, head, err := AllIndexFacts(ctx, db, database); err != nil {
+		f.IndexesError = err.Error()
+	} else {
+		f.IndexTables, f.IndexesError, f.UsageError = tables, head.IndexesError, head.UsageError
 	}
 
 	rows, err := db.QueryContext(ctx, Tag(safeSession+"SET QUOTED_IDENTIFIER ON; EXEC "+domain.QuoteName(database)+".sys.sp_executesql @stmt, N'@objects nvarchar(max)', @objects = @objects;"),

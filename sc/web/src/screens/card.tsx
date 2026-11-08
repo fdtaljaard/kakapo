@@ -106,13 +106,13 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
     if (setup) setAppliedOn(ov.overview)
     refresh()
   }
-  const applyFinding = (f: Finding) => {
+  const applyFinding = (f: Finding, options?: Record<string, string>) => {
     if (!f.fixId) return
     // The Backups card's fix is titled by itself ("Create a backup schedule"), and so is a costly query's
     // archive ("Archive or delete old rows"); the others by the finding.
     const ownTitle = cardId === "backups" || (f.checkId === "QRY01" && f.fixId === archiveTableFixId)
     const fix = ownTitle ? detail?.fixes?.find((x) => x.id === f.fixId) : undefined
-    setFixing({ fixId: f.fixId, title: fix?.title ?? f.title, options: fixOptionsFor(f, detail?.fixes) })
+    setFixing({ fixId: f.fixId, title: fix?.title ?? f.title, options: options ?? fixOptionsFor(f, detail?.fixes) })
   }
   // Where a finding's next read lives (docs/phase4c-contract.md): a costly query opens its page, a
   // blocking or open-transaction finding opens the chain.
@@ -462,11 +462,12 @@ function DetailBody({
 }: {
   detail: CardDetail
   between?: ReactNode
-  onApply?: (f: Finding) => void
+  onApply?: (f: Finding, options?: Record<string, string>) => void
   investigate?: (f: Finding) => { to: string } | undefined
   startedAt?: string
 }) {
   const { card, checks } = detail
+  const choices = (f: Finding) => applyChoices(f, detail.fixes)
   const inPanel = card.id === "storage" ? "STO10" : card.id === "performance" ? "DLK01" : null
   const findings = inPanel ? detail.findings.filter((f) => f.checkId !== inPanel) : detail.findings
   // The checks list marks STO10 and DLK01 amber only when it sees an actionable finding for them.
@@ -510,13 +511,25 @@ function DetailBody({
         )}
         {/* Two IDX14 findings can share a table (two foreign keys on it): the index keeps the keys apart. */}
         {toDo.map((f, i) => (
-          <FindingCard key={`${f.checkId}/${f.object}/${i}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
+          <FindingCard
+            key={`${f.checkId}/${f.object}/${i}`}
+            finding={f}
+            onApply={onApply}
+            choices={choices(f)}
+            investigate={investigate?.(f)}
+          />
         ))}
         {info.length > 0 && (
           <>
             <h3 className="pt-1 text-sm text-muted-foreground">For information</h3>
             {info.map((f, i) => (
-              <FindingCard key={`${f.checkId}/${f.object}/${i}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
+              <FindingCard
+                key={`${f.checkId}/${f.object}/${i}`}
+                finding={f}
+                onApply={onApply}
+                choices={choices(f)}
+                investigate={investigate?.(f)}
+              />
             ))}
           </>
         )}
@@ -683,6 +696,15 @@ function NotCheckedBody({ card }: { card: CardData }) {
       </CardContent>
     </Card>
   )
+}
+
+// Phase 5o: an IDX04 finding with two or more safe copies on one table has one disable-index entry per copy
+// (docs/phase5o-contract.md, section 2): one button each, "Disable IX_B". undefined for every other finding.
+function applyChoices(f: Finding, fixes?: Fix[]): { label: string; options: Record<string, string> }[] | undefined {
+  if (f.fixId !== "disable-index") return undefined
+  const mine = (fixes ?? []).filter((x) => x.id === f.fixId && x.options?.object === f.object)
+  if (mine.length < 2) return undefined
+  return mine.map((x) => ({ label: `Disable ${x.options?.index ?? ""}`, options: x.options ?? {} }))
 }
 
 // The options a finding's fix needs (docs/phase4c-contract.md): the detail's fixes entry with this id whose

@@ -190,6 +190,17 @@ export function TablesTable({ detail, onAction }: { detail: QueryDetail; onActio
                       <ActionButton action={t.action} onAction={onAction} />
                     </div>
                   )}
+                  {/* Phase 5o: a safe copy from the Design card's IDX04, with its Apply (docs/phase5o-contract.md). */}
+                  {t.copies?.map((c) => (
+                    <div key={c.text} className="grid gap-1.5">
+                      <span className="break-words">{c.text}</span>
+                      {c.action && (
+                        <div>
+                          <ActionButton action={c.action} onAction={onAction} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </TableCell>
               <TableCell className="align-top text-right tabular-nums">{formatRows(t.rows)}</TableCell>

@@ -412,6 +412,17 @@ function auditDetail(db: string, hash: string): QueryDetail {
         action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.StockUnitAudit", {
           table: "[dbo].[StockUnitAudit]",
         }),
+        // Phase 5o: a safe copy from the Design card's last read (IDX04).
+        copies: [
+          {
+            text: "IX_Audit_Unit_Copy is a copy of IX_Audit_Unit, which has the same keys and every one of its columns (IDX04 on the Design card).",
+            action: action("disable-index", "Disable index", "Disable IX_Audit_Unit_Copy", {
+              table: "[dbo].[StockUnitAudit]",
+              index: "IX_Audit_Unit_Copy",
+              keeper: "IX_Audit_Unit",
+            }),
+          },
+        ],
       },
     ],
     notes: [],

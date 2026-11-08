@@ -82,6 +82,11 @@ type QueryFacts struct {
 	// the page says "archive before an index" when the query reads much of one. nil when they or
 	// kakapo's archive jobs could not be read.
 	GrowingCandidates []GrowingTable
+
+	// DuplicateFindings are the IDX04 findings of the Design card's last stored read
+	// (docs/phase5o-contract.md, section 5): a table of the query with a safe copy says so. nil when
+	// the card was never read.
+	DuplicateFindings []Finding
 }
 
 // UnindexedForeignKeyFact is an enabled foreign key of Schema.Table (the referencing table, with its
@@ -361,6 +366,9 @@ type QueryTable struct {
 	Stale          bool         `json:"stale"`
 	Indexes        []string     `json:"indexes"` // the indexes the plans use
 	Action         *QueryAction `json:"action,omitempty"`
+	// Copies are the table's indexes that IDX04 found safe to disable on the Design card's last read,
+	// one line each with the disable-index action (docs/phase5o-contract.md, section 5).
+	Copies []ExplainLine `json:"copies,omitempty"`
 }
 
 // ShowplanObject is a table (or index) a plan touches, from its <Object> nodes, brackets removed.
@@ -1212,9 +1220,32 @@ func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable 
 		if t.Found && t.Stats > 0 && canChange {
 			x.Action = qStatsAction(t.Schema, t.Table)
 		}
+		x.Copies = qTableCopies(f.DuplicateFindings, t.Schema, t.Table, canChange)
 		out = append(out, x)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Rows > out[j].Rows })
+	return out
+}
+
+// qTableCopies are a table's safe copies from the Design card's stored IDX04 findings: "IX_B is a copy
+// of IX_A, which has the same keys and every one of its columns (IDX04 on the Design card).", with the
+// disable-index action when the database can be changed.
+func qTableCopies(findings []Finding, schema, table string, canChange bool) []ExplainLine {
+	var out []ExplainLine
+	object := QuoteName(schema) + "." + QuoteName(table)
+	for _, x := range findings {
+		if x.CheckID != "IDX04" || x.Object != object {
+			continue
+		}
+		for _, c := range IDX04SafeCopies(x.Evidence) {
+			line := ExplainLine{Text: fmt.Sprintf("%s is a copy of %s, which has the same keys and every one of its columns (IDX04 on the Design card).", c[0], c[1])}
+			if canChange {
+				line.Action = &QueryAction{FixID: FixDisableIndex, Label: "Disable index", Title: "Disable " + c[0],
+					Options: DisableIndexOptions(schema, table, c[0], c[1])}
+			}
+			out = append(out, line)
+		}
+	}
 	return out
 }
 

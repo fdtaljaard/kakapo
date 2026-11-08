@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -65,8 +66,11 @@ type ExistingIndex struct {
 	Keys               []IndexKey
 	Included           []string
 	SizeMB             float64
-	Reads              int64 // user seeks, scans and lookups since the restart
-	Writes             int64 // user updates since the restart
+	Reads              int64 // user seeks, scans and lookups since the restart; -1 when not read
+	Writes             int64 // user updates since the restart; -1 when not read
+	// ForeignKeys are the foreign keys that reference this index (sys.foreign_keys.key_index_id):
+	// disabling it disables them (docs/phase5o-contract.md, section 3).
+	ForeignKeys []string
 }
 
 // KeyNames are the index's key column names in order.
@@ -93,6 +97,8 @@ type IndexFacts struct {
 	Indexes        []ExistingIndex // the heap or clustered index included
 	IndexesError   string
 	UsageError     string // the use since the restart could not be read (sys.dm_db_index_usage_stats)
+	// ForeignKeysError says the foreign keys that reference the indexes could not be read.
+	ForeignKeysError string
 }
 
 // TableName is "schema.table".
@@ -541,6 +547,12 @@ func createIndexGuards(f IndexFacts, p indexPlan) []IndexGuard {
 		}
 	}
 
+	// The IDX04 sentences name the Design card when the table already has copies there
+	// (docs/phase5o-contract.md, section 5).
+	designNote := ""
+	if TableHasDuplicates(f) {
+		designNote = " The Design card's IDX04 lists the copies " + table + " already has."
+	}
 	for _, x := range f.Indexes {
 		if x.Type != 1 && x.Type != 2 || len(x.Keys) == 0 {
 			continue
@@ -552,13 +564,13 @@ func createIndexGuards(f IndexFacts, p indexPlan) []IndexGuard {
 		}
 		switch {
 		case x.Type == 1 && startsWithFold(keys, p.keys):
-			out = append(out, IndexGuard{"IDX04", fmt.Sprintf("The clustered index %s already starts with these columns (%s), so SQL Server can already seek on them; another index on the same keys only adds write work.", x.Name, plainList(keys)), true})
+			out = append(out, IndexGuard{"IDX04", fmt.Sprintf("The clustered index %s already starts with these columns (%s), so SQL Server can already seek on them; another index on the same keys only adds write work.%s", x.Name, plainList(keys), designNote), true})
 		case startsWithFold(keys, p.keys):
-			check := "IDX04"
+			check, note := "IDX04", designNote
 			if len(keys) > len(p.keys) {
-				check = "IDX08"
+				check, note = "IDX08", ""
 			}
-			out = append(out, IndexGuard{check, fmt.Sprintf("Index %s already starts with these columns (%s)%s; widen it instead of adding one.", x.Name, plainList(keys), disabled), true})
+			out = append(out, IndexGuard{check, fmt.Sprintf("Index %s already starts with these columns (%s)%s; widen it instead of adding one.%s", x.Name, plainList(keys), disabled, note), true})
 		case x.Type == 2 && !x.IsUnique && !x.IsPrimaryKey && startsWithFold(p.keys, keys):
 			out = append(out, IndexGuard{"IDX08", fmt.Sprintf("Index %s (%s) is the start of this one%s; widen it instead of adding one, or it becomes an overlapping index nobody needs.", x.Name, plainList(keys), disabled), true})
 		case sameSetFold(keys, p.keys):
@@ -922,4 +934,418 @@ func editionWords(engineEdition int) string {
 		return "Express edition"
 	}
 	return "this edition"
+}
+
+// The disable-index fix (docs/phase5o-contract.md, section 3): IDX04's safe copy is disabled, never
+// dropped, so the change can be undone (PerformanceTriage.sql 510; sp_IndexCleanup.sql 7051).
+// Microsoft Learn, "Disable indexes and constraints": a disabled nonclustered index's data is removed
+// and its definition kept; ALTER INDEX ... REBUILD enables it again; disabling an index a foreign key
+// references disables the key; a query that names a disabled index in a hint fails with error 315.
+const (
+	FixDisableIndex = "disable-index"
+	// OptionKeeper is the copy that stays: the index that holds every column of the one disabled.
+	OptionKeeper = "keeper"
+)
+
+// DisableIndexOptions are the disable-index options for a safe copy: its table as [schema].[table],
+// the index and the copy that stays. The Design card's fix and the query page's line send the same.
+func DisableIndexOptions(schema, table, index, keeper string) map[string]string {
+	return map[string]string{OptionTable: QuoteName(schema) + "." + QuoteName(table), OptionIndex: index, OptionKeeper: keeper}
+}
+
+// Kinds of an IndexNamePlace that is not a module (a module's kind is its sys.objects type_desc).
+const (
+	PlacePlanGuide  = "PLAN_GUIDE"
+	PlaceQueryStore = "QUERY_STORE"
+)
+
+// IndexNamePlace is one place a search for an index's name found it: a procedure, view, function or
+// trigger (Kind its type_desc, Schema and Name), a plan guide (Name), or a query Query Store ran
+// (QueryID). Text is what was searched; Places checks the name as a word in it.
+type IndexNamePlace struct {
+	Kind    string
+	Schema  string
+	Name    string
+	QueryID int64
+	Text    string
+}
+
+// IndexNameSearch is what collect.SearchIndexName found for an index's name in a database's code,
+// plan guides and Query Store, each area with its own error (docs/phase5o-contract.md, section 4).
+// Error says the search could not run at all.
+type IndexNameSearch struct {
+	Index           string
+	Error           string
+	Modules         []IndexNamePlace
+	ModulesError    string
+	PlanGuides      []IndexNamePlace
+	PlanGuidesError string
+	QueryStore      []IndexNamePlace
+	QueryStoreError string
+	QueryStoreOff   bool
+}
+
+// IndexNamePattern is the LIKE pattern of an index's name as a word, with ! as the escape character
+// (ESCAPE N'!'): the name's !, [, ], _ and % escaped, a character that is not a letter, digit or
+// underscore on each side. The search wraps each text in spaces, so a name at its start or end matches.
+func IndexNamePattern(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '!', '[', ']', '_', '%':
+			b.WriteRune('!')
+		}
+		b.WriteRune(r)
+	}
+	return "%[^A-Za-z0-9_]" + b.String() + "[^A-Za-z0-9_]%"
+}
+
+// wordRune is a character that continues a name: a letter, a digit or an underscore.
+func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
+
+// NameAsWord says whether text names name as a word, case-insensitively: somewhere the name appears with
+// no letter, digit or underscore just before or after it. "IX_B" is in "WITH (INDEX([IX_B]))" and
+// "IX_B, IX_C", not in "IX_B2" or "XIX_B".
+func NameAsWord(text, name string) bool {
+	t, n := []rune(strings.ToLower(text)), []rune(strings.ToLower(name))
+	if len(n) == 0 {
+		return false
+	}
+	for i := 0; i+len(n) <= len(t); i++ {
+		if string(t[i:i+len(n)]) != string(n) {
+			continue
+		}
+		if (i == 0 || !wordRune(t[i-1])) && (i+len(n) == len(t) || !wordRune(t[i+len(n)])) {
+			return true
+		}
+	}
+	return false
+}
+
+// Places are where the search found the index's name as a word, at most three: "dbo.GetOrders",
+// "plan guide PG_Orders", "query 42 in Query Store".
+func (s IndexNameSearch) Places() []string {
+	out := []string{}
+	for _, list := range [][]IndexNamePlace{s.Modules, s.PlanGuides, s.QueryStore} {
+		for _, p := range list {
+			if len(out) == 3 {
+				return out
+			}
+			if !NameAsWord(p.Text, s.Index) {
+				continue
+			}
+			switch p.Kind {
+			case PlacePlanGuide:
+				out = append(out, "plan guide "+p.Name)
+			case PlaceQueryStore:
+				out = append(out, fmt.Sprintf("query %d in Query Store", p.QueryID))
+			default:
+				name := p.Name
+				if p.Schema != "" {
+					name = p.Schema + "." + p.Name
+				}
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+// Failures are the areas the search could not read, one sentence each.
+func (s IndexNameSearch) Failures() []string {
+	if s.Error != "" {
+		return []string{"Could not search for the name: " + s.Error}
+	}
+	out := []string{}
+	for _, a := range []struct{ what, err string }{{"the database's code", s.ModulesError}, {"plan guides", s.PlanGuidesError}, {"Query Store", s.QueryStoreError}} {
+		if a.err != "" {
+			out = append(out, "Could not search "+a.what+": "+a.err)
+		}
+	}
+	return out
+}
+
+// sizeText is "1.2 GB", "120 MB", "49.9 MB" or "3 MB" for an index's size.
+func sizeText(mb float64) string {
+	switch {
+	case mb >= 1024:
+		return n1(mb/1024) + " GB"
+	case mb >= 100:
+		return n0(mb) + " MB"
+	}
+	return strings.TrimSuffix(n1(mb), ".0") + " MB"
+}
+
+// countText is "4.3 million" from a million, else the number with thousands separators.
+func countText(n int64) string {
+	if n >= 1_000_000 {
+		return n1(float64(n)/1_000_000) + " million"
+	}
+	return n0int(n)
+}
+
+// andList is "A", "A and B", "A, B and C".
+func andList(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+}
+
+// keyText is the keys as a sentence shows them: "CustomerId, OrderDate DESC".
+func keyText(keys []IndexKey) string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = k.Name
+		if k.Descending {
+			out[i] += " DESC"
+		}
+	}
+	return plainList(out)
+}
+
+// sameKeys says whether two indexes have the same key columns in the same order and direction and the
+// same filter: IDX04's grouping (PerformanceTriage.sql 426-433).
+func sameKeys(a, b ExistingIndex) bool {
+	if len(a.Keys) != len(b.Keys) || a.Filter != b.Filter {
+		return false
+	}
+	for i := range a.Keys {
+		if !strings.EqualFold(a.Keys[i].Name, b.Keys[i].Name) || a.Keys[i].Descending != b.Keys[i].Descending {
+			return false
+		}
+	}
+	return true
+}
+
+// indexColumns are every column an index holds: its keys and its included columns.
+func indexColumns(x ExistingIndex) []string { return append(x.KeyNames(), x.Included...) }
+
+// holdsEvery says whether c holds every column of d: the clustered index holds them all
+// (PerformanceTriage.sql 436-447).
+func holdsEvery(c, d ExistingIndex) bool {
+	if c.Type == 1 {
+		return true
+	}
+	cols := indexColumns(c)
+	for _, n := range indexColumns(d) {
+		if !containsFold(cols, n) {
+			return false
+		}
+	}
+	return true
+}
+
+// plainIndex is a nonclustered index that is neither unique nor a primary key: the only kind IDX04
+// may disable.
+func plainIndex(x ExistingIndex) bool {
+	return x.Type == 2 && !x.IsUnique && !x.IsPrimaryKey && !x.IsUniqueConstraint
+}
+
+// UsageSince is how a sentence says when the use counters started: "since 27 Oct", or "" when that
+// could not be read.
+func UsageSince(w *DesignWindow, now time.Time) string {
+	if w == nil {
+		return ""
+	}
+	return "since " + designDay(w.Since, now)
+}
+
+// copyCost is "1.2 GB and 4.3 million writes since 27 Oct", without the writes when the use was not
+// read, without the day when the window was not.
+func copyCost(x ExistingIndex, since string) string {
+	s := sizeText(x.SizeMB)
+	if x.Writes >= 0 {
+		s += " and " + countText(x.Writes) + " " + pluralWord(x.Writes, "write", "writes")
+		if since != "" {
+			s += " " + since
+		}
+	}
+	return s
+}
+
+func pluralWord(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// Texts of the disable-index fix (docs/phase5o-contract.md, section 3). Sources: Microsoft Learn,
+// "Disable indexes and constraints" (a disabled clustered index makes the table unreadable; a disabled
+// nonclustered index's data is removed and its definition kept; REBUILD enables it; a foreign key that
+// references a disabled index is disabled; a hint naming a disabled index fails with error 315) and
+// "ALTER INDEX" (DISABLE and REBUILD, the schema modification lock DISABLE takes); the foreign key not
+// coming back on after the rebuild was verified on SQL Server 2022 on 2026-11-08. The guard itself:
+// sp_IndexCleanup.sql 6210-6260.
+const (
+	disableHeldTemplate  = "%s is named in %s: a query that names a disabled index fails (error 315). Change the code first, or ask the vendor."
+	disableSearchHeld    = "kakapo does not disable an index it could not search for."
+	disableForeignKey    = "Foreign key %s references %s. Disabling it would switch off foreign key %s without an error, and rebuilding the index does not switch the key back on."
+	disableReadsTemplate = "Queries that read %s (%s %s) will read %s instead."
+	disableLock          = "Disabling needs a short lock on the table."
+	disableUndo          = "Undoing it rebuilds the index from the table: it takes as long as creating it, and the space comes back."
+	disableSearched      = "kakapo searched the database's code, plan guides and Query Store for the name; code outside SQL Server (an application that names the index in a hint) cannot be searched."
+	disableSearchedNoQS  = "kakapo searched the database's code and plan guides for the name (Query Store is off); code outside SQL Server (an application that names the index in a hint) cannot be searched."
+	disableSpace         = "The %s freed stays inside the data file: the file does not shrink; new rows reuse the space."
+	disableRollbackOn    = "The rollback rebuilds it online (ONLINE = ON): users keep working, but it still needs a short lock at the start and at the end."
+)
+
+// disableRefusal says why kakapo does not disable this index, or "" when it may: the index is gone or
+// already disabled, a foreign key references it (or that could not be read), it is not a plain
+// nonclustered index, or the copy that stays is gone, disabled, or no longer has the same keys and
+// every column (the group changed since the card was read).
+func disableRefusal(f IndexFacts, name, keeper string) string {
+	table := f.TableName()
+	x, ok := f.Index(name)
+	switch {
+	case !ok || x.IndexID == 0:
+		return fmt.Sprintf("%s is not on %s any more: the indexes changed since the card was read. Read the card again.", name, table)
+	case x.IsDisabled:
+		return fmt.Sprintf("%s is already disabled on %s: there is nothing to free.", x.Name, table)
+	case len(x.ForeignKeys) > 0:
+		keys := andList(x.ForeignKeys)
+		if len(x.ForeignKeys) > 1 {
+			return fmt.Sprintf("Foreign keys %s reference %s. Disabling it would switch off foreign keys %s without an error, and rebuilding the index does not switch the keys back on.", keys, x.Name, keys)
+		}
+		return fmt.Sprintf(disableForeignKey, keys, x.Name, keys)
+	case f.ForeignKeysError != "":
+		return fmt.Sprintf("Could not read which foreign keys reference %s (%s): kakapo does not disable an index a foreign key may use.", x.Name, f.ForeignKeysError)
+	case x.Type == 1:
+		return fmt.Sprintf("%s is the clustered index of %s: disabling it makes the whole table unreadable until it is rebuilt, so kakapo does not.", x.Name, table)
+	case x.Type != 2:
+		return fmt.Sprintf("%s is not a plain nonclustered index (XML, spatial or columnstore): kakapo does not disable it.", x.Name)
+	case x.IsPrimaryKey:
+		return fmt.Sprintf("%s is the primary key of %s: kakapo does not disable it.", x.Name, table)
+	case x.IsUniqueConstraint:
+		return fmt.Sprintf("%s is a unique constraint on %s: kakapo does not disable it.", x.Name, table)
+	case x.IsUnique:
+		return fmt.Sprintf("%s is a unique index: it keeps two rows from having the same keys, so it is not a copy kakapo disables.", x.Name)
+	}
+	k, ok := f.Index(keeper)
+	switch {
+	case strings.TrimSpace(keeper) == "" || strings.EqualFold(keeper, x.Name):
+		return fmt.Sprintf("No other copy of %s was named to keep: kakapo disables a copy only while another holds every one of its columns.", x.Name)
+	case !ok || k.IndexID == 0 || k.IsHypothetical || (k.Type != 1 && k.Type != 2):
+		return fmt.Sprintf("%s, the copy that would stay, is not on %s any more: the indexes changed since the card was read. Read the card again.", keeper, table)
+	case k.IsDisabled:
+		return fmt.Sprintf("%s, the copy that would stay, is disabled: %s is the only working copy, so kakapo does not disable it.", k.Name, x.Name)
+	case !sameKeys(k, x) || !holdsEvery(k, x):
+		return fmt.Sprintf("%s no longer has the same keys and every column of %s: the indexes changed since the card was read. Read the card again.", k.Name, x.Name)
+	}
+	return ""
+}
+
+// disableStatement and disableRollback are the fix's ALTER INDEX statements on the table's three-part
+// name; the rebuild is online on the editions that have it, as create-index builds.
+func disableStatement(f IndexFacts, name string) string {
+	return "ALTER INDEX " + QuoteName(name) + " ON " + f.qualified() + " DISABLE;"
+}
+
+func disableRollback(f IndexFacts, name string) string {
+	s := "ALTER INDEX " + QuoteName(name) + " ON " + f.qualified() + " REBUILD"
+	if OnlineIndexEdition(f.EngineEdition) {
+		s += " WITH (ONLINE = ON)"
+	}
+	return s + ";"
+}
+
+// disableCurrent is the index as the fix describes it: "IX_B on dbo.Orders (CustomerId, OrderDate), 1.2 GB".
+func disableCurrent(f IndexFacts, x ExistingIndex) string {
+	return IndexDescription(x.Name, f.TableName(), x.KeyNames(), x.Included) + ", " + sizeText(x.SizeMB)
+}
+
+// BuildDisableIndexFix builds the disable-index preview from the table read again (collect.IndexFacts),
+// the search for the index's name (nil when it was not run) and the use counters' window (nil when not
+// read), with the options table, index and keeper. A refusal leaves the preview without changes, with
+// its sentence as the first warning. The name found in code, or an area the search could not read,
+// holds Apply back (Held); Copy script still works.
+func BuildDisableIndexFix(f IndexFacts, search *IndexNameSearch, w *DesignWindow, now time.Time, options map[string]string) (FixPreview, Fix) {
+	def, _ := FindFixDef(FixDisableIndex)
+	name, keeper := strings.TrimSpace(options[OptionIndex]), strings.TrimSpace(options[OptionKeeper])
+	echo := map[string]string{}
+	for k, v := range options {
+		echo[k] = v
+	}
+	echo[OptionTable] = QuoteName(f.Schema) + "." + QuoteName(f.Table)
+	fix := Fix{ID: def.ID, Title: def.Title, Scope: def.Scope, CheckID: def.CheckID, Setting: def.Setting, Current: name, Target: "disabled", Options: echo}
+	pv := FixPreview{Database: f.Database, EngineVersion: f.ProductVersion, Changes: []Drift{}, Warnings: []string{}, Options: echo}
+
+	if refuse := disableRefusal(f, name, keeper); refuse != "" {
+		pv.Warnings = append(pv.Warnings, refuse)
+		return pv, fix
+	}
+	x, _ := f.Index(name)
+	k, _ := f.Index(keeper)
+	echo[OptionIndex], echo[OptionKeeper] = x.Name, k.Name
+	fix.Current = disableCurrent(f, x)
+	since := UsageSince(w, now)
+
+	pv.Lead = fmt.Sprintf("%s is a copy of %s: %s, for nothing.", x.Name, k.Name, copyCost(x, since))
+	if f.UsageError == "" && x.Reads >= 0 {
+		when := since
+		if when == "" {
+			when = "since SQL Server started counting"
+		}
+		pv.Warnings = append(pv.Warnings, fmt.Sprintf(disableReadsTemplate, x.Name, plural(x.Reads, "time", "times"), when, k.Name))
+	} else {
+		pv.Warnings = append(pv.Warnings, fmt.Sprintf("Queries that read %s will read %s instead.", x.Name, k.Name))
+	}
+	pv.Warnings = append(pv.Warnings, disableLock, disableUndo)
+	if OnlineIndexEdition(f.EngineEdition) {
+		pv.Warnings = append(pv.Warnings, disableRollbackOn)
+	} else {
+		pv.Warnings = append(pv.Warnings, "The rollback: "+offlineIndexWarning(f))
+	}
+	pv.Warnings = append(pv.Warnings, fmt.Sprintf(disableSpace, sizeText(x.SizeMB)))
+
+	failures := []string{}
+	switch {
+	case search == nil:
+		failures = append(failures, "Could not search for the name: the search did not run")
+	default:
+		failures = append(failures, search.Failures()...)
+		if len(failures) == 0 && search.QueryStoreOff {
+			pv.Warnings = append(pv.Warnings, disableSearchedNoQS)
+		} else if len(failures) == 0 {
+			pv.Warnings = append(pv.Warnings, disableSearched)
+		}
+	}
+	pv.Warnings = append(pv.Warnings, failures...)
+	pv.Warnings = append(pv.Warnings, indexPermission(f.TableName()))
+
+	switch {
+	case search != nil && len(search.Places()) > 0:
+		pv.Held = fmt.Sprintf(disableHeldTemplate, x.Name, andList(search.Places()))
+	case len(failures) > 0:
+		pv.Held = strings.Join(failures, ". ") + ". " + disableSearchHeld
+	}
+	pv.Changes = append(pv.Changes, Drift{Setting: "Index", Current: fix.Current, Target: "disabled"})
+	pv.Statement = disableStatement(f, x.Name)
+	pv.Rollback = disableRollback(f, x.Name)
+	return pv, fix
+}
+
+// DisableIndexReadBack says whether the index read back after the change is disabled with no pages
+// left: "IX_B is disabled; 1.2 GB freed inside the file." sizeMB is its size before.
+func DisableIndexReadBack(f IndexFacts, name string, sizeMB float64) (after string, verified bool) {
+	x, ok := f.Index(name)
+	switch {
+	case !ok:
+		return fmt.Sprintf("%s was not found on %s after the change", name, f.TableName()), false
+	case !x.IsDisabled:
+		return fmt.Sprintf("%s is still enabled on %s", x.Name, f.TableName()), false
+	case x.SizeMB > 0:
+		return fmt.Sprintf("%s is disabled but still uses %s", x.Name, sizeText(x.SizeMB)), false
+	}
+	return fmt.Sprintf("%s is disabled; %s freed inside the file.", x.Name, sizeText(sizeMB)), true
+}
+
+// DisableIndexChangeDescription is the change log line of a disabled index: "Disabled index IX_B on
+// dbo.Orders (a copy of IX_A), 1.2 GB, in Shop, for IDX04".
+func DisableIndexChangeDescription(f IndexFacts, index, keeper string, sizeMB float64, dbName string) string {
+	return fmt.Sprintf("Disabled index %s on %s (a copy of %s), %s, in %s, for IDX04", index, f.TableName(), keeper, sizeText(sizeMB), dbName)
 }

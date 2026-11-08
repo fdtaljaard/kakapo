@@ -43,11 +43,15 @@ function metaText(f: Finding): string {
 export function FindingCard({
   finding: f,
   onApply,
+  choices,
   investigate,
   context,
 }: {
   finding: Finding
-  onApply?: (f: Finding) => void
+  onApply?: (f: Finding, options?: Record<string, string>) => void
+  // Phase 5o: one Apply per entry when a finding has several fixes of its kind (two safe copies on one
+  // table), each labelled and sending its own options; otherwise the one Apply.
+  choices?: { label: string; options: Record<string, string> }[]
   // Where the next read lives (docs/phase4c-contract.md): an Investigate link next to Apply.
   investigate?: { label?: string; to: string }
   context?: HandoverContext
@@ -65,7 +69,7 @@ export function FindingCard({
           <SeverityBadge severity={f.severity} />
           <span className="font-mono text-xs text-muted-foreground">{f.checkId}</span>
           <span className={cn("font-medium", !info && "text-foreground")}>{f.title}</span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
             {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
             <Button variant="ghost" size="sm" onClick={() => copy(handoverText(f, ctx))}>
               {status === "copied" ? <Check /> : <Copy />}
@@ -79,11 +83,17 @@ export function FindingCard({
                 </Link>
               </Button>
             )}
-            {canApply && (
+            {canApply && !choices && (
               <Button variant="outline" size="sm" onClick={() => onApply?.(f)}>
                 Apply
               </Button>
             )}
+            {canApply &&
+              choices?.map((c) => (
+                <Button key={c.label} variant="outline" size="sm" className="max-w-full" onClick={() => onApply?.(f, c.options)}>
+                  <span className="truncate">{c.label}</span>
+                </Button>
+              ))}
           </div>
         </div>
 

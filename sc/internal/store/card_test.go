@@ -76,3 +76,42 @@ func TestInsertCardRead(t *testing.T) {
 		t.Errorf("card reads: %d %v", n, err)
 	}
 }
+
+// LastFindings reads one check's findings from the latest read of a card (docs/phase5o-contract.md,
+// section 5): an older read and other cards are not read.
+func TestLastFindings(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, filepath.Join(t.TempDir(), "test.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if fs, err := st.LastFindings(ctx, 7, "Shop", domain.CardDesign, "IDX04"); err != nil || len(fs) != 0 {
+		t.Fatalf("never read: %+v %v", fs, err)
+	}
+	card := domain.Card{ID: domain.CardDesign, Status: domain.StatusAmber}
+	old := domain.Finding{CheckID: "IDX04", Severity: domain.SeverityLow, Object: "[dbo].[Old]", Evidence: "Safe to disable: [IX_O] (kept in [IX_P])."}
+	if _, err := st.InsertCardRead(ctx, 7, "Shop", card, []domain.Finding{old}, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	now := []domain.Finding{
+		{CheckID: "IDX14", Severity: domain.SeverityLow, Object: "[dbo].[Lines]"},
+		{CheckID: "IDX04", Severity: domain.SeverityMedium, Owner: domain.OwnerUs, When: domain.WhenOnline, Effort: domain.EffortQuickWin,
+			Object: "[dbo].[Orders]", Finding: "IX_B is a copy of IX_A.", Evidence: "Safe to disable: [IX_B] (kept in [IX_A])."},
+	}
+	if _, err := st.InsertCardRead(ctx, 7, "Shop", card, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertCardRead(ctx, 7, "Shop", domain.Card{ID: domain.CardStorage, Status: domain.StatusGreen}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := st.LastFindings(ctx, 7, "Shop", domain.CardDesign, "IDX04")
+	if err != nil || len(fs) != 1 || fs[0].Object != "[dbo].[Orders]" || fs[0].Severity != domain.SeverityMedium || fs[0].Effort != domain.EffortQuickWin ||
+		fs[0].Evidence != "Safe to disable: [IX_B] (kept in [IX_A])." || fs[0].Finding != "IX_B is a copy of IX_A." {
+		t.Errorf("last IDX04 findings %+v %v", fs, err)
+	}
+	if fs, _ := st.LastFindings(ctx, 8, "Shop", domain.CardDesign, "IDX04"); len(fs) != 0 {
+		t.Errorf("another server's findings %+v", fs)
+	}
+}

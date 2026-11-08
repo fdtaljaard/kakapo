@@ -79,6 +79,8 @@ var FixDefs = []FixDef{
 	// Phase 4c (docs/phase4c-contract.md): the Performance card's actions, built through the registry.
 	{"create-index", "Create the suggested index", ScopeDatabase, "WRK03", "Index"},
 	{"drop-index", "Drop an index", ScopeDatabase, "WRK03", "Index"},
+	// Phase 5o (docs/phase5o-contract.md, section 3): IDX04's safe copy, disabled so it can be rebuilt.
+	{FixDisableIndex, "Disable a duplicate index", ScopeDatabase, "IDX04", "Index"},
 	{"kill-session", "Kill the blocking session", ScopeServer, "ACT01", "Session"},
 	// Phase 5m (docs/phase5m-contract.md, section 4): the row versioning decision's fix.
 	{"rcsi", "Turn on READ COMMITTED SNAPSHOT", ScopeDatabase, "DEC01", "READ_COMMITTED_SNAPSHOT"},

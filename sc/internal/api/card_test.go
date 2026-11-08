@@ -221,22 +221,31 @@ func TestCardDetailLive(t *testing.T) {
 	if rec := postPath(h, path("NoSuchDatabase_x9", "storage/checkdb-room")); rec.Code != 404 {
 		t.Errorf("unknown database: %d %s", rec.Code, rec.Body.String())
 	}
-	// The Design card (docs/phase5n-contract.md): read, its one check, and the fold as foreignKeys.
+	// The Design card (docs/phase5n-contract.md, docs/phase5o-contract.md): read, its two checks, and the fold
+	// as foreignKeys; an IDX14 finding has its create-index fix, an IDX04 finding with Apply a disable-index fix
+	// per safe copy.
 	d, body = read(dbName, "design")
-	if d.Card.ID != domain.CardDesign || d.Card.Status == "" || len(d.Checks) != 1 || d.Checks[0].CheckID != "IDX14" ||
+	if d.Card.ID != domain.CardDesign || d.Card.Status == "" || len(d.Checks) != 2 || d.Checks[0].CheckID != "IDX14" || d.Checks[1].CheckID != "IDX04" ||
 		!strings.Contains(body, `"foreignKeys":`) || d.ForeignKeys == nil || strings.Contains(body, "checkdbRoom") {
 		t.Errorf("design detail: %s", body)
 	}
-	if d.Card.Status != domain.StatusGrey && len(d.Card.Facts) != 4 {
+	if d.Card.Status != domain.StatusGrey && len(d.Card.Facts) != 5 {
 		t.Errorf("design facts: %+v", d.Card.Facts)
 	}
+	applies := 0
 	for _, x := range d.Findings {
-		if x.CheckID != "IDX14" || x.FixID != domain.FixCreateIndex {
+		switch {
+		case x.CheckID == "IDX14" && x.FixID == domain.FixCreateIndex:
+			applies++
+		case x.CheckID == "IDX04" && x.FixID == domain.FixDisableIndex:
+			applies += len(domain.IDX04SafeCopies(x.Evidence))
+		case x.CheckID == "IDX04" && x.FixID == "":
+		default:
 			t.Errorf("design finding: %+v", x)
 		}
 	}
-	if len(d.Fixes) != len(d.Findings) {
-		t.Errorf("design fixes %d for %d findings", len(d.Fixes), len(d.Findings))
+	if len(d.Fixes) != applies {
+		t.Errorf("design fixes %d for %d applies", len(d.Fixes), applies)
 	}
 	t.Logf("design: %s %q %q %+v, %d keys in the fold (%s)", d.Card.Status, d.Card.StatusText, d.Card.Verdict, d.Card.Facts,
 		len(d.ForeignKeys.Keys), d.ForeignKeys.Heading)
