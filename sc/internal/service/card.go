@@ -13,8 +13,8 @@ import (
 // CardDetail reads one card of a database live, with its ranked findings and every check behind
 // it (docs/phase3a-contract.md). Backups, Setup, Storage, Upkeep and Performance are read and
 // stored as card reads (Setup and Upkeep with the fixes available now, docs/phase3c-contract.md and
-// phase3d; Performance with the last deadlock report, phase3e); the card still to come is grey with
-// empty lists. An unknown server, database or card id is KindNotFound.
+// phase3d; Performance with the last deadlock report, phase3e; Design with its fold of foreign keys,
+// phase5n). An unknown server, database or card id is KindNotFound.
 func (s *Service) CardDetail(ctx context.Context, serverID int64, dbName, cardID string) (domain.CardDetail, error) {
 	def, ok := domain.FindCardDef(domain.CardID(cardID))
 	if !ok {
@@ -49,6 +49,8 @@ func (s *Service) CardDetail(ctx context.Context, serverID int64, dbName, cardID
 		return s.upkeepDetail(ctx, db, serverID, *d, def)
 	case domain.CardPerformance:
 		return s.performanceDetail(ctx, db, serverID, *d, def)
+	case domain.CardDesign:
+		return s.designDetail(ctx, db, serverID, *d, def)
 	}
 	return detailWithoutChecks(def), nil
 }
@@ -97,6 +99,38 @@ func (s *Service) storageDetail(ctx context.Context, db *sql.DB, serverID int64,
 	fixes := append(domain.AvailableStorageFixes(facts, findings), domain.ArchiveFixesFor(facts, findings)...)
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, CheckdbRoom: last, CheckdbRun: run,
 		Fixes: fixes, Drives: domain.BuildStorageDrives(facts, trend)}, nil
+}
+
+// designDetail reads the Design card of one database (docs/phase5n-contract.md), keeps the read, and
+// carries the fold of the keys that would cost work if rows were deleted and the create-index fix of
+// each IDX14 finding. The window's last restore comes from the Backups read, as the overview has it.
+func (s *Service) designDetail(ctx context.Context, db *sql.DB, serverID int64, d domain.DatabaseStatus, def domain.CardDef) (domain.CardDetail, error) {
+	backups := readBackupFacts(ctx, db, d)
+	facts := readDesignFacts(ctx, db, d, backups.LastRestore)
+	card, findings, checks := domain.BuildDesignCard(facts, def)
+	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
+		return domain.CardDetail{}, err
+	}
+	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Fixes: domain.AvailableDesignFixes(facts, findings),
+		ForeignKeys: domain.BuildDesignForeignKeys(facts)}, nil
+}
+
+// readDesignFacts reads what the Design card needs, with the last restore into the database from the
+// Backups read (nil when none or not read). A database that is not online is not read; when nothing can
+// be read, the facts say why, so the card turns grey instead of failing the page.
+func readDesignFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus, lastRestore *time.Time) domain.DesignFacts {
+	if d.State != "ONLINE" {
+		return domain.DesignFacts{Database: d.Name, State: d.State}
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	f, err := collect.ReadDesignFacts(readCtx, db, d.Name)
+	f.State = d.State
+	if err != nil {
+		return domain.DesignFacts{Database: d.Name, State: d.State, Error: "could not read the database's design: " + err.Error()}
+	}
+	f.LastRestore = lastRestore
+	return f
 }
 
 // detailWithoutChecks is the detail of a card whose checks are not built yet: grey, with empty

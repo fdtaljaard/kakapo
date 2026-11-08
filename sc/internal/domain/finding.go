@@ -161,6 +161,10 @@ type CardDetail struct {
 	// Drives is the Storage card's answer first (docs/phase5l-contract.md part 5): one bar per drive;
 	// nil (left out) for every other card and when the volumes could not be read.
 	Drives *StorageDrives `json:"drives,omitempty"`
+	// ForeignKeys is the Design card's fold (docs/phase5n-contract.md, section 3): the keys that would
+	// cost work if rows were deleted, and the window; nil (left out) for every other card and when the
+	// foreign keys could not be read.
+	ForeignKeys *DesignForeignKeys `json:"foreignKeys,omitempty"`
 }
 
 // Check is one check the app implements: which card it belongs to, its title, the question it
@@ -351,6 +355,11 @@ var Checks = []Check{
 		"Re-run after a week: fewer deadlocks for the top pair"},
 	{"BLK01", CardPerformance, "Blocking history", "What blocked users this week, and how often?", OwnerUs,
 		"Re-run after a week: fewer occurrences for the top blocker"},
+
+	// Phase 5n (docs/phase5n-contract.md): the Design card's first check, foreign keys without an index,
+	// raised only when rows were deleted from the referenced table in the window.
+	{"IDX14", CardDesign, "Foreign keys without an index", "Which foreign keys make deletes read a whole table?", OwnerUs,
+		"Re-run: IDX14 gone for that key; deletes on the parent table faster (the tuning report, when the deletes are in Query Store)."},
 
 	// Phase 5m (docs/phase5m-contract.md): the decisions for a database. A decision is not a finding and no
 	// card lists it; its catalogue entry keeps its rule, sources and fix the one way.

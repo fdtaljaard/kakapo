@@ -1,0 +1,174 @@
+import { ApiError, type Card, type CardDetail, type Finding, type Fix, type FixPreview, type FixResult } from "./api"
+import type { FeatureMock } from "./api.mock"
+
+// Phase 5n (docs/phase5n-contract.md): the Design card's fixture. WarehouseLive has deleted from Orders since
+// the restart, so IDX14 fires on Lines with its create-index fix; two other keys sit in the fold. The other
+// databases were restored three days ago: too early to tell, every key in the fold. The create-index preview
+// of a foreign key (options.source "foreign-key") answers here with the preview's first line; the plan's
+// suggestions stay with api-sample.mock.ts.
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const IDX14_WHY =
+  "Every delete from the parent table, and every change to its key, checks this foreign key. Without an index the check reads the whole referencing table and holds its locks while it does (Microsoft Learn, 'Primary and foreign key constraints')."
+const IDX14_THEN =
+  "Re-run: IDX14 gone for that key; deletes on the parent table faster (the tuning report, when the deletes are in Query Store)."
+
+const now = () => new Date().toISOString()
+
+function designCard(over: Partial<Card>): Card {
+  return {
+    id: "design",
+    title: "Database design",
+    question: "Does the way it is built cost you anything?",
+    status: "green",
+    statusText: "No problem found",
+    verdict: "",
+    facts: [],
+    toDo: 0,
+    forClientIT: 0,
+    fixable: 0,
+    asOf: now(),
+    note: "",
+    ...over,
+  }
+}
+
+const foldKeys = [
+  { name: "FK_Notes_Customers", table: "Notes", rows: 412_980, parent: "Customers", columns: ["CustomerId"] },
+  { name: "FK_Moves_Batches", table: "Moves", rows: 88_120, parent: "Batches", columns: ["BatchNo", "Site"] },
+].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows) → ${k.parent}, on ${k.columns.join(", ")}` }))
+
+// The Design card's detail for a database, as GET .../cards/design answers it.
+export function designDetail(database: string): CardDetail {
+  if (database !== "WarehouseLive") {
+    const keys = [
+      { name: "FK_Lines_Orders", table: "Lines", rows: 1_376_845, parent: "Orders", columns: ["OrderId"], text: "" },
+      ...foldKeys,
+    ].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows) → ${k.parent}, on ${k.columns.join(", ")}` }))
+    return {
+      card: designCard({
+        statusText: "Too early to tell",
+        verdict:
+          "Too early to tell which foreign keys cost work: deletes counted for 3 days, since the restore on 5 Nov. 3 foreign keys on large tables have no index.",
+        facts: [
+          { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
+          { label: "Costing work now", value: "0", tone: "normal" },
+          { label: "Counted since", value: "the restore on 5 Nov", tone: "normal" },
+          { label: "Tables", value: "95", tone: "normal" },
+        ],
+      }),
+      findings: [],
+      checks: [{ checkId: "IDX14", title: "Foreign keys without an index", status: "passed", note: "" }],
+      foreignKeys: { heading: "Too early to tell", tooEarly: true, window: "the restore on 5 Nov", keys },
+    }
+  }
+  const finding: Finding = {
+    checkId: "IDX14",
+    title: "Foreign keys without an index",
+    severity: "Medium",
+    owner: "Us",
+    when: "Online",
+    effort: "Quick win",
+    object: "[dbo].[Lines]",
+    finding:
+      "Deleting from Orders (812 rows since 1 Oct) makes SQL Server read the whole of Lines (1,376,845 rows) to check foreign key FK_Lines_Orders: no index on Lines starts with OrderId.",
+    why: IDX14_WHY,
+    doThis:
+      "Create an index on Lines (OrderId). It does not change how the application works; tell the vendor, so their next upgrade keeps it or adds its own.",
+    thenCheck: IDX14_THEN,
+    evidence:
+      "Foreign key FK_Lines_Orders: [dbo].[Lines] ([OrderId]) references [dbo].[Orders]; ON DELETE NO_ACTION, ON UPDATE NO_ACTION. Lines has 1,376,845 rows; 812 rows deleted from Orders since the restart on 1 Oct (2026-10-01 06:00). Deletes are counted since the restart on 1 Oct and may be more: SQL Server forgets them when it unloads the table's metadata.",
+    fixId: "create-index",
+  }
+  const fix: Fix = {
+    id: "create-index",
+    title: "Create the suggested index",
+    scope: "database",
+    checkId: "IDX14",
+    setting: "Index",
+    current: "none",
+    target: "index on Lines (OrderId)",
+    needsRestart: false,
+    options: {
+      source: "foreign-key",
+      table: `[${database}].[dbo].[Lines]`,
+      equality: "[OrderId]",
+      inequality: "",
+      included: "",
+      parent: "[dbo].[Orders]",
+      foreignKey: "FK_Lines_Orders",
+      object: "[dbo].[Lines]",
+    },
+  }
+  return {
+    card: designCard({
+      status: "amber",
+      statusText: "1 thing to do",
+      verdict: "1 foreign key makes deletes read a whole table: Lines (1.4 million rows).",
+      facts: [
+        { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
+        { label: "Costing work now", value: "1", tone: "bad" },
+        { label: "Counted since", value: "the restart on 1 Oct", tone: "normal" },
+        { label: "Tables", value: "95", tone: "normal" },
+      ],
+      toDo: 1,
+      fixable: 1,
+    }),
+    findings: [finding],
+    checks: [{ checkId: "IDX14", title: "Foreign keys without an index", status: "finding", note: "" }],
+    fixes: [fix],
+    foreignKeys: { heading: "Would cost work if rows were deleted", tooEarly: false, window: "the restart on 1 Oct", keys: foldKeys },
+  }
+}
+
+// The create-index preview of a foreign key: the first line, the statement on the key's columns.
+function foreignKeyPreview(database: string, options: Record<string, string>): FixPreview {
+  const name = options.name || "IX_Lines_OrderId_kakapo"
+  return {
+    database,
+    engineVersion: "16.0.4135.4",
+    lead: "Deletes from Orders read all 1,376,845 rows of Lines today; with this index they read only the matching rows.",
+    changes: [{ setting: "Index", current: "none", target: `${name} on dbo.Lines (OrderId), about 25 MB, online` }],
+    statement: `CREATE NONCLUSTERED INDEX [${name}] ON [${database}].[dbo].[Lines] ([OrderId]) WITH (ONLINE = ON, SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);`,
+    rollback: `DROP INDEX [${name}] ON [${database}].[dbo].[Lines];`,
+    warnings: [
+      "Built online: users keep working, but it still needs a short lock at the start and at the end.",
+      "Test on the sandbox first when the table is large: the build time and the effect on the queries show there.",
+      "If the table is busy, kakapo gives up after 10 seconds of waiting for its lock rather than queue in front of users; then try again in a quieter moment.",
+      "Each index slows down every insert, update and delete on the table a little; drop it again (the change log holds the DROP INDEX) if it does not help.",
+      "Needs the ALTER permission on dbo.Lines (db_ddladmin or db_owner in the database).",
+    ],
+    inputs: [
+      { name: "name", label: "Index name", value: name, kind: "text", help: "kakapo's indexes end in _kakapo, so they are easy to find later." },
+      {
+        name: "included",
+        label: "Included columns",
+        value: "",
+        kind: "text",
+        help: "As SQL Server suggested them. Leave out the columns the query does not need; empty for none.",
+      },
+    ],
+    options: { ...options, name, included: "" },
+  }
+}
+
+export const mockDesign: FeatureMock = async (method, path, init) => {
+  const fix = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/create-index\/(preview|apply)$/)
+  if (!fix || method !== "POST") return undefined
+  const options = init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }).options : undefined
+  if (options?.source !== "foreign-key") return undefined // a plan's suggestion: api-sample.mock.ts
+  const database = decodeURIComponent(fix[2])
+  const preview = foreignKeyPreview(database, options)
+  if (fix[3] === "preview") return preview
+  if (localStorage.getItem("mock.fixFails") === "1") throw new ApiError("SQL Server did not create the index", 502)
+  await delay(1500)
+  return {
+    preview,
+    before: "none",
+    after: `${preview.options?.name} on dbo.Lines (OrderId), 24.8 MB`,
+    verified: true,
+    changeId: 950 + Math.floor(Math.random() * 49),
+    appliedAt: now(),
+  } satisfies FixResult
+}

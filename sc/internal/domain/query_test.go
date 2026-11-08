@@ -441,13 +441,18 @@ func TestQueryDetailForeignKeysWithoutIndex(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("foreign key lines %+v", d.Explain)
 	}
-	want := "Each delete from dbo.OrderLine checks foreign key FK_StockMove_Line, and dbo.StockMove (13,000,000 rows) has no index that starts with its columns OrderLine_id, Kind, so SQL Server reads the whole of dbo.StockMove to check it. An index on dbo.StockMove (OrderLine_id, Kind) lets it seek instead."
+	want := "Each delete from dbo.OrderLine checks foreign key FK_StockMove_Line, and dbo.StockMove (13,000,000 rows) has no index that starts with its columns OrderLine_id, Kind, so SQL Server reads the whole of dbo.StockMove to check it. An index on dbo.StockMove (OrderLine_id, Kind) lets it seek instead. IDX14 on the Design card lists every such key."
 	if lines[0].Text != want || !strings.HasPrefix(lines[1].Text, "Each delete from dbo.OrderLine checks foreign key FK_OrderLine_Parent, and dbo.OrderLine (900,000 rows) has no index that starts with ParentLine_id") {
 		t.Errorf("lines:\n%s\n%s", lines[0].Text, lines[1].Text)
 	}
 	a := lines[0].Action
-	if a == nil || a.FixID != FixCreateIndex || a.Options[OptionTable] != "[Shop].[dbo].[StockMove]" || a.Options[OptionEquality] != "[OrderLine_id], [Kind]" {
+	if a == nil || a.FixID != FixCreateIndex || a.Options[OptionTable] != "[Shop].[dbo].[StockMove]" || a.Options[OptionEquality] != "[OrderLine_id], [Kind]" ||
+		a.Options[OptionSource] != SourceForeignKey || a.Options[OptionParent] != "[dbo].[OrderLine]" {
 		t.Errorf("action %+v", a)
+	}
+	// The query page's action carries IDX14 to the change row (docs/phase5n-contract.md, section 4).
+	if IndexFixCheck(a.Options) != "IDX14" {
+		t.Errorf("the query page's foreign-key action is not IDX14's: %q", IndexFixCheck(a.Options))
 	}
 	if s, err := ParseCreateIndexOptions(a.Options); err != nil || s.Table != "StockMove" || len(s.Keys()) != 2 {
 		t.Errorf("the create-index fix cannot read the options: %+v %v", s, err)

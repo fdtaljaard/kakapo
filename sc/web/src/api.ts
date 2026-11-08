@@ -100,6 +100,9 @@ export interface FixPreview {
   // Phase 5m: why Apply is held back although the change could run (a transaction left open in the
   // database); shown in place of Apply, Copy script stays.
   held?: string
+  // Phase 5n: the preview's first line, what the change does for this database ("Deletes from Orders read all
+  // 1,376,845 rows of Lines today; with this index they read only the matching rows.").
+  lead?: string
 }
 
 // Phase 5l: one drive's room for a change.
@@ -471,6 +474,16 @@ export interface CardDetail {
   checkdbRun?: CheckdbRun | null // backups and storage only: the last DBCC CHECKDB run from kakapo; omitted or null otherwise
   maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
   drives?: StorageDrives // storage only (phase 5l): the answer first, one bar per drive; omitted otherwise
+  foreignKeys?: DesignForeignKeys // design only (phase 5n): the keys that would cost work if rows were deleted; omitted otherwise
+}
+
+// Phase 5n: the Design card's fold (docs/phase5n-contract.md, section 3): foreign keys without an index on
+// tables of 10,000 rows or more with no delete seen in the window, largest first, one line each, no button.
+export interface DesignForeignKeys {
+  heading: string // "Would cost work if rows were deleted", or "Too early to tell" while the window is 7 days or less
+  tooEarly: boolean
+  window: string // "the restart on 1 Oct"; "" when not read
+  keys: { name: string; table: string; rows: number; parent: string; columns: string[]; text: string }[]
 }
 
 // Phase 5l: the Storage card's answer, "Will it run out of room?" (docs/phase5l-contract.md part 5).

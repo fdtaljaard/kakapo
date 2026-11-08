@@ -175,11 +175,15 @@ func (f StorageFacts) TempdbGrowthMB() int64 {
 // out for every other card; it writes checkdbRun for the Backups and Storage cards, null when no
 // CHECKDB ran from the app, and leaves it out for every other card; it writes fixes for the Setup and Upkeep cards, [] when none, and
 // leaves them out for every other card; it writes deadlocks for the Performance card, null when
-// the report was never run, and leaves it out for every other card; the same for blockingHistory.
+// the report was never run, and leaves it out for every other card; the same for blockingHistory. It
+// writes foreignKeys for the Design card only (left out when the keys could not be read).
 func (d CardDetail) MarshalJSON() ([]byte, error) {
 	type plain CardDetail
 	if d.Card.ID != CardPerformance {
 		d.Blocking, d.Trend = nil, nil
+	}
+	if d.Card.ID != CardDesign {
+		d.ForeignKeys = nil // the Design card's fold only (docs/phase5n-contract.md)
 	}
 	if d.Card.ID == CardSetup || d.Card.ID == CardUpkeep {
 		// The cards with fixes always say which are available, [] when none.

@@ -1744,8 +1744,8 @@ func groupThousands(s string) string {
 	return sign + out.String() + frac
 }
 
-// IDX06's size bar (PerformanceTriage.sql IDX06, from sp_BlitzIndex check 44): a heap of 100 MB of
-// data or a million rows.
+// IDX06's size bar: a heap of 100 MB of data or a million rows, the triage's own (PerformanceTriage.sql
+// 705). sp_BlitzIndex check 44 fires only on heaps over 10,240 MB.
 const (
 	idx06MinMB   = 100
 	idx06MinRows = 1000000

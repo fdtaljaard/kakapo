@@ -57,8 +57,10 @@ var CardDefs = []CardDef{
 		"SQL Agent, failed jobs, index and statistics maintenance, and who is told about errors."},
 	{CardPerformance, "Performance", "Is it slow, and why?",
 		"Waits in plain English, CPU pressure, blocking, deadlocks and the costliest queries."},
-	{CardDesign, "Database design", "Is the database built well?",
-		"Indexes, heaps, the tables everyone waits on, and the application's stored procedures, per database."},
+	// Phase 5n (docs/phase5n-contract.md, section 1): design review answers whether the way the database
+	// is built costs anything; the note shows only while the card is grey.
+	{CardDesign, "Database design", "Does the way it is built cost you anything?",
+		"Foreign keys without an index, and later duplicate and unused indexes and constraints SQL Server no longer trusts."},
 }
 
 // Fact is one labelled value on a card.
@@ -157,11 +159,10 @@ func UptimeDays(startedAt, now time.Time) float64 {
 }
 
 // BuildCards answers the six cards about one database from what was read for them: Setup,
-// Backups, Storage, Upkeep and Performance (each grey, "Not checked yet", when nil); the Storage
-// card with storageTrend, the stored samples STO12 forecasts from (or nil). Database design is grey,
-// "Not checked yet".
+// Backups, Storage, Upkeep, Performance and Database design (each grey, "Not checked yet", when nil);
+// the Storage card with storageTrend, the stored samples STO12 forecasts from (or nil).
 func BuildCards(setup *SetupFacts, backups *BackupFacts, storage *StorageFacts, storageTrend *DiskTrend, upkeep *UpkeepFacts,
-	performance *PerformanceFacts) []Card {
+	performance *PerformanceFacts, design *DesignFacts) []Card {
 	cards := make([]Card, 0, len(CardDefs))
 	for _, def := range CardDefs {
 		switch {
@@ -181,6 +182,9 @@ func BuildCards(setup *SetupFacts, backups *BackupFacts, storage *StorageFacts, 
 		case def.ID == CardPerformance && performance != nil:
 			// The last deadlock report and blocking history change only DLK01's and BLK01's lines in the checks, never the card.
 			c, _, _ := BuildPerformanceCard(*performance, def, nil, nil)
+			cards = append(cards, c)
+		case def.ID == CardDesign && design != nil:
+			c, _, _ := BuildDesignCard(*design, def)
 			cards = append(cards, c)
 		default:
 			cards = append(cards, GreyCard(def))

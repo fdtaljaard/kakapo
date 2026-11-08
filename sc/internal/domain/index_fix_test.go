@@ -305,7 +305,7 @@ func TestCreateIndexReadBack(t *testing.T) {
 		t.Errorf("gone %v %s", ok, after)
 	}
 	_, fix := BuildCreateIndexFix(f, s, pickOptions)
-	if d := CreateIndexChangeDescription(fix, "WarehouseLive"); d != "Created index IX_Pick_Status_Date_kakapo on dbo.Pick (Status, Date) include (Qty), about 66 MB, offline in WarehouseLive" {
+	if d := CreateIndexChangeDescription(fix, "WarehouseLive"); d != "Created index IX_Pick_Status_Date_kakapo on dbo.Pick (Status, Date) include (Qty), about 66 MB, offline in WarehouseLive, for WRK03" {
 		t.Errorf("description %s", d)
 	}
 	if o := IndexObject("dbo", "Pick", "IX_Pick_Status_Date_kakapo"); o != "dbo.Pick.IX_Pick_Status_Date_kakapo" {

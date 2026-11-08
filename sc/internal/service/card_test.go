@@ -102,3 +102,18 @@ func TestFixesRefuseBeforeApplying(t *testing.T) {
 		}
 	}
 }
+
+// The Design card (docs/phase5n-contract.md): a database that is not online is not read, and its card
+// says why; the card page carries no fold then.
+func TestDesignFactsNotOnline(t *testing.T) {
+	f := readDesignFacts(context.Background(), nil, domain.DatabaseStatus{Name: "WarehouseLive", State: "RESTORING"}, nil)
+	def, _ := domain.FindCardDef(domain.CardDesign)
+	c, findings, checks := domain.BuildDesignCard(f, def)
+	if c.Status != domain.StatusGrey || c.Note != "WarehouseLive is RESTORING, not online, so its design was not checked." || len(findings) != 0 ||
+		len(checks) != 1 || checks[0].Status != domain.CheckSkipped {
+		t.Errorf("design card %+v %+v", c, checks)
+	}
+	if domain.BuildDesignForeignKeys(f) != nil {
+		t.Error("a fold for a database that was not read")
+	}
+}

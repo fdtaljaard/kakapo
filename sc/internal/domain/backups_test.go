@@ -523,7 +523,7 @@ func TestCheckCatalogue(t *testing.T) {
 func TestBuildCardsWithBackups(t *testing.T) {
 	f := facts("SIMPLE")
 	nightlyFulls(&f)
-	cards := BuildCards(nil, &f, nil, nil, nil, nil)
+	cards := BuildCards(nil, &f, nil, nil, nil, nil, nil)
 	if cards[0].ID != CardBackups || cards[0].Status != StatusGreen || cards[0].Verdict == "" || len(cards[0].Facts) != 4 {
 		t.Errorf("live backups card: %+v", cards[0])
 	}

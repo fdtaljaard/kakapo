@@ -35,6 +35,7 @@ import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
 import { StorageDrivesBlock } from "@/components/room-line"
+import { ForeignKeysFold } from "@/components/foreign-keys-fold"
 
 // "/instances/:id/databases/:db/cards/:card": the frame of one card (title, question, status, verdict)
 // and what sits behind it, for one database (docs/phase3a-contract.md). The card detail is read on load
@@ -220,6 +221,9 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                     <CheckdbRoomPanel serverId={serverId} database={database} room={detail.checkdbRoom} onResult={setRan} />
                   </FindingContext.Provider>
                 </>
+              ) : cardId === "design" ? (
+                // Phase 5n: the keys that would cost work if rows were deleted (docs/phase5n-contract.md).
+                detail.foreignKeys && <ForeignKeysFold fold={detail.foreignKeys} />
               ) : cardId === "upkeep" ? (
                 // Phase 5b: the maintenance plan row (docs/phase5b-contract.md).
                 <MaintenancePlanRow
@@ -504,14 +508,15 @@ function DetailBody({
             No findings. Nothing on this card needs doing.
           </p>
         )}
-        {toDo.map((f) => (
-          <FindingCard key={`${f.checkId}/${f.object}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
+        {/* Two IDX14 findings can share a table (two foreign keys on it): the index keeps the keys apart. */}
+        {toDo.map((f, i) => (
+          <FindingCard key={`${f.checkId}/${f.object}/${i}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
         ))}
         {info.length > 0 && (
           <>
             <h3 className="pt-1 text-sm text-muted-foreground">For information</h3>
-            {info.map((f) => (
-              <FindingCard key={`${f.checkId}/${f.object}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
+            {info.map((f, i) => (
+              <FindingCard key={`${f.checkId}/${f.object}/${i}`} finding={f} onApply={onApply} investigate={investigate?.(f)} />
             ))}
           </>
         )}
@@ -687,10 +692,11 @@ function fixOptionsFor(f: Finding, fixes?: Fix[]): Record<string, string> | unde
   const mine = fixes?.filter((x) => x.id === f.fixId) ?? []
   const onObject = mine.filter((x) => Object.values(x.options ?? {}).includes(f.object))
   // Two suggestions on one table (WRK03): the evidence names the columns, so the entry whose column
-  // options all appear in it is the finding's own. Two costly queries on one object (QRY01): the hash.
+  // options all appear in it is the finding's own. Two costly queries on one object (QRY01): the hash. Two
+  // foreign keys on one table (IDX14): the key's name.
   const text = `${f.finding} ${f.evidence ?? ""}`
   const byColumns = onObject.find((x) =>
-    ["equality", "inequality", "included", "queryHash"].every((k) => !x.options?.[k] || text.includes(x.options[k])),
+    ["equality", "inequality", "included", "queryHash", "foreignKey"].every((k) => !x.options?.[k] || text.includes(x.options[k])),
   )
   const match = byColumns ?? onObject[0] ?? mine[0]
   return match?.options

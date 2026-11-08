@@ -17,7 +17,7 @@ const recentChanges = 10
 
 // Overview reads the database page now: the instance header, the one database and its Query Store
 // state (stored as a snapshot, as the database list does), its setup, backup, storage, upkeep and
-// performance facts (each card stored as a card read, the storage samples kept; neither the CHECKDB
+// performance and design facts (each card stored as a card read, the storage samples kept; neither the CHECKDB
 // room estimate nor the deadlock report is run here), the six cards about it and its latest changes,
 // with the changes made outside kakapo harvested from the default trace first, and the red flags
 // among the cards' findings.
@@ -110,6 +110,14 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
+	// The Design card (docs/phase5n-contract.md), with the last restore from the Backups read above.
+	design := readDesignFacts(ctx, db, *d, backups.LastRestore)
+	designDef, _ := domain.FindCardDef(domain.CardDesign)
+	card, findings, checks = domain.BuildDesignCard(design, designDef)
+	all[domain.CardDesign] = findings
+	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
+		return domain.Overview{}, err
+	}
 	// The decisions (docs/phase5m-contract.md): the row versioning read, the reports read above, kakapo's
 	// session from the instance read, and TempDB's room and TMP03 from the Storage card's facts.
 	decision, err := s.overviewRowVersioning(ctx, db, serverID, d.Name, info.XESession, storage, all[domain.CardStorage], lastBlocking, lastDeadlocks)
@@ -133,7 +141,7 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	return domain.Overview{
 		Instance:      info,
 		Database:      *d,
-		Cards:         domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance),
+		Cards:         domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance, &design),
 		RecentChanges: changes,
 		ChangeWindow:  window,
 		RedFlags:      domain.BuildRedFlags(all),

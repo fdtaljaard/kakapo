@@ -557,11 +557,11 @@ func TestUpkeepDetailJSON(t *testing.T) {
 
 func TestBuildCardsWithUpkeep(t *testing.T) {
 	f := goodUpkeep()
-	cards := BuildCards(nil, nil, nil, nil, &f, nil)
+	cards := BuildCards(nil, nil, nil, nil, &f, nil, nil)
 	if cards[3].ID != CardUpkeep || cards[3].Status != StatusGreen || len(cards[3].Facts) != 4 {
 		t.Errorf("upkeep card %+v", cards[3])
 	}
-	if cards := BuildCards(nil, nil, nil, nil, nil, nil); cards[3].Status != StatusGrey || cards[3].StatusText != "Not checked yet" {
+	if cards := BuildCards(nil, nil, nil, nil, nil, nil, nil); cards[3].Status != StatusGrey || cards[3].StatusText != "Not checked yet" {
 		t.Errorf("no facts %+v", cards[3])
 	}
 }

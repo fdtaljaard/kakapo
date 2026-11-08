@@ -133,6 +133,9 @@ type FixPreview struct {
 	// 4: a transaction left open in the database); the dialog shows it in place of Apply, Copy script
 	// stays. "" when nothing holds it.
 	Held string `json:"held,omitempty"`
+	// Lead is the preview's first line, what the change does for this database in one sentence (the
+	// index of a foreign key, docs/phase5n-contract.md section 4); "" when there is none.
+	Lead string `json:"lead,omitempty"`
 }
 
 // FixInput is one value the user may set in a fix's preview (docs/phase3g-contract.md).

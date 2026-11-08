@@ -1126,7 +1126,7 @@ func TestCardDetailJSONCheckdbRoom(t *testing.T) {
 
 func TestBuildCardsWithStorage(t *testing.T) {
 	f := sfacts()
-	cards := BuildCards(nil, nil, &f, nil, nil, nil)
+	cards := BuildCards(nil, nil, &f, nil, nil, nil, nil)
 	if cards[2].ID != CardStorage || cards[2].Status != StatusGreen || len(cards[2].Facts) != 4 || cards[2].Verdict == "" {
 		t.Errorf("storage card %+v", cards[2])
 	}

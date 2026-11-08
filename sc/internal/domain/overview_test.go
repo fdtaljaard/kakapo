@@ -47,7 +47,7 @@ func wantFacts(t *testing.T, c Card, want ...string) {
 }
 
 func TestBuildCardsOrderAndGreyCards(t *testing.T) {
-	cards := BuildCards(nil, nil, nil, nil, nil, nil)
+	cards := BuildCards(nil, nil, nil, nil, nil, nil, nil)
 	wantIDs := []CardID{CardBackups, CardSetup, CardStorage, CardUpkeep, CardPerformance, CardDesign}
 	for i, c := range cards {
 		if c.ID != wantIDs[i] || c.Title == "" || c.Question == "" {

@@ -223,6 +223,11 @@ export function FixDialog({
           </Alert>
         )}
 
+        {/* Phase 5n: what the change does for this database, the preview's first line (docs/phase5n-contract.md). */}
+        {step.kind === "preview" && !refreshing && step.preview.lead && (
+          <p className="font-medium break-words">{step.preview.lead}</p>
+        )}
+
         {/* Phase 5l: the room on each drive, first, rebuilt with the preview (docs/phase5l-contract.md). */}
         {step.kind === "preview" && !refreshing && <RoomLines room={step.preview.room} />}
 

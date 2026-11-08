@@ -683,7 +683,7 @@ func BuildCreateIndexFix(f IndexFacts, s CreateIndexSpec, options map[string]str
 		delete(echo, OptionOnline)
 	}
 
-	fix := Fix{ID: def.ID, Title: def.Title, Scope: def.Scope, CheckID: def.CheckID, Setting: def.Setting,
+	fix := Fix{ID: def.ID, Title: def.Title, Scope: def.Scope, CheckID: IndexFixCheck(options), Setting: def.Setting,
 		Current: "none", Target: target, Options: echo}
 	pv := FixPreview{Database: f.Database, EngineVersion: f.ProductVersion, Changes: []Drift{}, Warnings: []string{}, Options: echo}
 	if mb := int64(math.Ceil(p.sizeMB)); mb > 0 {
@@ -730,6 +730,7 @@ func BuildCreateIndexFix(f IndexFacts, s CreateIndexSpec, options map[string]str
 	if blocked {
 		return pv, fix
 	}
+	pv.Lead = foreignKeyLead(f, options)
 	pv.Changes = append(pv.Changes, Drift{Setting: "Index", Current: "none", Target: target})
 	pv.Statement = createIndexStatement(f, p)
 	pv.Rollback = dropIndexStatement(f, p.name)
@@ -750,10 +751,41 @@ func CreateIndexReadBack(f IndexFacts, s CreateIndexSpec, got *ExistingIndex) (a
 	return after, verified
 }
 
+// IndexFixCheck is the check an index fix belongs to: the finding's check when the options say it
+// was built from a foreign key (IDX14, the Design card and the query page's foreign-key action,
+// docs/phase5n-contract.md section 4), else the fix's default (WRK03).
+func IndexFixCheck(options map[string]string) string {
+	if options[OptionSource] == SourceForeignKey {
+		return "IDX14"
+	}
+	def, _ := FindFixDef(FixCreateIndex)
+	return def.CheckID
+}
+
+// foreignKeyLead is the preview's first line for a foreign key's index: "Deletes from Orders read
+// all 1,376,845 rows of Lines today; with this index they read only the matching rows." "" for any
+// other index, or when the referenced table is not in the options.
+func foreignKeyLead(f IndexFacts, options map[string]string) string {
+	if options[OptionSource] != SourceForeignKey || strings.TrimSpace(options[OptionParent]) == "" {
+		return ""
+	}
+	_, schema, table, err := SplitTableName(options[OptionParent])
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Deletes from %s read all %s of %s today; with this index they read only the matching rows.",
+		designName(schema, table), plural(f.Rows, "row", "rows"), designName(f.Schema, f.Table))
+}
+
 // CreateIndexChangeDescription is the change log line of a created index: "Created index {the
-// fix's target} in {database}".
+// fix's target} in {database}, for {check}", the check the fix was built from (WRK03, or IDX14 for a
+// foreign key's index), which the change log and the tuning report show.
 func CreateIndexChangeDescription(fix Fix, dbName string) string {
-	return "Created index " + fix.Target + " in " + dbName
+	d := "Created index " + fix.Target + " in " + dbName
+	if fix.CheckID != "" {
+		d += ", for " + fix.CheckID
+	}
+	return d
 }
 
 // IndexObject is the change row's object of an index fix: "schema.table.index".

@@ -735,25 +735,29 @@ func ReadCachedPlan(ctx context.Context, db *sql.DB, handle string, raw []byte) 
 }
 
 // unindexedForeignKeysQuery runs inside the database with @tables, an XML list <t s="schema"
-// n="table"/> of the tables a query deletes from or updates: every enabled foreign key that
-// references one of them where no enabled index of the referencing table (clustered or
-// nonclustered) has all the key's columns, in any order, as its first key columns. Per key: its
-// name, the referencing table and its rows (sys.partitions), the referenced table, and its columns
-// in the key's order, comma-separated and bracketed. Result sets: one row (error), the keys.
+// n="table"/> of the tables a query deletes from or updates, or NULL for every referenced table (the
+// Design card's IDX14, docs/phase5n-contract.md): every enabled foreign key that references one of
+// them where no enabled index of the referencing table (clustered or nonclustered) has all the key's
+// columns, in any order, as its first key columns. Per key: its name, the referencing table and its
+// rows (sys.partitions), the referenced table, its columns in the key's order, comma-separated and
+// bracketed, the referenced table's object id and the key's ON DELETE and ON UPDATE actions. Result
+// sets: one row (error), the keys.
 var unindexedForeignKeysQuery = TagStatements(`SET NOCOUNT ON;
 DECLARE @err nvarchar(2048);
 DECLARE @names TABLE (object_id int NOT NULL PRIMARY KEY);
 DECLARE @fk TABLE (fk_id int NOT NULL, fk_name sysname NOT NULL, schema_name sysname NOT NULL, table_name sysname NOT NULL,
-                   ref_schema sysname NOT NULL, ref_table sysname NOT NULL, rows bigint NULL, cols nvarchar(max) NULL);
+                   ref_schema sysname NOT NULL, ref_table sysname NOT NULL, rows bigint NULL, cols nvarchar(max) NULL,
+                   ref_id int NOT NULL, del_action nvarchar(60) NULL, upd_action nvarchar(60) NULL);
 BEGIN TRY
-    INSERT @names (object_id)
-    SELECT DISTINCT o.id
-    FROM (SELECT CONVERT(xml, @tables) AS doc) AS d
-    CROSS APPLY d.doc.nodes('/t') AS x(t)
-    CROSS APPLY (SELECT OBJECT_ID(QUOTENAME(x.t.value('@s', 'nvarchar(128)')) + N'.' + QUOTENAME(x.t.value('@n', 'nvarchar(128)')), N'U') AS id) AS o
-    WHERE o.id IS NOT NULL;
+    IF @tables IS NOT NULL
+        INSERT @names (object_id)
+        SELECT DISTINCT o.id
+        FROM (SELECT CONVERT(xml, @tables) AS doc) AS d
+        CROSS APPLY d.doc.nodes('/t') AS x(t)
+        CROSS APPLY (SELECT OBJECT_ID(QUOTENAME(x.t.value('@s', 'nvarchar(128)')) + N'.' + QUOTENAME(x.t.value('@n', 'nvarchar(128)')), N'U') AS id) AS o
+        WHERE o.id IS NOT NULL;
 
-    INSERT @fk (fk_id, fk_name, schema_name, table_name, ref_schema, ref_table, rows, cols)
+    INSERT @fk (fk_id, fk_name, schema_name, table_name, ref_schema, ref_table, rows, cols, ref_id, del_action, upd_action)
     SELECT fk.object_id, fk.name, OBJECT_SCHEMA_NAME(fk.parent_object_id), OBJECT_NAME(fk.parent_object_id),
            OBJECT_SCHEMA_NAME(fk.referenced_object_id), OBJECT_NAME(fk.referenced_object_id),
            (SELECT SUM(p.rows) FROM sys.partitions AS p WHERE p.object_id = fk.parent_object_id AND p.index_id IN (0, 1)),
@@ -762,10 +766,12 @@ BEGIN TRY
                   JOIN sys.columns AS c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id
                   WHERE fkc.constraint_object_id = fk.object_id
                   ORDER BY fkc.constraint_column_id
-                  FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, N'')
+                  FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, N''),
+           fk.referenced_object_id, CONVERT(nvarchar(60), fk.delete_referential_action_desc), CONVERT(nvarchar(60), fk.update_referential_action_desc)
     FROM sys.foreign_keys AS fk
-    JOIN @names AS n ON n.object_id = fk.referenced_object_id
+    LEFT JOIN @names AS n ON n.object_id = fk.referenced_object_id
     WHERE fk.is_disabled = 0
+      AND (@tables IS NULL OR n.object_id IS NOT NULL)
       AND NOT EXISTS (
           SELECT 1
           FROM sys.indexes AS ix
@@ -784,14 +790,20 @@ BEGIN CATCH
     SET @err = ERROR_MESSAGE();
 END CATCH;
 SELECT @err;
-SELECT fk_name, schema_name, table_name, ref_schema, ref_table, ISNULL(rows, 0), ISNULL(cols, N'')
+SELECT fk_name, schema_name, table_name, ref_schema, ref_table, ISNULL(rows, 0), ISNULL(cols, N''), ref_id,
+       ISNULL(del_action, N'NO_ACTION'), ISNULL(upd_action, N'NO_ACTION')
 FROM @fk ORDER BY rows DESC, schema_name, table_name, fk_name;`)
 
 // ReadUnindexedForeignKeys reads, inside a database, the foreign keys that reference the tables and
-// whose columns lead no index of the referencing table (unindexedForeignKeysQuery). SELECTs only.
+// whose columns lead no index of the referencing table (unindexedForeignKeysQuery); tables nil reads
+// them for every referenced table (the Design card). SELECTs only. RefDeletes is -1: not read here.
 func ReadUnindexedForeignKeys(ctx context.Context, db *sql.DB, database string, tables []domain.ShowplanObject) ([]domain.UnindexedForeignKeyFact, error) {
+	var list any = tablesXML(tables)
+	if tables == nil {
+		list = nil // @tables NULL: every referenced table
+	}
 	rows, err := db.QueryContext(ctx, Tag(safeSession+"SET QUOTED_IDENTIFIER ON; EXEC "+domain.QuoteName(database)+".sys.sp_executesql @stmt, N'@tables nvarchar(max)', @tables = @tables;"),
-		sql.Named("stmt", unindexedForeignKeysQuery), sql.Named("tables", tablesXML(tables)))
+		sql.Named("stmt", unindexedForeignKeysQuery), sql.Named("tables", list))
 	if err != nil {
 		return nil, friendlyError(err)
 	}
@@ -814,9 +826,9 @@ func ReadUnindexedForeignKeys(ctx context.Context, db *sql.DB, database string, 
 	}
 	out := []domain.UnindexedForeignKeyFact{}
 	for rows.Next() {
-		var k domain.UnindexedForeignKeyFact
+		k := domain.UnindexedForeignKeyFact{RefDeletes: -1}
 		var cols string
-		if err := rows.Scan(&k.Name, &k.Schema, &k.Table, &k.RefSchema, &k.RefTable, &k.Rows, &cols); err != nil {
+		if err := rows.Scan(&k.Name, &k.Schema, &k.Table, &k.RefSchema, &k.RefTable, &k.Rows, &cols, &k.RefObjectID, &k.OnDelete, &k.OnUpdate); err != nil {
 			return nil, err
 		}
 		if k.Columns, err = domain.SplitColumnList(cols); err != nil {

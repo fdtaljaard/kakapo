@@ -95,6 +95,14 @@ type UnindexedForeignKeyFact struct {
 	RefSchema string
 	RefTable  string
 	Rows      int64
+	// RefObjectID is the referenced table's object id; RefDeletes the rows deleted from it in the
+	// Design card's window (sys.dm_db_index_operational_stats leaf_delete_count plus leaf_ghost_count of
+	// its heap or clustered index), -1 when not read (docs/phase5n-contract.md, section 2).
+	RefObjectID int64
+	RefDeletes  int64
+	// OnDelete and OnUpdate are the key's referential actions: NO_ACTION, CASCADE, SET_NULL, SET_DEFAULT.
+	OnDelete string
+	OnUpdate string
 }
 
 // QueryStorePlanFact is one plan of the query in Query Store, with its runtime statistics over the
@@ -1791,6 +1799,9 @@ func utcOffsetText(minutes int) string {
 // said (PerformanceTriage.sql IDX14: tables of 10,000 rows or more).
 const queryFKMinRows = 10000
 
+// qForeignKeyPointer ends the query page's foreign-key sentence: the same rule, database-wide.
+const qForeignKeyPointer = "IDX14 on the Design card lists every such key."
+
 // queryFKLinesMax is how many foreign keys the page names, the largest referencing tables first.
 const queryFKLinesMax = 5
 
@@ -1840,12 +1851,12 @@ func qForeignKeyLines(f QueryFacts, d QueryDetail, canChange bool) []ExplainLine
 		if len(k.Columns) > 1 {
 			lead = "starts with its columns " + cols
 		}
-		text := fmt.Sprintf("%s checks foreign key %s, and %s (%s) has no index that %s, so SQL Server reads the whole of %s to check it. An index on %s (%s) lets it seek instead.",
-			doing, k.Name, table, plural(k.Rows, "row", "rows"), lead, table, table, cols)
+		// The sentence ends with the Design card's pointer (docs/phase5n-contract.md, section 5).
+		text := fmt.Sprintf("%s checks foreign key %s, and %s (%s) has no index that %s, so SQL Server reads the whole of %s to check it. An index on %s (%s) lets it seek instead. %s",
+			doing, k.Name, table, plural(k.Rows, "row", "rows"), lead, table, table, cols, qForeignKeyPointer)
 		var a *QueryAction
 		if canChange {
-			opts := map[string]string{"source": "foreign-key", OptionTable: QuoteName(f.Database) + "." + QuoteName(k.Schema) + "." + QuoteName(k.Table),
-				OptionEquality: bracketList(k.Columns), OptionInequality: "", OptionIncluded: ""}
+			opts := ForeignKeyIndexOptions(f.Database, k)
 			a = &QueryAction{FixID: FixCreateIndex, Label: "Create index", Title: "Create an index for foreign key " + k.Name, Options: opts}
 		}
 		out = append(out, ExplainLine{Text: text, Action: a})

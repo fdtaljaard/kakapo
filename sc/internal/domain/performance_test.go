@@ -852,11 +852,11 @@ func TestPerformanceDetailJSON(t *testing.T) {
 
 func TestBuildCardsWithPerformance(t *testing.T) {
 	f := goodPerf()
-	cards := BuildCards(nil, nil, nil, nil, nil, &f)
+	cards := BuildCards(nil, nil, nil, nil, nil, &f, nil)
 	if cards[4].ID != CardPerformance || cards[4].Status != StatusGreen || len(cards[4].Facts) != 4 {
 		t.Errorf("performance card %+v", cards[4])
 	}
-	if cards := BuildCards(nil, nil, nil, nil, nil, nil); cards[4].Status != StatusGrey || cards[4].StatusText != "Not checked yet" {
+	if cards := BuildCards(nil, nil, nil, nil, nil, nil, nil); cards[4].Status != StatusGrey || cards[4].StatusText != "Not checked yet" {
 		t.Errorf("no facts %+v", cards[4])
 	}
 }

@@ -7,6 +7,7 @@ import { mockSample } from "./api-sample.mock"
 import { mockTables, withArchives } from "./api-tables.mock"
 import { mockTuning, withRecordedChanges } from "./api-tuning.mock"
 import { mockHelpers } from "./api-helpers.mock"
+import { designDetail, mockDesign } from "./api-design.mock"
 
 // Dev-only fixture backend. Loaded by api.ts only when import.meta.env.DEV and VITE_MOCK_API=1,
 // so it never reaches a production build. One server, three databases: Query Store ok, ok, off;
@@ -2236,23 +2237,6 @@ function performanceDetail(info: InstanceInfo, db: DatabaseStatus): CardDetail {
   }
 }
 
-function greyCard(id: Card["id"], title: string, question: string, note: string): Card {
-  return {
-    id,
-    title,
-    question,
-    status: "grey",
-    statusText: "Not checked yet",
-    verdict: "",
-    facts: [],
-    toDo: 0,
-    forClientIT: 0,
-    fixable: 0,
-    asOf: null,
-    note,
-  }
-}
-
 // The six cards in their order; the overview carries them and the card detail returns one of them.
 function buildCards(info: InstanceInfo, db: DatabaseStatus): Card[] {
   return [
@@ -2261,12 +2245,8 @@ function buildCards(info: InstanceInfo, db: DatabaseStatus): Card[] {
     storageDetail(db).card,
     upkeepDetail(info, db).card,
     performanceDetail(info, db).card,
-    greyCard(
-      "design",
-      "Database design",
-      "Is the database built well?",
-      "Indexes, heaps, the tables everyone waits on, and the application's stored procedures, per database.",
-    ),
+    // Phase 5n: the Design card (api-design.mock.ts).
+    designDetail(db.name).card,
   ]
 }
 
@@ -2407,6 +2387,7 @@ const featureMocks: FeatureMock[] = [
   mockQueries,
   mockBlocking,
   mockBlockingHistory,
+  mockDesign, // before mockSample: a foreign key's create-index preview answers here
   mockSample,
   mockProgress,
   mockTables,
@@ -2498,6 +2479,8 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     if (detail[3] === "upkeep") return structuredClone(withMaintenancePlan(upkeepDetail(instanceInfo(srv, db), db), db.name)) as T
     // Phase 5d: the stored blocking history and BLK01 in the checks (api-blocking-history.mock.ts).
     if (detail[3] === "performance") return structuredClone(withBlockingHistory(performanceDetail(instanceInfo(srv, db), db), db.name)) as T
+    // Phase 5n: the Design card with its fold and IDX14's create-index fix (api-design.mock.ts).
+    if (detail[3] === "design") return structuredClone(designDetail(db.name)) as T
     const card = buildCards(instanceInfo(srv, db), db).find((c) => c.id === detail[3])
     if (!card) throw new ApiError("card not found", 404)
     return structuredClone({ card, findings: [], checks: [] } satisfies CardDetail) as T

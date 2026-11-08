@@ -687,7 +687,7 @@ func TestSetupDetailJSON(t *testing.T) {
 
 func TestBuildCardsWithSetup(t *testing.T) {
 	f := goodFacts()
-	cards := BuildCards(&f, nil, nil, nil, nil, nil)
+	cards := BuildCards(&f, nil, nil, nil, nil, nil, nil)
 	if cards[1].ID != CardSetup || cards[1].Status != StatusGreen || len(cards[1].Facts) != 4 {
 		t.Errorf("setup card %+v", cards[1])
 	}
