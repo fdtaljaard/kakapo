@@ -49,7 +49,7 @@ const defs: Record<PieceId, { title: string; cadence: string; source: string; fi
     fixId: "maintenance-job",
     options: { statisticsOnly: "false", indexOnly: "true", day: "Sunday", indexTime: "03:00" },
     source:
-      'Microsoft (2026): do not assume that index maintenance always noticeably improves the workload, or that it must run on a fixed schedule; reorganise is preferred over rebuild ("Maintain indexes optimally"). Offered with Ola Hallengren\'s thresholds (reorganise from 30%, rebuild from 50%, 1,000 pages or more) when IndexOptimize is installed; not counted as missing.',
+      'Microsoft (2026): do not assume that index maintenance always noticeably improves the workload, or that it must run on a fixed schedule; reorganise is preferred over rebuild ("Maintain indexes optimally"). Offered with Brent Ozar\'s thresholds (reorganise from 50%; from 80%, rebuild online where the edition can and reorganise elsewhere, never offline) and Ola Hallengren\'s floor (1,000 pages or more) when IndexOptimize is installed; not counted as missing.',
   },
   "history-cleanup": {
     title: "History cleanup",

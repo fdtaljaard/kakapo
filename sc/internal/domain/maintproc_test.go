@@ -46,7 +46,7 @@ func TestMaintProcSQL(t *testing.T) {
 		// Ola's
 		"EXECUTE master.dbo.DatabaseIntegrityCheck @Databases = N'''", "@CheckCommands = ''CHECKDB'', @PhysicalOnly = '''",
 		"@FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5;'",
-		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE''", "@FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000",
+		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE''", "@FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000",
 		"EXECUTE master.dbo.DatabaseBackup @Databases = N'''", "@BackupType = ''FULL'', @Verify = ''Y'', @CheckSum = ''Y''", "@BackupType = ''LOG''",
 		"Skipped: index work needs Ola Hallengren''s IndexOptimize",
 		// the locks, the failures, the tag

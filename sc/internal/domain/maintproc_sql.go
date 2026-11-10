@@ -210,14 +210,15 @@ BEGIN
                         THEN N'Skipped: outside the window (' + CONVERT(nvarchar(16), @statsDue, 120) + N' to '
                              + CONVERT(nvarchar(16), DATEADD(HOUR, {{WINDOW}}, @statsDue), 120) + N'); it waits for the next one.' END;
 
-        /* 3. Index work: weekly on the check day, when it is on; heavy; only with Ola Hallengren's IndexOptimize. */
+        /* 3. Index work: weekly on the check day, when it is on; heavy; only with Ola Hallengren's IndexOptimize.
+              Brent Ozar's thresholds and never an offline rebuild (docs/phase5q-contract.md, decisions 1 and 2). */
         IF @indexWork = 1 AND NOT EXISTS (SELECT 1 FROM dbo.kakapo_MaintenanceLog
                        WHERE DatabaseName = @db AND Task = 'indexes' AND StartTime >= @indexDue AND Outcome IN ('OK', 'Failed'))
             INSERT @tasks (ord, task, lockKind, due, cmd, skip)
             SELECT 3, 'indexes', N'heavy', @indexDue,
                    N'/* kakapo */ EXECUTE master.dbo.IndexOptimize @Databases = N''' + @qdb + N''', @FragmentationLow = NULL, '
-                   + N'@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE'', '
-                   + N'@FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000, @UpdateStatistics = ''ALL'', '
+                   + N'@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE'', '
+                   + N'@FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000, @UpdateStatistics = ''ALL'', '
                    + N'@OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5;',
                    CASE WHEN OBJECT_ID(N'master.dbo.IndexOptimize', N'P') IS NULL OR OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NULL OR @olaName = 0
                         THEN N'Skipped: index work needs Ola Hallengren''s IndexOptimize in master (and a database name it can read).'

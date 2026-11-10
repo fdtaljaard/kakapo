@@ -23,8 +23,8 @@ func TestUpkeepQueries(t *testing.T) {
 		t.Error("table rows from the heap or clustered index")
 	}
 	// The AUTO_CLOSE open, then the Agent and each msdb, trace and dump area in its own TRY.
-	// Phase 5b: MNT08's history read is the ninth.
-	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 9 {
+	// Phase 5b: MNT08's history read is the ninth; phase 5q: Express's maintenance procedure read the tenth.
+	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 10 {
 		t.Errorf("%d TRY blocks", n)
 	}
 	// Phase 3f: plan-handle evictions apart from cache clears, auto-shrink events, the slowest
@@ -98,7 +98,7 @@ func TestSchemaChangeRead(t *testing.T) {
 	if n := strings.Count(upkeepInstanceQuery, "fn_trace_gettable"); n != 1 {
 		t.Errorf("the trace is read %d times", n)
 	}
-	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 9 {
+	if n := strings.Count(upkeepInstanceQuery, "BEGIN TRY"); n != 10 {
 		t.Errorf("%d TRY blocks", n)
 	}
 	for _, want := range []string{

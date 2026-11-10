@@ -121,6 +121,7 @@ func TestUpkeepExpress(t *testing.T) {
 	f := goodUpkeep()
 	f.EngineEdition = 4
 	f.AgentStatus, f.AgentStartup, f.MaintenanceJob, f.Operators, f.AlertsOn = "", "", "", 0, 0
+	f.StatisticsJob = "kakapo_Maintenance" // phase 5p's procedure serves the database
 	f.ShrinkJobs = []ShrinkJob{{Job: "never read", Step: 1, Command: "DBCC SHRINKFILE(1)"}}
 	c, fs, cs := runUpkeep(f)
 	x := one(t, fs, "MNT01")
@@ -132,13 +133,26 @@ func TestUpkeepExpress(t *testing.T) {
 	if len(fs) != 1 {
 		t.Errorf("express findings %+v", fs)
 	}
-	for _, id := range []string{"MNT02", "MNT03", "MNT07", "MNT08"} {
+	for _, id := range []string{"MNT02", "MNT07", "MNT08"} {
 		if st := statusOf(cs, id); st.Status != CheckSkipped || st.Note != "Not applicable to Express edition (no SQL Server Agent)." {
 			t.Errorf("%s %+v", id, st)
 		}
 	}
-	if statusOf(cs, "MNT01").Status != CheckPassed || statusOf(cs, "MNT04").Status != CheckPassed {
+	if statusOf(cs, "MNT01").Status != CheckPassed || statusOf(cs, "MNT03").Status != CheckPassed || statusOf(cs, "MNT04").Status != CheckPassed {
 		t.Errorf("express checks %+v", cs)
+	}
+	// Phase 5q: without the procedure, MNT03 offers it; Low, Medium when statistics are going stale.
+	g := f
+	g.StatisticsJob = ""
+	_, gs, _ := runUpkeep(g)
+	if x := one(t, gs, "MNT03"); x.Severity != SeverityFromRank(4) || x.FixID != FixInstallMaintenanceProc || x.DoThis != mnt03ExpressDo ||
+		x.Finding != "Nothing kakapo can see updates statistics: SQL Server Express has no Agent, and kakapo's maintenance procedure does not serve WarehouseLive." {
+		t.Errorf("express MNT03 %+v", x)
+	}
+	g.StaleStats = []StaleStat{stale("dbo", "Orders", "PK_Orders", 900000, 400000, 900000)}
+	_, gs, _ = runUpkeep(g)
+	if x := one(t, gs, "MNT03"); x.Severity != SeverityFromRank(3) {
+		t.Errorf("express MNT03 with stale statistics %+v", x)
 	}
 	if c.Status != StatusGreen || c.Verdict != "SQL Server Express has no SQL Server Agent." {
 		t.Errorf("express card %+v", c)

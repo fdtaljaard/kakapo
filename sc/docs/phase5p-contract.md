@@ -43,7 +43,7 @@ For each enabled settings row (each database), in this order, the task that is d
 |---|---|---|
 | Integrity check | weekly on the check day, from the check time | `DBCC CHECKDB ([db]) WITH NO_INFOMSGS, ALL_ERRORMSGS` (PHYSICAL_ONLY from 200 GB, as the CHECKDB fix does); Ola's `DatabaseIntegrityCheck` when installed |
 | Statistics | daily except the check day, from the statistics time | `sp_updatestats` in the database; Ola's `IndexOptimize` (statistics only) when installed |
-| Index work | weekly, **off by default** as in 5b | only when Ola's `IndexOptimize` is installed, with 5b's thresholds |
+| Index work | weekly, **off by default** as in 5b | only when Ola's `IndexOptimize` is installed, with 5b's thresholds (as changed in phase 5q: Brent Ozar's 50% / 80%, never an offline rebuild) |
 | Full backup | daily, from the full-backup time | the backup schedule fix's native statement (CHECKSUM, verify, and old files deleted with `xp_delete_file` past the retention); Ola's `DatabaseBackup` when installed. No COMPRESSION: Express cannot compress. |
 | Log backup | every call, at least `logMinutes` after the last one, in FULL or BULK_LOGGED recovery, once a full backup exists | the same, as a log backup |
 | History cleanup | weekly, from the cleanup time | 5b's `history-cleanup` statement (msdb backup history, and CommandLog when Ola's is there), plus kakapo's own log beyond the kept days |

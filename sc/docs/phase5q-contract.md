@@ -158,9 +158,11 @@ MNT03 fires when there is no such job, whatever maintains the indexes. Titles:
 - with an index piece covered, or MNT09's procedure: "Indexes are maintained by "{job}", but nothing
   updates statistics, which is what keeps query plans good."
 
-The fix stays `maintenance-job` (statistics only by default). On Express, MNT03 should fire too, from the
-5p procedure's settings, with `install-maintenance-proc` as its fix. **Not built yet:** it reads 5p's
-tables, so it waits until 5p is committed.
+The fix stays `maintenance-job` (statistics only by default). On Express, MNT03 fires too, with
+`install-maintenance-proc` as its fix. As built: the Upkeep read counts an enabled settings row for this
+database in `master.dbo.kakapo_MaintenanceSettings` as the statistics job. Windows scheduled tasks cannot
+be seen, so on Express the finding is Low, and Medium only when MNT04 shows statistics going stale. Its
+Do this says to mark it not applicable when something else updates statistics.
 
 ## 3. kakapo's own index job: decisions 1 and 2
 
@@ -179,10 +181,9 @@ tables, so it waits until 5p is committed.
 - Existing kakapo index jobs keep their old command until they are re-applied. The plan row reads an
   `INDEX_REBUILD_OFFLINE` in a kakapo job as "rebuilds offline: re-apply to reorganise instead".
 
-**As built (2026-11-10):** `olaIndexCommand` and its texts in `upkeep_actions.go` only. The 5p procedure's
-index step, the other texts (`maintenance.go`, `maintenance_fix.go`, `maintproc.go`, `maintproc_sql.go`, the
-web mocks), the two contracts and the plan row's "rebuilds offline" are **not built yet**. They are in 5p's
-uncommitted files, so they wait until 5p is committed.
+**As built (2026-11-10):** all of the above. The plan row's note on an old kakapo index job says it rebuilds
+offline without Enterprise and gives the corrected step command to put in its place. The older
+`docs/phase4d-contract.md` keeps its first command as the record of what was built then.
 
 ## 4. The query page: the index the plan reads in full
 
@@ -252,8 +253,9 @@ time.
 
 ## Built (2026-11-10)
 
-Sections 1 and 4 and decision 3 are built. Sections 2 and 3 are built in part (see each). `go test ./...`
-and the web build pass. `TestPhase5qLive` (`SQLMONITOR_TEST_HOST`, `SQLMONITOR_TEST_5Q=1`) passed on
+Everything in sections 1 to 4 and decision 3 is built: part one in d4eed57, and the rest (5p's index
+step, the texts, MNT03 on Express, the plan row's note) once 5p was committed. `go test ./...` and the web
+build pass. `TestMaintProcLive` passed again with the procedure's new index step. `TestPhase5qLive` (`SQLMONITOR_TEST_HOST`, `SQLMONITOR_TEST_5Q=1`) passed on
 `localhost\SQL2022` (Developer):
 - Measure on a fragmented 4,055-page index: 66% full, 99% out of order, about 2,687 pages after.
 - `reorganize-index` applied through the real fix. Read back: 4,055 pages to 2,736, 99% out of order to
@@ -263,8 +265,9 @@ and the web build pass. `TestPhase5qLive` (`SQLMONITOR_TEST_HOST`, `SQLMONITOR_T
 
 The browser check used the mock: Measure, the sentence, Reorganise index and its preview.
 
-**Not proven live:** the verdict's split at kakapo's own change needs Query Store history around a change
-(unit-tested only), and Express. "The job disabled: MNT09 silent" is unit-tested only.
+**Not proven live:** the verdict's split at kakapo's own change, which needs Query Store history around a
+change (unit-tested only); anything on a real Express (MNT03's Express branch is unit-tested and its read
+runs on Developer, where it is skipped); "the job disabled: MNT09 silent" (unit-tested only).
 
 ## Done when
 

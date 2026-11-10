@@ -100,6 +100,18 @@ END TRY
 BEGIN CATCH
     SET @maintError = ERROR_MESSAGE();
 END CATCH;
+/* Phase 5q: on Express (no Agent), statistics are kept by kakapo's maintenance procedure (phase 5p) when it
+   serves this database; Windows scheduled tasks cannot be seen. */
+IF @express = 1
+BEGIN TRY
+    IF OBJECT_ID(N'master.dbo.kakapo_Maintenance', N'P') IS NOT NULL AND OBJECT_ID(N'master.dbo.kakapo_MaintenanceSettings', N'U') IS NOT NULL
+        EXEC sys.sp_executesql N'/* kakapo */ SELECT @s = N''kakapo_Maintenance''
+            FROM master.dbo.kakapo_MaintenanceSettings WHERE DatabaseName = @d AND Enabled = 1;',
+            N'@d sysname, @s sysname OUTPUT', @d = @db, @s = @statsJob OUTPUT;
+END TRY
+BEGIN CATCH
+    SET @maintError = ERROR_MESSAGE();
+END CATCH;
 
 /* MNT05 Agent jobs that shrink */
 DECLARE @shrinkJobs TABLE (job sysname NOT NULL, step int NOT NULL, command nvarchar(300) NULL);

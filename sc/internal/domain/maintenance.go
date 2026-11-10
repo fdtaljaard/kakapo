@@ -66,7 +66,7 @@ var planPieceDefs = []planPieceDef{
 	{PieceStatistics, "Statistics update", "nightly 01:00, Monday to Saturday",
 		"Statistics (the row counts the optimizer plans queries with) updated every night the integrity check does not run. Source: Microsoft, \"Maintain indexes optimally\" (the benefit of an index rebuild \"can often be achieved at a much lower resource cost by updating statistics\"); Brent Ozar, \"Stop worrying about index fragmentation\" (update statistics daily); Erik Darling's nightly statistics-only job with @StatisticsModificationLevel = 5 (DarlingData, \"Ola Stats Only Job\")."},
 	{PieceIndexes, "Index maintenance", "weekly, Sunday 03:00, off by default",
-		"Rebuilding or reorganising fragmented indexes. Microsoft (2026): do not assume that index maintenance always noticeably improves the workload, or that it must run on a fixed schedule; reorganise is preferred over rebuild (\"Maintain indexes optimally\"). Offered with Ola Hallengren's thresholds (reorganise from 30% fragmentation, rebuild from 50%, tables of 1,000 pages or more) when his IndexOptimize is installed; the plan does not count it as missing."},
+		"Rebuilding or reorganising fragmented indexes. Microsoft (2026): do not assume that index maintenance always noticeably improves the workload, or that it must run on a fixed schedule; reorganise is preferred over rebuild (\"Maintain indexes optimally\"). Offered with Brent Ozar's thresholds (reorganise from 50% fragmentation; from 80%, rebuild online where the edition can, Enterprise, and reorganise elsewhere: never offline) and Ola Hallengren's floor (tables of 1,000 pages or more), when his IndexOptimize is installed; the plan does not count it as missing. Source: Brent Ozar, \"How to Configure Ola Hallengren's IndexOptimize Maintenance Script\"; Ola Hallengren, \"SQL Server Index and Statistics Maintenance\" (MinNumberOfPages)."},
 	{PieceCleanup, "History cleanup", "weekly, Sunday 05:00, keep 30 days",
 		"msdb (SQL Server's own database of jobs and backups) grows with every backup and every job run. Source: Microsoft, \"sp_delete_backuphistory\" (\"we recommend that you periodically execute sp_delete_backuphistory\"); Ola Hallengren's installation prunes the backup history, the job history, its CommandLog and its output files weekly, keeping 30 days."},
 	{PieceAlerts, "Alerts and an operator", "once",
@@ -407,6 +407,20 @@ func (f MaintenancePlanFacts) job(name string) (PlanJob, bool) {
 	return PlanJob{}, false
 }
 
+// planOfflineIndexNote is said on kakapo's own index job made before phase 5q, which let IndexOptimize
+// rebuild offline (docs/phase5q-contract.md, section 3).
+const planOfflineIndexNote = "This job was made before kakapo stopped offline rebuilds: without Enterprise edition it rebuilds tables offline, locking them while it runs. Change its step to: %s"
+
+// jobRebuildsOffline says a job's step lets IndexOptimize rebuild offline.
+func jobRebuildsOffline(j PlanJob) bool {
+	for _, s := range j.Steps {
+		if strings.Contains(strings.ToUpper(s.Command), "INDEX_REBUILD_OFFLINE") {
+			return true
+		}
+	}
+	return false
+}
+
 // statusRank orders the jobs that cover a piece: the one that shows it best in place first.
 var statusRank = map[string]int{PlanInPlace: 0, PlanNeverRan: 1, PlanFailing: 2, PlanDisabled: 3}
 
@@ -505,6 +519,9 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 					p.Note = "The job failed last time: its history says why (MNT02)."
 				case st == PlanNeverRan:
 					p.Note = "The job has not run yet."
+				}
+				if id == PieceIndexes && own && jobRebuildsOffline(*j) {
+					p.Note = strings.TrimSpace(p.Note + " " + fmt.Sprintf(planOfflineIndexNote, olaIndexCommand(f.Database)))
 				}
 			}
 			if id == PieceIndexes && j == nil {

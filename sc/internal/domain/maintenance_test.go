@@ -718,3 +718,19 @@ func TestUpkeepPlanJSONAndFixes(t *testing.T) {
 		t.Errorf("other card: %s", b)
 	}
 }
+
+// Phase 5q: kakapo's own index job made before 5q rebuilds offline; the row says so and gives the step.
+func TestPlanOldOfflineIndexJob(t *testing.T) {
+	f := planFacts()
+	old := "EXECUTE master.dbo.IndexOptimize @Databases = N'WarehouseLive', @FragmentationLow = NULL, @FragmentationMedium = 'INDEX_REORGANIZE', " +
+		"@FragmentationHigh = 'INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE', @FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000"
+	f.Jobs = []PlanJob{planJob(IndexJobName("WarehouseLive"), old, sunday0100)}
+	x := pieceOf(t, BuildMaintenancePlan(f, PlanAlerts{Operators: 1}), PieceIndexes)
+	if !strings.HasPrefix(x.Note, "This job was made before kakapo stopped offline rebuilds") || !strings.Contains(x.Note, "INDEX_REBUILD_ONLINE,INDEX_REORGANIZE") {
+		t.Errorf("old job %+v", x)
+	}
+	f.Jobs = []PlanJob{planJob(IndexJobName("WarehouseLive"), olaIndexCommand("WarehouseLive"), sunday0100)}
+	if x := pieceOf(t, BuildMaintenancePlan(f, PlanAlerts{Operators: 1}), PieceIndexes); strings.Contains(x.Note, "offline") {
+		t.Errorf("new job %+v", x)
+	}
+}

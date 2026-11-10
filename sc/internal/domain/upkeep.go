@@ -242,11 +242,11 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 
 	b.mnt01()
 	if f.IsExpress() {
-		b.skip(expressSkipped, "MNT02", "MNT03", "MNT07", "MNT08")
+		b.skip(expressSkipped, "MNT02", "MNT07", "MNT08")
 	} else {
 		b.mnt02()
-		b.mnt03()
 	}
+	b.mnt03()
 	b.mnt04()
 	b.mnt09()
 	b.mnt05()
@@ -473,6 +473,10 @@ func (b *upkeepBuild) mnt03() {
 		b.skip(msdbNotReadable+f.MaintenanceError, "MNT03")
 		return
 	}
+	if f.IsExpress() {
+		b.mnt03Express()
+		return
+	}
 	if f.StatisticsJob != "" || f.MaintenancePlans > 0 {
 		return
 	}
@@ -491,6 +495,25 @@ func (b *upkeepBuild) mnt03() {
 	}
 	b.add("MNT03", 3, "Online", EffortModerate, f.ServerName, "No enabled index or statistics maintenance job was found.", mnt03Why, mnt03Do, "",
 		FixMaintenanceJob)
+}
+
+// MNT03 on Express (docs/phase5q-contract.md, section 2): no Agent, so kakapo's maintenance procedure
+// (phase 5p) is what keeps statistics. Windows scheduled tasks cannot be seen, so the finding is Low
+// unless MNT04 shows statistics actually going stale (then Medium, as elsewhere).
+const mnt03ExpressDo = "Install kakapo's maintenance procedure (the fix): called every 15 minutes by Windows Task Scheduler, it updates statistics every night (Ola Hallengren's IndexOptimize in statistics-only mode when it is installed, else sp_updatestats) and takes the backups and the integrity check. kakapo cannot see Windows scheduled tasks: if something else updates statistics, mark this as not applicable."
+
+func (b *upkeepBuild) mnt03Express() {
+	f := b.f
+	if f.StatisticsJob != "" {
+		return
+	}
+	rank := 4
+	if f.StatsError == "" && len(f.StaleStats) > 0 {
+		rank = 3
+	}
+	b.add("MNT03", rank, "Online", EffortModerate, f.ServerName,
+		"Nothing kakapo can see updates statistics: SQL Server Express has no Agent, and kakapo's maintenance procedure does not serve "+f.Database+".",
+		mnt03Why, mnt03ExpressDo, "", FixInstallMaintenanceProc)
 }
 
 // staleTable is one table with out-of-date statistics.

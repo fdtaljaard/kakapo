@@ -465,7 +465,7 @@ func ChooseMaintenancePlan(plan MaintenancePlan, a PlanAlerts, options map[strin
 	}
 	if offer[OptionPlanIndex] {
 		on[OptionPlanIndex] = choose(OptionPlanIndex, "Weekly index maintenance (optional)",
-			fmt.Sprintf("%s at %s: reorganise from 30%% fragmentation, rebuild from 50%%, tables of 1,000 pages or more (Ola Hallengren's IndexOptimize). Off by default: Microsoft no longer advises index maintenance on a fixed schedule, and statistics matter more.", t.day, t.index), false)
+			fmt.Sprintf("%s at %s: reorganise from 50%% fragmentation; from 80%%, rebuild online where the edition can and reorganise elsewhere, never offline; tables of 1,000 pages or more (Ola Hallengren's IndexOptimize, Brent Ozar's thresholds). Off by default: Microsoft no longer advises index maintenance on a fixed schedule, and statistics matter more.", t.day, t.index), false)
 	}
 	if offer[PlanStepCleanup] {
 		on[PlanStepCleanup] = choose(OptionPlanCleanup, "Weekly history cleanup",

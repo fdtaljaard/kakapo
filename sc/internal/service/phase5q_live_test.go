@@ -74,7 +74,10 @@ func TestPhase5qLive(t *testing.T) {
 	exec("CREATE DATABASE [" + q5LiveDB + "]")
 	defer func() {
 		db.ExecContext(ctx, "IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+job+"') EXEC msdb.dbo.sp_delete_job @job_name = N'"+job+"';")
-		db.ExecContext(ctx, "ALTER DATABASE ["+q5LiveDB+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ["+q5LiveDB+"];")
+		// A pooled connection may still be in the database: put this one in master first.
+		if _, err := db.ExecContext(ctx, "USE master; ALTER DATABASE ["+q5LiveDB+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ["+q5LiveDB+"];"); err != nil {
+			t.Errorf("could not drop %s: %v", q5LiveDB, err)
+		}
 	}()
 	exec("ALTER DATABASE [" + q5LiveDB + "] SET RECOVERY SIMPLE")
 	// Three tables of about 3,000 pages, filled in batches of random keys so they fragment (one insert is sorted).
