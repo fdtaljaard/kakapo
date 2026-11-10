@@ -20,7 +20,11 @@ const statusWords: Record<PlanStatus, { word: string; tone: string }> = {
   "not-needed": { word: "not needed", tone: "text-muted-foreground" },
   optional: { word: "optional", tone: "text-muted-foreground" },
   unknown: { word: "not read", tone: "text-muted-foreground" },
+  overdue: { word: "not run", tone: "text-destructive" },
 }
+
+// Phase 5p: on SQL Server Express the plan is one procedure kakapo installs, so the row's one button says so.
+const installProcFixId = "install-maintenance-proc"
 
 // The Upkeep card's Maintenance plan row (docs/phase5b-contract.md): one line per piece of regular maintenance
 // with its status word in colour, the job and its last and next run, and Create where kakapo can make it (the
@@ -64,7 +68,7 @@ export function MaintenancePlanRow({
         <div className="flex flex-wrap items-center gap-2">
           {setUp && (
             <Button size="sm" onClick={() => onSetUp(setUp)}>
-              Set up the maintenance plan
+              {setUp.id === installProcFixId ? "Install the maintenance procedure" : "Set up the maintenance plan"}
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => copy(planHandover(plan, context))}>

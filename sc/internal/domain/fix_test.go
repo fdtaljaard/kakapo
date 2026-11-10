@@ -253,7 +253,7 @@ func TestFixDefsMatchTheCatalogue(t *testing.T) {
 			t.Errorf("%s: check %s", d.ID, d.CheckID)
 		}
 	}
-	want := "max-server-memory,maxdop,cost-threshold,optimize-adhoc,backup-compression,auto-close,auto-shrink,page-verify,auto-statistics,indirect-checkpoints,query-store,update-statistics,create-index,drop-index,disable-index,kill-session,rcsi,force-plan,unforce-plan,evict-plan,update-statistics-table,multi-user,reconfigure,trace-flag-off,scoped-config-reset,min-server-memory,operator-alerts,maintenance-job,remove-shrink-step,autogrowth,add-tempdb-files,recovery-model,checkdb-job,checkdb-now,suspect-pages-clear,tempdb-files,archive-table,remove-archive,history-cleanup,maintenance-plan,install-xe-session,remove-xe-session,enable-default-trace,backup-schedule,remove-backup-schedule"
+	want := "max-server-memory,maxdop,cost-threshold,optimize-adhoc,backup-compression,auto-close,auto-shrink,page-verify,auto-statistics,indirect-checkpoints,query-store,update-statistics,create-index,drop-index,disable-index,reorganize-index,kill-session,rcsi,force-plan,unforce-plan,evict-plan,update-statistics-table,multi-user,reconfigure,trace-flag-off,scoped-config-reset,compat-level,min-server-memory,operator-alerts,maintenance-job,remove-shrink-step,autogrowth,add-tempdb-files,recovery-model,checkdb-job,checkdb-now,suspect-pages-clear,tempdb-files,archive-table,remove-archive,history-cleanup,maintenance-plan,install-xe-session,remove-xe-session,enable-default-trace,backup-schedule,remove-backup-schedule,install-maintenance-proc,remove-maintenance-proc"
 	if strings.Join(ids, ",") != want {
 		t.Errorf("fix ids %v", ids)
 	}

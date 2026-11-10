@@ -335,16 +335,17 @@ export interface InstalledHelpers {
   helpers: InstalledHelper[]
 }
 
-export type HelperState = "running" | "stopped" | "not installed" | "not kakapo's" | "unknown"
+export type HelperState = "running" | "installed" | "stopped" | "not installed" | "not kakapo's" | "unknown"
 
 export interface InstalledHelper {
-  id: string // "xe-session"
+  id: string // "xe-session", "maintenance-proc" (phase 5p)
   title: string
   state: HelperState
   sentence: string
   details: string[]
-  fixId?: string // install-xe-session (Create) or remove-xe-session (Remove)
+  fixId?: string // install-xe-session (Create), remove-xe-session or remove-maintenance-proc (Remove)
   fixLabel?: string
+  fixTitle?: string // the fix dialog's title
   session?: XESession
 }
 
@@ -504,6 +505,7 @@ export type PlanStatus =
   | "not-needed"
   | "optional"
   | "unknown"
+  | "overdue" // phase 5p, Express: kakapo's procedure has not run it since its time
 
 export interface PlanPiece {
   id: string // "full-backup", "log-backup", "integrity-check", "statistics", "indexes", "history-cleanup", "alerts", "archive"

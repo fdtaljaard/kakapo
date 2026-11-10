@@ -45,7 +45,8 @@ export interface QuerySummary {
 export interface QueryVerdict {
   verdict: "faster" | "slower" | "same" | "too few"
   headline: string
-  since: string // UTC
+  since: string // UTC: the plan in use began, or kakapo's latest change after it (phase 5q)
+  change?: string // kakapo's change at since, when the verdict splits there
   planId: number
   before: QueryPeriod
   now: QueryPeriod
@@ -65,7 +66,7 @@ export interface QueryPeriod {
 
 export interface QueryEvent {
   at: string // UTC
-  kind: "plan" | "statistics"
+  kind: "plan" | "statistics" | "change" // change: kakapo's own, on a table the plans read (phase 5q)
   planId?: number
   text: string
 }
@@ -179,9 +180,29 @@ export interface QueryTable {
   maxModifiedPct: number
   stale: boolean
   indexes: string[]
+  // Phase 5q: the indexes a plan reads in full, each with Measure; indexNote says to update stale statistics first.
+  scanned: string[]
+  indexNote?: string
   action?: QueryAction // update-statistics-table
   // Phase 5o: the table's indexes the Design card's last read found safe to disable (IDX04), with disable-index.
   copies?: ExplainLine[]
+}
+
+// Phase 5q (docs/phase5q-contract.md, section 4): one index measured (GET .../indexes/shape). measured false:
+// text says why there is nothing to show. action is reorganize-index, when there is something to gain.
+export interface IndexShape {
+  schema: string
+  table: string
+  index: string
+  measured: boolean
+  pages: number
+  sizeMB: number
+  density: number
+  fragmentation: number
+  estimatedPages: number
+  savedPct: number
+  text: string
+  action?: QueryAction
 }
 
 const databasePath = (serverId: number, database: string) =>
@@ -192,4 +213,9 @@ export const queriesApi = {
   // database is not online, 502 when the server cannot be read.
   queryDetail: (serverId: number, database: string, hash: string) =>
     request<QueryDetail>(`${databasePath(serverId, database)}/queries/${encodeURIComponent(hash)}`),
+  // Reads only (SAMPLED mode on one index): 400 without schema, table and index.
+  indexShape: (serverId: number, database: string, schema: string, table: string, index: string) =>
+    request<IndexShape>(
+      `${databasePath(serverId, database)}/indexes/shape?${new URLSearchParams({ schema, table, index }).toString()}`,
+    ),
 }

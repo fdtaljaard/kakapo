@@ -53,5 +53,10 @@ func (s *Service) QueryDetail(ctx context.Context, serverID int64, dbName, hash 
 	if f.DuplicateFindings, err = s.store.LastFindings(ctx, serverID, d.Name, domain.CardDesign, "IDX04"); err != nil {
 		return domain.QueryDetail{}, err
 	}
+	// kakapo's own changes to its tables split the verdict (docs/phase5q-contract.md, decision 3): the
+	// change log over the query's 7-day window, with a day to spare.
+	if f.Changes, err = s.store.ListChangesSince(ctx, serverID, d.Name, f.ServerNow.Add(-8*24*time.Hour)); err != nil {
+		return domain.QueryDetail{}, err
+	}
 	return domain.BuildQueryDetail(f, d.CanFix()), nil
 }

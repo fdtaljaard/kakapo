@@ -136,7 +136,7 @@ function QueryPage({ serverId, database, hash }: { serverId: number; database: s
       )}
 
       {d ? (
-        <QueryBody detail={d} loading={q.loading} onAction={setFixing} />
+        <QueryBody detail={d} loading={q.loading} onAction={setFixing} serverId={serverId} database={database} />
       ) : (
         q.loading && <BodySkeleton />
       )}
@@ -226,10 +226,14 @@ function QueryBody({
   detail: d,
   loading,
   onAction,
+  serverId,
+  database,
 }: {
   detail: QueryDetail
   loading: boolean
   onAction: (a: QueryAction) => void
+  serverId: number
+  database: string
 }) {
   const v = d.verdict
   const [open, setOpen] = useState(!v || v.verdict !== "faster")
@@ -325,7 +329,7 @@ function QueryBody({
 
       {d.tables.length > 0 && (
         <Section title="Tables" note="The tables of this database its plans read, with the age of their statistics.">
-          <TablesTable detail={d} onAction={onAction} />
+          <TablesTable detail={d} onAction={onAction} serverId={serverId} database={database} />
         </Section>
       )}
 

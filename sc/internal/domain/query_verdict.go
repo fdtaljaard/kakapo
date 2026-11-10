@@ -13,14 +13,17 @@ import (
 
 // QueryVerdict is the top of the query page: the plan in use since it began against the runs before.
 type QueryVerdict struct {
-	Verdict  string       `json:"verdict"` // faster, slower, same, too few (TuningVerdict)
-	Headline string       `json:"headline"`
-	Since    time.Time    `json:"since"` // UTC: when the plan in use began
-	PlanID   int64        `json:"planId"`
-	Before   QueryPeriod  `json:"before"`
-	Now      QueryPeriod  `json:"now"`
-	Changed  []QueryEvent `json:"changed"` // what changed between the costliest plan before and Since
-	ToDo     string       `json:"toDo"`
+	Verdict  string    `json:"verdict"` // faster, slower, same, too few (TuningVerdict)
+	Headline string    `json:"headline"`
+	Since    time.Time `json:"since"` // UTC: when the plan in use began, or kakapo's latest change after it
+	// Change is kakapo's own change at Since, when the verdict splits there (docs/phase5q-contract.md,
+	// decision 3): "Reorganised IX_A on dbo.T in Shop (...)". "" when Since is the plan's start.
+	Change  string       `json:"change,omitempty"`
+	PlanID  int64        `json:"planId"`
+	Before  QueryPeriod  `json:"before"`
+	Now     QueryPeriod  `json:"now"`
+	Changed []QueryEvent `json:"changed"` // what changed between the costliest plan before and Since
+	ToDo    string       `json:"toDo"`
 }
 
 // QueryPeriod is the query's runs in one side of the verdict, every plan together.
@@ -35,10 +38,10 @@ type QueryPeriod struct {
 }
 
 // QueryEvent is something that happened to the query in the window: a plan SQL Server began to use,
-// or statistics updated on a table its plans read.
+// statistics updated on a table its plans read, or a change kakapo made to one of those tables.
 type QueryEvent struct {
 	At     time.Time `json:"at"`   // UTC
-	Kind   string    `json:"kind"` // plan, statistics
+	Kind   string    `json:"kind"` // plan, statistics, change
 	PlanID int64     `json:"planId,omitempty"`
 	Text   string    `json:"text"`
 }
@@ -47,7 +50,30 @@ type QueryEvent struct {
 const (
 	QueryEventPlan       = "plan"
 	QueryEventStatistics = "statistics"
+	QueryEventChange     = "change"
 )
+
+// qOwnChanges are kakapo's own changes (not seen on the server) to the tables the plans read, in
+// the window, oldest first: an index fix's object is "schema.table.index", the statistics fix's
+// "Statistics on schema.table".
+func qOwnChanges(f QueryFacts, d QueryDetail, start time.Time) []Change {
+	out := []Change{}
+	for _, c := range f.Changes {
+		if c.Result == ChangeSeenOnServer || !strings.EqualFold(c.Database, f.Database) || c.ChangedAt.Before(start) {
+			continue
+		}
+		for _, t := range d.Tables {
+			name := strings.ToLower(t.Schema + "." + t.Table)
+			obj := strings.ToLower(c.Object)
+			if (c.ChangeType == "INDEX" && strings.HasPrefix(obj, name+".")) || (c.ChangeType == "MAINTENANCE" && obj == "statistics on "+name) {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ChangedAt.Before(out[j].ChangedAt) })
+	return out
+}
 
 // queryNearlyAllRatio: when the time spent before is this many times the time spent now, the
 // window's waits are "nearly all from before".
@@ -138,6 +164,9 @@ func qQueryEvents(f QueryFacts, d QueryDetail) []QueryEvent {
 			out = append(out, QueryEvent{At: at, Kind: QueryEventStatistics, Text: text})
 		}
 	}
+	for _, c := range qOwnChanges(f, d, start) {
+		out = append(out, QueryEvent{At: c.ChangedAt.UTC(), Kind: QueryEventChange, Text: "kakapo: " + strings.TrimSuffix(c.Description, ".") + "."})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].At.Equal(out[j].At) {
 			return out[i].At.Before(out[j].At)
@@ -160,6 +189,13 @@ func qQueryVerdict(f QueryFacts, d QueryDetail) *QueryVerdict {
 		return nil
 	}
 	since := *active.FirstRun
+	// Decision 3 (docs/phase5q-contract.md): kakapo's latest change to a table the plans read, after the
+	// plan began, splits Before and Now there.
+	change := ""
+	if own := qOwnChanges(f, d, since); len(own) > 0 {
+		last := own[len(own)-1]
+		since, change = last.ChangedAt.UTC(), strings.TrimSuffix(last.Description, ".")
+	}
 	sinceHour := since.Truncate(time.Hour)
 	type sums struct{ runs, cpu, dur, reads int64 }
 	var before, now sums
@@ -196,7 +232,7 @@ func qQueryVerdict(f QueryFacts, d QueryDetail) *QueryVerdict {
 		return QueryPeriod{Label: label, Runs: s.runs, AvgDurationMs: qPerRunMs(s.dur, s.runs), AvgCPUMs: qPerRunMs(s.cpu, s.runs),
 			AvgReads: qPerRun(s.reads, s.runs), CPUMs: roundHalfAway(float64(s.cpu)/1000, 1), DurationMs: roundHalfAway(float64(s.dur)/1000, 1)}
 	}
-	v := &QueryVerdict{Since: since, PlanID: active.PlanID, Changed: []QueryEvent{},
+	v := &QueryVerdict{Since: since, Change: change, PlanID: active.PlanID, Changed: []QueryEvent{},
 		Before: period(before, qServerClock(first, f)+" to "+qServerClock(lastBefore.Add(time.Hour), f)),
 		Now:    period(now, "since "+qServerClock(since, f))}
 	v.Verdict = TuningVerdict(v.Before.Runs, v.Now.Runs, v.Before.AvgCPUMs, v.Now.AvgCPUMs)
@@ -216,24 +252,44 @@ func qQueryVerdict(f QueryFacts, d QueryDetail) *QueryVerdict {
 	}
 
 	at := qServerClock(since, f)
+	if change != "" {
+		short := change // its facts in brackets stay in the change log
+		if i := strings.Index(short, " ("); i > 0 {
+			short = short[:i]
+		}
+		at += " (kakapo: " + qLowerFirst(short) + ")"
+	}
 	switch v.Verdict {
 	case VerdictFaster, VerdictSlower, VerdictSame:
 		v.Headline = fmt.Sprintf("Each run now takes %s. Before %s it took %s.", QueryDuration(v.Now.AvgDurationMs), at, QueryDuration(v.Before.AvgDurationMs))
 	default:
 		v.Headline = fmt.Sprintf("Since %s it ran %s: too few runs to compare with before.", at, plural(v.Now.Runs, "time", "times"))
 	}
-	switch v.Verdict {
-	case VerdictFaster:
+	switch vd := v.Verdict; {
+	case vd == VerdictFaster:
 		v.ToDo = fmt.Sprintf("Nothing: it uses %s of CPU a run now, against %s before. If it gets slower again, it comes back on the Performance card.",
 			QueryDuration(v.Now.AvgCPUMs), QueryDuration(v.Before.AvgCPUMs))
-	case VerdictSlower:
+	case vd == VerdictSlower && change != "":
+		v.ToDo = "It got slower after that change. How it works below says why; the change log has its rollback, when it has one."
+	case vd == VerdictSlower:
 		v.ToDo = fmt.Sprintf("It got slower when SQL Server began to use plan %d. How it works below says why, and whether a faster plan can be forced.", active.PlanID)
-	case VerdictSame:
+	case vd == VerdictSame && change != "":
+		v.ToDo = "That change did not change its cost. How it works below says where its cost is."
+	case vd == VerdictSame:
 		v.ToDo = "The new plan did not change its cost. How it works below says where its cost is."
 	default:
 		v.ToDo = "Look again after more runs."
 	}
 	return v
+}
+
+// qLowerFirst lowers a sentence's first letter to run it on inside another: "Reorganised IX_A ..."
+// becomes "reorganised IX_A ...".
+func qLowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
 }
 
 // qStatements is how many Query Store queries (statements) the plans belong to.

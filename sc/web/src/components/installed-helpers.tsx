@@ -13,6 +13,7 @@ type Load = { kind: "loading" } | { kind: "ready"; helpers: Helpers } | { kind: 
 
 const stateBadge: Record<HelperState, { text: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   running: { text: "running", variant: "default" },
+  installed: { text: "installed", variant: "default" },
   stopped: { text: "stopped", variant: "destructive" },
   "not installed": { text: "not installed", variant: "outline" },
   "not kakapo's": { text: "not kakapo's", variant: "secondary" },
@@ -21,7 +22,8 @@ const stateBadge: Record<HelperState, { text: string; variant: "default" | "seco
 
 // The instance page's "Installed helpers" row (docs/phase5e-contract.md; SCOPE section 3 item 9): what kakapo
 // has created on this server, one line per helper, the sentence first and the facts under it, with the fix
-// the line offers: Create when nothing is installed, Remove when kakapo's event session is there. The fix
+// the line offers: Create when nothing is installed, Remove when kakapo's event session is there; and (phase
+// 5p) kakapo's maintenance procedure, with Remove. The fix
 // opens the usual preview; a server fix still goes through a database connection, the one the answer names.
 // Read live when the page opens and after a fix is applied.
 export function InstalledHelpers({ server }: { server: Server }) {
@@ -111,6 +113,7 @@ export function InstalledHelpers({ server }: { server: Server }) {
 }
 
 function fixTitle(h: InstalledHelper): string {
+  if (h.fixTitle) return h.fixTitle
   return h.fixLabel === "Remove" ? "Remove kakapo's event session" : "Keep every block and deadlock on the server"
 }
 

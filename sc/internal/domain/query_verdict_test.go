@@ -157,3 +157,46 @@ func TestQueryVerdictOnePlan(t *testing.T) {
 		t.Errorf("verdict %+v events %+v", d.Verdict, d.Events)
 	}
 }
+
+// kakapo's own change to a table the plans read, after the plan in use began, splits Before and Now
+// there (docs/phase5q-contract.md, decision 3); a change seen on the server, or to another table, does not.
+func TestQueryVerdictSplitsAtOwnChange(t *testing.T) {
+	f := fixedQueryFacts()
+	at := time.Date(2026, 11, 5, 10, 30, 0, 0, time.UTC) // 12:30 on the server
+	f.Changes = []Change{
+		{Database: "Sandbox", ChangedAt: at, Object: "dbo.Tracking.PK_Tracking", ChangeType: "INDEX",
+			Description: "Reorganised PK_Tracking on dbo.Tracking in Sandbox (12,400 pages, 58% full, 41% out of order)", Result: "verified"},
+		{Database: "Sandbox", ChangedAt: at.Add(2 * time.Hour), Object: "dbo.Tracking.IX_Other", ChangeType: "INDEX",
+			Description: "Index created", Result: ChangeSeenOnServer},
+		{Database: "Sandbox", ChangedAt: at.Add(3 * time.Hour), Object: "Statistics on dbo.Elsewhere", ChangeType: "MAINTENANCE",
+			Description: "Updated statistics on dbo.Elsewhere"},
+	}
+	d := BuildQueryDetail(f, true)
+	v := d.Verdict
+	if v == nil {
+		t.Fatal("no verdict")
+	}
+	if !v.Since.Equal(at) || v.Change != "Reorganised PK_Tracking on dbo.Tracking in Sandbox (12,400 pages, 58% full, 41% out of order)" {
+		t.Errorf("since %s change %q", v.Since, v.Change)
+	}
+	if v.Now.Runs != 54 || v.Headline != "Each run now takes 10 ms. Before 12:30 (kakapo: reorganised PK_Tracking on dbo.Tracking in Sandbox) it took 15 s." {
+		t.Errorf("now %+v headline %q", v.Now, v.Headline)
+	}
+	own := 0
+	for _, e := range d.Events {
+		if e.Kind == QueryEventChange {
+			own++
+			if !strings.HasPrefix(e.Text, "kakapo: Reorganised PK_Tracking") {
+				t.Errorf("event %q", e.Text)
+			}
+		}
+	}
+	if own != 1 {
+		t.Errorf("events %+v", d.Events)
+	}
+	// The change made before the plan in use began does not move Since.
+	f.Changes[0].ChangedAt = time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	if v := BuildQueryDetail(f, true).Verdict; v == nil || v.Change != "" || !v.Since.Equal(time.Date(2026, 11, 4, 13, 34, 0, 0, time.UTC)) {
+		t.Errorf("earlier change moved Since: %+v", v)
+	}
+}

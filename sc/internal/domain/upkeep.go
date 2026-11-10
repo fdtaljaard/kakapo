@@ -37,6 +37,9 @@ type UpkeepFacts struct {
 	JobsError        string
 	MaintenanceJob   string // MNT03: an enabled job whose name or command matches the scan's patterns; "" none
 	MaintenancePlans int    // MNT03: rows in msdb.dbo.sysmaintplan_subplans
+	// StatisticsJob is an enabled job that updates statistics (sp_updatestats, UPDATE STATISTICS,
+	// IndexOptimize with @UpdateStatistics, or "statistic" in its name); "" none (phase 5q).
+	StatisticsJob    string
 	MaintenanceError string
 	ShrinkJobs       []ShrinkJob // MNT05: enabled job steps that shrink
 	ShrinkJobsError  string
@@ -58,6 +61,18 @@ type UpkeepFacts struct {
 	JobHistoryOldest    *time.Time
 	CleanupJob          string
 	HistoryError        string
+
+	// MNT09 (docs/phase5q-contract.md, section 1), read inside the database (and msdb, where the jobs
+	// are; empty on Express): the procedures that pick indexes to alter, the other enabled index job
+	// steps, and the hour of the last 8 days (server clock) with the most index statistics over
+	// Mnt09FingerprintPages that read every row, with their count.
+	IndexProcedures []IndexProcedure
+	IndexJobSteps   []IndexJobStep
+	RebuildHour     *time.Time
+	RebuildCount    int
+	IndexJobError   string
+	// IndexJobStepsError says msdb's jobs could not be read: no job is known to name a procedure.
+	IndexJobStepsError string
 	// MaintenancePlan is the plan read (docs/phase5b-contract.md), filled in by the service after
 	// the card is built; nil when it was not read. AvailableUpkeepFixes offers the maintenance plan
 	// fix from it.
@@ -233,6 +248,7 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 		b.mnt03()
 	}
 	b.mnt04()
+	b.mnt09()
 	b.mnt05()
 	b.mnt06()
 	b.chg01()
@@ -457,10 +473,24 @@ func (b *upkeepBuild) mnt03() {
 		b.skip(msdbNotReadable+f.MaintenanceError, "MNT03")
 		return
 	}
-	if f.MaintenanceJob == "" && f.MaintenancePlans == 0 {
-		b.add("MNT03", 3, "Online", EffortModerate, f.ServerName, "No enabled index or statistics maintenance job was found.", mnt03Why, mnt03Do, "",
-			FixMaintenanceJob)
+	if f.StatisticsJob != "" || f.MaintenancePlans > 0 {
+		return
 	}
+	// Phase 5q (docs/phase5q-contract.md, section 2): an index job alone does not keep statistics.
+	index := f.MaintenanceJob
+	for _, p := range f.IndexProcedures {
+		if index == "" && len(p.Jobs) > 0 {
+			index = p.Jobs[0]
+		}
+	}
+	if index != "" {
+		b.add("MNT03", 3, "Online", EffortModerate, f.ServerName,
+			fmt.Sprintf("Indexes are maintained by \"%s\", but nothing updates statistics, which is what keeps query plans good.", index),
+			mnt03Why, mnt03Do, "", FixMaintenanceJob)
+		return
+	}
+	b.add("MNT03", 3, "Online", EffortModerate, f.ServerName, "No enabled index or statistics maintenance job was found.", mnt03Why, mnt03Do, "",
+		FixMaintenanceJob)
 }
 
 // staleTable is one table with out-of-date statistics.

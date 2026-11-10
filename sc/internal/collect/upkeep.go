@@ -74,7 +74,7 @@ BEGIN CATCH
 END CATCH;
 
 /* MNT03 Index / statistics maintenance job (heuristic on job names and commands) */
-DECLARE @maintJob sysname, @plans int, @maintError nvarchar(2048);
+DECLARE @maintJob sysname, @statsJob sysname, @plans int, @maintError nvarchar(2048);
 IF @express = 0
 BEGIN TRY
     EXEC sys.sp_executesql N'/* kakapo */ SELECT TOP (1) @j = j.name
@@ -86,8 +86,16 @@ BEGIN TRY
                OR s.command LIKE N''%DBREINDEX%'' OR j.name LIKE N''%statistic%''
                OR j.name LIKE N''%index%'' OR j.name LIKE N''%maint%'')
         ORDER BY j.name;
+        /* Phase 5q: a job that updates statistics (sp_updatestats, UPDATE STATISTICS, IndexOptimize with @UpdateStatistics set). */
+        SELECT TOP (1) @s = j.name
+        FROM msdb.dbo.sysjobs j
+        JOIN msdb.dbo.sysjobsteps s ON s.job_id = j.job_id
+        WHERE j.enabled = 1
+          AND (   s.command LIKE N''%sp[_]updatestats%'' OR s.command LIKE N''%UPDATE STATISTICS%''
+               OR (s.command LIKE N''%IndexOptimize%'' AND s.command LIKE N''%@UpdateStatistics%'') OR j.name LIKE N''%statistic%'')
+        ORDER BY j.name;
         SELECT @p = COUNT(*) FROM msdb.dbo.sysmaintplan_subplans;',
-        N'@j sysname OUTPUT, @p int OUTPUT', @j = @maintJob OUTPUT, @p = @plans OUTPUT;
+        N'@j sysname OUTPUT, @s sysname OUTPUT, @p int OUTPUT', @j = @maintJob OUTPUT, @s = @statsJob OUTPUT, @p = @plans OUTPUT;
 END TRY
 BEGIN CATCH
     SET @maintError = ERROR_MESSAGE();
@@ -261,7 +269,7 @@ SELECT @found, @autoShrink,
        @state,
        @agentStatus, @agentStartup, @agentError,
        @jobsError,
-       @maintJob, ISNULL(@plans, 0), @maintError,
+       @maintJob, @statsJob, ISNULL(@plans, 0), @maintError,
        @shrinkError,
        @missing, ISNULL(@operators, 0), ISNULL(@alertsOn, 0), @alertsError,
        @bhOldest, ISNULL(@bhRows, 0), ISNULL(@jhRows, 0), ISNULL(@jhOldest, 0), @cleanupJob, @historyError,
@@ -352,6 +360,7 @@ func UpkeepFacts(ctx context.Context, db *sql.DB, database string) (domain.Upkee
 		} else {
 			f.StaleStats = stats
 		}
+		readIndexJobs(ctx, db, database, &f) // MNT09 (docs/phase5q-contract.md, section 1)
 	}
 	return f, nil
 }
@@ -372,6 +381,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		found                                         bool
 		state, agentStatus, agentStartup, agentErr    sql.NullString
 		jobsErr, maintJob, maintErr, shrinkErr        sql.NullString
+		statsJob                                      sql.NullString
 		missing, alertsErr, traceErr, dumpFile, dumpE sql.NullString
 		dumpLast                                      sql.NullTime
 		bhOldest                                      sql.NullTime
@@ -382,7 +392,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 	if err := rows.Scan(&found, &f.AutoShrinkOn, &f.ServerName, &f.ProductVersion, &f.EngineEdition, &state,
 		&agentStatus, &agentStartup, &agentErr,
 		&jobsErr,
-		&maintJob, &f.MaintenancePlans, &maintErr,
+		&maintJob, &statsJob, &f.MaintenancePlans, &maintErr,
 		&shrinkErr,
 		&missing, &f.Operators, &f.AlertsOn, &alertsErr,
 		&bhOldest, &f.BackupHistoryRows, &f.JobHistoryRows, &jhOldest, &cleanupJob, &historyErr,
@@ -398,7 +408,7 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 	f.State = state.String
 	f.AgentStatus, f.AgentStartup, f.AgentError = agentStatus.String, agentStartup.String, agentErr.String
 	f.JobsError = jobsErr.String
-	f.MaintenanceJob, f.MaintenanceError = maintJob.String, maintErr.String
+	f.MaintenanceJob, f.StatisticsJob, f.MaintenanceError = maintJob.String, statsJob.String, maintErr.String
 	f.ShrinkJobsError = shrinkErr.String
 	f.AlertsError = alertsErr.String
 	f.MissingAlerts = []string{}

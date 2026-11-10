@@ -261,7 +261,7 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 	for _, want := range []string{
 		"@freq_type = 8, @freq_interval = 126, @freq_recurrence_factor = 1, @active_start_time = 23000;",
 		"@freq_type = 8, @freq_interval = 1, @freq_recurrence_factor = 1, @active_start_time = 23000;",
-		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE'', @FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000",
+		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE'', @FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000",
 		"N'kakapo: indexes (WarehouseLive), Sunday 02:30'",
 	} {
 		if !strings.Contains(p.Statement, want) {
@@ -270,7 +270,7 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 	}
 	if !reflect.DeepEqual(MaintenanceJobNames(f, opts), []string{"kakapo: statistics (WarehouseLive)", "kakapo: indexes (WarehouseLive)"}) ||
 		!strings.Contains(p.Rollback, "N'kakapo: indexes (WarehouseLive)'") || len(p.Changes) != 3 ||
-		!suContains(p.Warnings, "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that Sunday 02:30 is a quiet hour and that the log has room.") {
+		!suContains(p.Warnings, "Index work writes a lot of log: check that Sunday 02:30 is a quiet hour and that the log has room. It never rebuilds offline: without Enterprise edition it reorganises, which keeps the table open to users.") {
 		t.Errorf("index job %+v", p)
 	}
 
@@ -409,7 +409,7 @@ func TestRemoveShrinkStepFix(t *testing.T) {
 // per shrink step, each with the options its finding's object names.
 func TestAvailableUpkeepActionFixes(t *testing.T) {
 	f := goodUpkeep()
-	f.MaintenanceJob, f.Operators = "", 0
+	f.MaintenanceJob, f.StatisticsJob, f.Operators = "", "", 0
 	f.ShrinkJobs = []ShrinkJob{{Job: "Nightly", Step: 2, Command: "DBCC SHRINKFILE (2)"}, {Job: "Nightly", Step: 4, Command: "DBCC SHRINKFILE (1)"},
 		{Job: "Weekly", Step: 1, Command: "DBCC SHRINKDATABASE (x)"}}
 	c, fs, _ := runUpkeep(f)

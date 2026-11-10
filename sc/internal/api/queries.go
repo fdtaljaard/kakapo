@@ -28,4 +28,22 @@ func queriesRoutes(mux *http.ServeMux, svc *service.Service) {
 		}
 		writeJSON(w, http.StatusOK, d)
 	})
+	// Measure one index a plan reads in full (docs/phase5q-contract.md, section 4): its pages, how full
+	// and how out of order, and the reorganize-index action when there is something to gain. Reads
+	// only. 400 without schema, table and index; 404 for an unknown server or database; 409 when the
+	// database is not online; 502 when the server cannot be read.
+	mux.HandleFunc("GET /api/servers/{id}/databases/{db}/indexes/shape", func(w http.ResponseWriter, r *http.Request) {
+		id, name, err := serverAndDatabase(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		q := r.URL.Query()
+		x, err := svc.IndexShape(r.Context(), id, name, q.Get("schema"), q.Get("table"), q.Get("index"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, x)
+	})
 }

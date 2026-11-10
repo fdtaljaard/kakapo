@@ -21,6 +21,7 @@ func init() {
 	registerFix(domain.FixTraceFlagOff, prepareTraceFlagOff, applyTraceFlagOff)
 	registerFix(domain.FixScopedConfigReset, prepareScopedConfigReset, applyScopedConfigReset)
 	registerFix(domain.FixMinServerMemory, prepareMinServerMemory, applyMinServerMemory)
+	registerFix(domain.FixCompatLevel, prepareCompatLevel, applyCompatLevel)
 }
 
 // suReadTimeout bounds every read of an action's prepare and read-back.
@@ -340,5 +341,41 @@ func applyMinServerMemory(ctx context.Context, s *Service, serverID int64, g *ge
 		return domain.FixResult{}, s.suLogUnread(ctx, change, err, "The change to min server memory")
 	}
 	after, ok := domain.MinServerMemoryReadBack(v)
+	return s.suLog(ctx, change, g, g.fix.Current, after, ok)
+}
+
+// --- compat-level (DBC06) ---
+
+func prepareCompatLevel(ctx context.Context, s *Service, g *genericFix, _ domain.FixDef, options map[string]string) error {
+	rctx, cancel := suReadCtx(ctx)
+	defer cancel()
+	f, err := collect.ReadCompatFacts(rctx, g.db, g.database.Name)
+	if err != nil {
+		return newError(KindUnreachable, "could not read the compatibility level of %s: %v", g.database.Name, err)
+	}
+	p, fix, err := domain.BuildCompatLevelFix(f, options)
+	if err != nil {
+		return err
+	}
+	suKeep(g, suDescriptionKey, domain.FixChangeDescription(fix, suServerLabel(g, f.ServerName), f.Database))
+	return suPreviewed(g, p, fix)
+}
+
+func applyCompatLevel(ctx context.Context, s *Service, serverID int64, g *genericFix) (domain.FixResult, error) {
+	if err := suApplyRefusal(g); err != nil {
+		return domain.FixResult{}, err
+	}
+	name := g.database.Name
+	if err := collect.ExecFix(ctx, g.db, g.preview.Statement); err != nil {
+		return domain.FixResult{}, newError(KindUnreachable, "SQL Server refused to change the compatibility level of %s: %v. Needs the ALTER permission on the database.", name, err)
+	}
+	change := suChange(serverID, g, "COMPATIBILITY_LEVEL", "SETTING", g.options[suDescriptionKey])
+	rctx, cancel := suReadCtx(ctx)
+	defer cancel()
+	f, err := collect.ReadCompatFacts(rctx, g.db, name)
+	if err != nil {
+		return domain.FixResult{}, s.suLogUnread(ctx, change, err, "The change of compatibility level")
+	}
+	after, ok := domain.CompatReadBack(f, g.fix.Target)
 	return s.suLog(ctx, change, g, g.fix.Current, after, ok)
 }

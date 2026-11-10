@@ -611,8 +611,13 @@ func olaStatisticsCommand(db string) string {
 	return "EXECUTE master.dbo.IndexOptimize @Databases = " + nstr(db) + ", @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = 'ALL', @OnlyModifiedStatistics = 'Y', @StatisticsModificationLevel = 5;"
 }
 
+// olaIndexCommand is the weekly index work (docs/phase5q-contract.md, decisions 1 and 2): Brent
+// Ozar's thresholds (FragmentationLevel1 50, FragmentationLevel2 80; "How to Configure Ola
+// Hallengren's IndexOptimize Maintenance Script"), Ola's 1,000-page floor, and never an offline
+// rebuild: Ola tries the listed operations in order, so Enterprise rebuilds online and every other
+// edition reorganises.
 func olaIndexCommand(db string) string {
-	return "EXECUTE master.dbo.IndexOptimize @Databases = " + nstr(db) + ", @FragmentationLow = NULL, @FragmentationMedium = 'INDEX_REORGANIZE', @FragmentationHigh = 'INDEX_REBUILD_ONLINE,INDEX_REBUILD_OFFLINE', @FragmentationLevel1 = 30, @FragmentationLevel2 = 50, @MinNumberOfPages = 1000, @UpdateStatistics = 'ALL', @OnlyModifiedStatistics = 'Y', @StatisticsModificationLevel = 5;"
+	return "EXECUTE master.dbo.IndexOptimize @Databases = " + nstr(db) + ", @FragmentationLow = NULL, @FragmentationMedium = 'INDEX_REORGANIZE', @FragmentationHigh = 'INDEX_REBUILD_ONLINE,INDEX_REORGANIZE', @FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000, @UpdateStatistics = 'ALL', @OnlyModifiedStatistics = 'Y', @StatisticsModificationLevel = 5;"
 }
 
 func updateStatsCommand(db string) string { return "EXEC " + QuoteName(db) + ".sys.sp_updatestats;" }
@@ -629,10 +634,10 @@ func (f MaintenanceJobFacts) exists(name string) bool {
 const (
 	maintTimeHelp   = "Daily, server time. Pick a quiet hour, away from the backups (the full backup job runs at its own time)."
 	maintTimeWarn   = "The time must be HH:MM, for example 01:00."
-	statsOnlyHelp   = "Statistics matter most. Untick to add a weekly index job (Sunday at the same time): reorganise from 30% fragmentation, rebuild from 50%, tables over 1,000 pages."
+	statsOnlyHelp   = "Statistics matter most. Untick to add a weekly index job (Sunday at the same time): reorganise from 50% fragmentation, from 80% rebuild online where the edition can (Enterprise) and reorganise elsewhere, tables over 1,000 pages (Brent Ozar's thresholds, Ola Hallengren's floor)."
 	maintNoOla      = "Without Ola Hallengren's maintenance solution the job runs sp_updatestats, which samples each statistic and updates every one with any change; Ola's IndexOptimize does better on large tables: https://ola.hallengren.com"
 	maintOla        = "Uses Ola Hallengren's IndexOptimize already in master, set up for statistics only as Erik Darling's job does it."
-	maintIndexWarn  = "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that %s %s is a quiet hour and that the log has room."
+	maintIndexWarn  = "Index work writes a lot of log: check that %s %s is a quiet hour and that the log has room. It never rebuilds offline: without Enterprise edition it reorganises, which keeps the table open to users."
 	maintExpress    = "SQL Server Express has no Agent: kakapo cannot create the job. Copy the script and schedule it in Windows Task Scheduler (sqlcmd -E -i)."
 	maintOlaOddName = "The database name has characters IndexOptimize reads as a list or a pattern, so the job uses sp_updatestats instead."
 )
@@ -726,7 +731,7 @@ func planMaintenance(f MaintenanceJobFacts, options map[string]string) maintenan
 		sc := KakapoJobSchedule{Freq: JobWeekly, Days: dayBit, Clock: p.indexTime}
 		sc.Name = IndexJobName(f.Database) + ", " + sc.words()
 		p.jobs = append(p.jobs, KakapoJob{Name: IndexJobName(f.Database), Operator: operator, Schedule: sc,
-			Description: KakapoJobDescription(date, f.Database, "indexes "+sc.words()+" (IndexOptimize: reorganise from 30%, rebuild from 50%, and statistics)"),
+			Description: KakapoJobDescription(date, f.Database, "indexes "+sc.words()+" (IndexOptimize: reorganise from 50%, from 80% rebuild online or reorganise, and statistics)"),
 			Steps:       []KakapoJobStep{{Name: "Reorganise or rebuild indexes, update statistics", Command: olaIndexCommand(f.Database)}}})
 	}
 	return p

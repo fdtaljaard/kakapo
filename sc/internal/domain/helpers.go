@@ -96,6 +96,8 @@ type HelperFacts struct {
 	EngineEdition  int
 	ErrorLogFile   string // SERVERPROPERTY('ErrorLogFileName')
 	Session        XESession
+	// Maintenance is kakapo's maintenance procedure as read (phase 5p); nil when it was not read.
+	Maintenance *MaintProcFacts
 }
 
 // HasKakapoShape says whether a session has the events and the target kakapo creates, writing
@@ -608,6 +610,7 @@ type InstalledHelpers struct {
 // The states of a helper.
 const (
 	HelperRunning      = "running"
+	HelperInstalled    = "installed"
 	HelperStopped      = "stopped"
 	HelperNotInstalled = "not installed"
 	HelperForeign      = "not kakapo's"
@@ -624,6 +627,7 @@ type InstalledHelper struct {
 	Details  []string   `json:"details"`
 	FixID    string     `json:"fixId,omitempty"`
 	FixLabel string     `json:"fixLabel,omitempty"`
+	FixTitle string     `json:"fixTitle,omitempty"` // the fix dialog's title
 	Session  *XESession `json:"session,omitempty"`
 }
 
@@ -639,13 +643,13 @@ func BuildInstalledHelpers(f HelperFacts, database string) InstalledHelpers {
 		h.State = HelperUnknown
 		h.Sentence = "kakapo could not see whether its event session is installed: " + s.Error
 	case !s.Exists:
-		h.State, h.FixID, h.FixLabel = HelperNotInstalled, FixInstallXESession, "Create"
+		h.State, h.FixID, h.FixLabel, h.FixTitle = HelperNotInstalled, FixInstallXESession, "Create", "Keep every block and deadlock on the server"
 		h.Sentence = fmt.Sprintf("Nothing installed. kakapo's event session would keep every block over %d seconds and every deadlock on the server, so the blocking history and the deadlock report no longer depend on system_health's five-minute snapshots.", DefaultXEThreshold)
 	case !s.Ours:
 		h.State = HelperForeign
 		h.Sentence = "A session named kakapo exists on this server, but kakapo did not create it (its events or its target differ): kakapo leaves it alone."
 	case s.Running:
-		h.State, h.FixID, h.FixLabel = HelperRunning, FixRemoveXESession, "Remove"
+		h.State, h.FixID, h.FixLabel, h.FixTitle = HelperRunning, FixRemoveXESession, "Remove", "Remove kakapo's event session"
 		since := ""
 		if s.StartedAt != nil {
 			since = " since " + utcText(*s.StartedAt)
@@ -657,7 +661,7 @@ func BuildInstalledHelpers(f HelperFacts, database string) InstalledHelpers {
 				since, thresholdWords(s.ThresholdSeconds), orQ(pattern), plural(s.EventsCaptured, "event", "events"))
 		}
 	default:
-		h.State, h.FixID, h.FixLabel = HelperStopped, FixRemoveXESession, "Remove"
+		h.State, h.FixID, h.FixLabel, h.FixTitle = HelperStopped, FixRemoveXESession, "Remove", "Remove kakapo's event session"
 		h.Sentence = fmt.Sprintf("kakapo's event session exists but is stopped, so nothing new is kept; what it kept is still read from %s.", orQ(pattern))
 	}
 	if s.Exists {
@@ -679,11 +683,23 @@ func BuildInstalledHelpers(f HelperFacts, database string) InstalledHelpers {
 		h.Details = append(h.Details, "Other sessions recording the blocked process report: "+strings.Join(s.OtherSessions, ", "))
 	}
 	out := InstalledHelpers{ServerName: f.ServerName, Database: database, Helpers: []InstalledHelper{h}}
-	switch h.State {
-	case HelperRunning, HelperStopped:
-		out.Sentence = "1 helper installed by kakapo: " + h.Sentence
-	default:
+	if m, ok := maintHelperLine(f.Maintenance, f.EngineEdition); ok {
+		out.Helpers = append(out.Helpers, m)
+	}
+	installed := []InstalledHelper{}
+	for _, x := range out.Helpers {
+		switch x.State {
+		case HelperRunning, HelperStopped, HelperInstalled:
+			installed = append(installed, x)
+		}
+	}
+	switch len(installed) {
+	case 0:
 		out.Sentence = h.Sentence
+	case 1:
+		out.Sentence = "1 helper installed by kakapo: " + installed[0].Sentence
+	default:
+		out.Sentence = fmt.Sprintf("%d helpers installed by kakapo.", len(installed))
 	}
 	return out
 }

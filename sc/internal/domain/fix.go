@@ -81,6 +81,8 @@ var FixDefs = []FixDef{
 	{"drop-index", "Drop an index", ScopeDatabase, "WRK03", "Index"},
 	// Phase 5o (docs/phase5o-contract.md, section 3): IDX04's safe copy, disabled so it can be rebuilt.
 	{FixDisableIndex, "Disable a duplicate index", ScopeDatabase, "IDX04", "Index"},
+	// Phase 5q (docs/phase5q-contract.md, section 4): an index a query reads in full, reorganised.
+	{FixReorganizeIndex, "Reorganise an index", ScopeDatabase, "QRY01", "Index"},
 	{"kill-session", "Kill the blocking session", ScopeServer, "ACT01", "Session"},
 	// Phase 5m (docs/phase5m-contract.md, section 4): the row versioning decision's fix.
 	{"rcsi", "Turn on READ COMMITTED SNAPSHOT", ScopeDatabase, "DEC01", "READ_COMMITTED_SNAPSHOT"},
@@ -93,6 +95,7 @@ var FixDefs = []FixDef{
 	{"reconfigure", "Activate or revert the pending server settings", ScopeServer, "INS14", "RECONFIGURE"},
 	{"trace-flag-off", "Turn a trace flag off", ScopeServer, "INS15", "Trace flag"},
 	{"scoped-config-reset", "Reset a database scoped configuration", ScopeDatabase, "DBC14", "Scoped configuration"},
+	{"compat-level", "Raise the compatibility level", ScopeDatabase, "DBC06", "COMPATIBILITY_LEVEL"},
 	{"min-server-memory", "Min server memory back to 0", ScopeServer, "INS16", "min server memory (MB)"},
 	{"operator-alerts", "Create the operator and alerts", ScopeServer, "MNT07", "Alerts"},
 	{"maintenance-job", "Create the statistics job", ScopeServer, "MNT03", "Maintenance job"},
@@ -118,6 +121,9 @@ var FixDefs = []FixDef{
 	{FixEnableDefaultTrace, "Switch SQL Server's default trace back on", ScopeServer, "CHG01", DefaultTraceSetting},
 	{FixBackupSchedule, "Create a backup schedule", ScopeDatabase, "BAK01", "Backup schedule"},
 	{FixRemoveBackupSchedule, "Remove kakapo's backup jobs", ScopeDatabase, "BAK01", "Backup schedule"},
+	// Phase 5p (docs/phase5p-contract.md): the maintenance plan as one procedure, for SQL Server Express.
+	{FixInstallMaintenanceProc, "Install the maintenance procedure", ScopeServer, "MNT03", "Maintenance procedure"},
+	{FixRemoveMaintenanceProc, "Remove kakapo's maintenance procedure", ScopeServer, "MNT03", "Maintenance procedure"},
 }
 
 // Card is the card whose finding offers this fix.

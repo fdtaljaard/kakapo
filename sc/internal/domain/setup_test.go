@@ -472,8 +472,8 @@ func TestDatabaseOtherChecks(t *testing.T) {
 	f := goodFacts()
 	f.CompatLevel = 110
 	_, fs, _ := runSetup(f)
-	if x := one(t, fs, "DBC06"); x.Severity != SeverityMedium || x.Owner != OwnerVendor || x.When != WhenDecideFirst ||
-		x.Finding != "Compatibility level is 110; this server supports 160." || x.FixID != "" {
+	if x := one(t, fs, "DBC06"); x.Severity != SeverityMedium || x.Owner != OwnerUs || x.When != WhenDecideFirst ||
+		x.Finding != "Compatibility level is 110; this server supports 160." || x.FixID != FixCompatLevel {
 		t.Errorf("DBC06: %+v", x)
 	}
 	f.CompatLevel = 150

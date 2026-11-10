@@ -226,13 +226,16 @@ func TestPlanStatusWords(t *testing.T) {
 		t.Errorf("unread plan %+v", plan)
 	}
 
-	// Express: missing lines with scripts, no alerts, no composite.
+	// Express (phase 5p): missing lines without scripts, no alerts, one fix: install the procedure.
 	f = planFacts()
 	f.EngineEdition = 4
 	plan = BuildMaintenancePlan(f, PlanAlerts{})
-	if plan.FixID != "" || !plan.Express || pieceOf(t, plan, PieceAlerts).Status != PlanNotNeeded || pieceOf(t, plan, PieceCleanup).FixID != FixHistoryCleanup ||
-		pieceOf(t, plan, PieceIndexes).Status != PlanOptional {
+	if plan.FixID != FixInstallMaintenanceProc || !plan.Express || pieceOf(t, plan, PieceAlerts).Status != PlanNotNeeded || pieceOf(t, plan, PieceCleanup).FixID != "" ||
+		pieceOf(t, plan, PieceCleanup).Status != PlanMissing || pieceOf(t, plan, PieceIndexes).Status != PlanOptional {
 		t.Errorf("express %+v", plan)
+	}
+	if fix, ok := MaintenancePlanOffer(&plan); !ok || fix.ID != FixInstallMaintenanceProc {
+		t.Errorf("express offer %+v", fix)
 	}
 }
 
@@ -668,7 +671,7 @@ func TestMaintenanceJobPlanOptions(t *testing.T) {
 	p, _, _ = BuildMaintenanceJobFix(f, map[string]string{OptionStatsOnly: "false", OptionMaintDay: "Saturday", OptionMaintIndexTime: "03:00"})
 	if !strings.Contains(p.Statement, "N'kakapo: statistics (WarehouseLive), Sunday, Monday, Tuesday, Wednesday, Thursday, Friday 01:00'") ||
 		!strings.Contains(p.Statement, "N'kakapo: indexes (WarehouseLive), Saturday 03:00'") ||
-		!suContains(p.Warnings, "Index rebuilds write a lot of log and, without Enterprise edition, rebuild offline and block users of the table while they run: check that Saturday 03:00 is a quiet hour and that the log has room.") {
+		!suContains(p.Warnings, "Index work writes a lot of log: check that Saturday 03:00 is a quiet hour and that the log has room. It never rebuilds offline: without Enterprise edition it reorganises, which keeps the table open to users.") {
 		t.Errorf("index on Saturday\n%s\n%q", p.Statement, p.Warnings)
 	}
 	p, _, _ = BuildMaintenanceJobFix(f, map[string]string{OptionMaintIndexOnly: "true", OptionMaintIndexTime: "03:00"})

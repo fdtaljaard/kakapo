@@ -111,12 +111,13 @@ export function PlanTimeline({ detail: d }: { detail: QueryDetail }) {
   const steps: Step[] = [
     ...plans.map((p) => ({ at: p.firstRun ?? "", plan: p })),
     ...d.events
-      .filter((e) => e.kind === "statistics" && plans.some((p) => p.firstRun && p.firstRun < e.at))
+      .filter((e) => (e.kind === "statistics" || e.kind === "change") && plans.some((p) => p.firstRun && p.firstRun < e.at))
       .map((e) => ({ at: e.at, event: e })),
   ].sort((a, b) => a.at.localeCompare(b.at))
   const { inUse, costliest } = chartPlans(d)
   // The first statistics update and the first index say what they are, once each.
-  const firstOf = (isIndex: boolean) => steps.find((x) => x.event && x.event.text.startsWith("Index ") === isIndex)
+  const firstOf = (isIndex: boolean) =>
+    steps.find((x) => x.event && x.event.kind === "statistics" && x.event.text.startsWith("Index ") === isIndex)
   return (
     <ol className="relative grid gap-0 pl-5 before:absolute before:left-[5px] before:top-3 before:bottom-3 before:w-0.5 before:bg-border">
       {steps.map((s) => {

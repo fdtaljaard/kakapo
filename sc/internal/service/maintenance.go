@@ -118,6 +118,9 @@ func readPlanFacts(ctx context.Context, db *sql.DB, database string) (domain.Mai
 		return f, domain.PlanAlerts{}, err
 	}
 	var alerts domain.PlanAlerts
+	if f.EngineEdition == 4 {
+		f.Proc = readMaintFor(rctx, db, database)
+	}
 	if f.EngineEdition != 4 {
 		if af, err := collect.ReadAlertFacts(rctx, db); err != nil {
 			alerts.Error = err.Error()

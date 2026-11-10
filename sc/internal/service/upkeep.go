@@ -169,5 +169,9 @@ func readUpkeepPlan(ctx context.Context, db *sql.DB, facts domain.UpkeepFacts) d
 		f = domain.MaintenancePlanFacts{ServerName: facts.ServerName, EngineEdition: facts.EngineEdition, Database: facts.Database,
 			JobsError: err.Error(), ServerNow: facts.ServerNow}
 	}
+	if f.EngineEdition == 4 {
+		// Phase 5p: on Express the plan is kakapo's procedure, read from its own log.
+		f.Proc = readMaintFor(readCtx, db, facts.Database)
+	}
 	return domain.BuildMaintenancePlan(f, facts.PlanAlerts())
 }

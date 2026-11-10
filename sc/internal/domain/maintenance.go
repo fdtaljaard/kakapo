@@ -35,6 +35,7 @@ const (
 	PlanNotNeeded = "not-needed" // the log backup in SIMPLE recovery
 	PlanOptional  = "optional"   // index maintenance: offered, not counted as missing
 	PlanUnknown   = "unknown"    // what it stands on could not be read
+	PlanOverdue   = "overdue"    // kakapo's procedure (Express): its time passed and the log has no run since
 )
 
 // The default times of the plan (SCOPE rule 5): Sunday runs the integrity check, then index work
@@ -141,6 +142,8 @@ type MaintenancePlanFacts struct {
 	Jobs            []PlanJob
 	JobsError       string
 	ServerNow       time.Time
+	// Proc is kakapo's maintenance procedure as read (phase 5p, Express only); nil when not read.
+	Proc *MaintProcFacts
 }
 
 // PlanAlerts is the operator and alerts state the plan's alerts line shows (from the Upkeep facts,
@@ -473,10 +476,17 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 			plan.Pieces = append(plan.Pieces, p)
 			continue
 		case plan.Express:
-			p.Status, p.Note = PlanMissing, "SQL Server Express has no SQL Server Agent: Create gives a script to schedule in Windows Task Scheduler."
-			if id == PieceIndexes {
-				p.Status = PlanOptional
+			// Phase 5p: the plan is kakapo's procedure, which reads its last runs from its own log.
+			if row, ok := expressRow(f); ok {
+				maintPlanPiece(&p, *f.Proc, row, f.ServerNow)
+			} else {
+				p.Status, p.Note = PlanMissing, expressPieceNote(f)
+				if id == PieceIndexes {
+					p.Status = PlanOptional
+				}
 			}
+			plan.Pieces = append(plan.Pieces, p)
+			continue
 		case f.JobsError != "":
 			p.Status, p.Note = PlanUnknown, "The Agent jobs in msdb could not be read: "+f.JobsError
 			plan.Pieces = append(plan.Pieces, p)
@@ -552,13 +562,13 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 	}
 
 	for _, p := range plan.Pieces {
-		if p.FixID != "" && p.ID != PieceIndexes && (p.Status == PlanMissing || p.Status == PlanDisabled) {
+		if (p.FixID != "" || plan.Express) && p.ID != PieceIndexes && (p.Status == PlanMissing || p.Status == PlanDisabled) {
 			plan.Missing++
 		}
 	}
 	switch {
 	case plan.Express:
-		plan.Note = "SQL Server Express has no SQL Server Agent, so kakapo cannot schedule the plan: each line's Create gives a script for Windows Task Scheduler."
+		plan.Note, plan.FixID = expressPlanNote(f)
 	case f.JobsError != "":
 		plan.Note = "The Agent jobs in msdb could not be read, so the plan is not known: " + f.JobsError
 	case plan.Missing > 0:
@@ -609,6 +619,12 @@ func planPieceNoFix(id string, f MaintenancePlanFacts, ownBackup bool) string {
 func MaintenancePlanOffer(plan *MaintenancePlan) (Fix, bool) {
 	if plan == nil || plan.FixID == "" {
 		return Fix{}, false
+	}
+	if plan.FixID == FixInstallMaintenanceProc {
+		fix := suFix(FixInstallMaintenanceProc)
+		fix.Current = "nothing schedules the maintenance (SQL Server Express has no SQL Server Agent)"
+		fix.Target = "master.dbo.kakapo_Maintenance, called every 15 minutes by a scheduled task"
+		return fix, true
 	}
 	fix := suFix(FixMaintenancePlan)
 	titles := []string{}
@@ -908,4 +924,44 @@ func PlanOverlaps(slots []PlanSlot) []string {
 		}
 	}
 	return out
+}
+
+// expressRow is the database's row of kakapo's procedure when the procedure is installed and serves it.
+func expressRow(f MaintenancePlanFacts) (MaintSettings, bool) {
+	if f.Proc == nil || !f.Proc.Installed() {
+		return MaintSettings{}, false
+	}
+	return f.Proc.Row(f.Database)
+}
+
+// expressPieceNote is why a piece is missing on Express.
+func expressPieceNote(f MaintenancePlanFacts) string {
+	switch {
+	case f.Proc != nil && f.Proc.ProcExists && !f.Proc.ProcOurs:
+		return "A procedure named master.dbo.kakapo_Maintenance exists that kakapo did not create, so kakapo cannot install its own."
+	case f.Proc != nil && f.Proc.Installed():
+		return "kakapo's maintenance procedure is installed but does not serve this database: Install adds it."
+	}
+	return "SQL Server Express has no SQL Server Agent: nothing schedules this. Install the maintenance procedure below does it with the rest."
+}
+
+// expressPlanNote is the plan's note on Express and the fix it offers: the install while the procedure
+// does not serve this database.
+func expressPlanNote(f MaintenancePlanFacts) (string, string) {
+	if _, ok := expressRow(f); ok {
+		call := "It has not been called yet: is the scheduled task in place?"
+		if last := f.Proc.LastCall(); last != nil {
+			call = "Its last call was " + sqlTime(*last) + "."
+		}
+		return "kakapo's maintenance procedure (master.dbo.kakapo_Maintenance) does this database's maintenance; each line reads its last run from its log. " + call, ""
+	}
+	switch {
+	case f.Proc != nil && f.Proc.ProcExists && !f.Proc.ProcOurs:
+		return "SQL Server Express has no SQL Server Agent, and a procedure named master.dbo.kakapo_Maintenance that kakapo did not create is in the way: kakapo cannot install its maintenance procedure.", ""
+	case f.Proc != nil && f.Proc.Error != "" && !f.Proc.ProcExists:
+		return "SQL Server Express has no SQL Server Agent, and kakapo could not read whether its maintenance procedure is installed: " + f.Proc.Error, ""
+	case f.Proc != nil && f.Proc.Installed():
+		return "kakapo's maintenance procedure is installed on this server but does not serve this database. Install the maintenance procedure adds it (the same Apply).", FixInstallMaintenanceProc
+	}
+	return "SQL Server Express has no SQL Server Agent. kakapo installs the whole plan as one procedure in master, and a scheduled task calls it every 15 minutes; it decides itself what is due.", FixInstallMaintenanceProc
 }

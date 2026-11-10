@@ -204,6 +204,8 @@ func (s *Service) Helpers(ctx context.Context, serverID int64) (domain.Installed
 	if hf.ServerName == "" {
 		hf.ServerName = srv.Name
 	}
+	// Phase 5p: kakapo's maintenance procedure, on the same row.
+	hf.Maintenance = readMaintFor(rctx, db, "")
 	return domain.BuildInstalledHelpers(hf, helperDatabase(rctx, db, srv)), nil
 }
 

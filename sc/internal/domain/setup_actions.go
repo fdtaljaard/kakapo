@@ -655,7 +655,7 @@ func ScopedConfigReadBack(name string, after ScopedConfigFacts) (string, bool) {
 
 // setupActionIDs are the Setup card's registered actions, which AvailableFixes lists one per
 // finding with the finding's options.
-var setupActionIDs = []string{FixMultiUser, FixReconfigure, FixTraceFlagOff, FixScopedConfigReset, FixMinServerMemory}
+var setupActionIDs = []string{FixMultiUser, FixReconfigure, FixTraceFlagOff, FixScopedConfigReset, FixMinServerMemory, FixCompatLevel}
 
 func isSetupAction(id string) bool {
 	for _, x := range setupActionIDs {
@@ -691,6 +691,10 @@ func setupActionFix(f SetupFacts, x Finding) (Fix, bool) {
 		fix.Options = map[string]string{OptionScopedName: x.Object}
 	case FixMinServerMemory:
 		fix.Current, fix.Target = fmt.Sprintf("%d MB", f.MinServerMemoryMB), "0 MB"
+	case FixCompatLevel:
+		target := strconv.Itoa(f.Major() * 10)
+		fix.Current, fix.Target = strconv.Itoa(f.CompatLevel), target
+		fix.Options = map[string]string{OptionCompatTarget: target}
 	default:
 		return Fix{}, false
 	}

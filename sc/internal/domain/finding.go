@@ -279,7 +279,7 @@ var Checks = []Check{
 	{"DBC03", CardSetup, "AUTO_SHRINK is off", "Is AUTO_SHRINK off?", OwnerUs, "Re-run: DBC03 gone."},
 	{"DBC04", CardSetup, "Page verify uses CHECKSUM", "Is page verify CHECKSUM?", OwnerUs, "Re-run: DBC04 gone."},
 	{"DBC05", CardSetup, "Automatic statistics are on", "Are automatic statistics on?", OwnerUs, "Re-run: DBC05 gone."},
-	{"DBC06", CardSetup, "Compatibility level", "Is the compatibility level current?", OwnerVendor,
+	{"DBC06", CardSetup, "Compatibility level", "Is the compatibility level current?", OwnerUs,
 		"Re-run after the change and a business day: no regression in the Tuning Report."},
 	{"DBC07", CardSetup, "Database owner is a valid login", "Does the database owner exist as a login?", OwnerUs,
 		"Re-run: DBC07 gone."},
@@ -321,6 +321,9 @@ var Checks = []Check{
 		"RAISERROR('Alert test' 18 1) WITH LOG reaches the operator's mailbox."},
 	{"MNT08", CardUpkeep, "msdb history kept for ever", "Does anything prune the backup and job history?", OwnerUs,
 		"Re-run after the first cleanup: MNT08 gone."},
+	// Phase 5q (docs/phase5q-contract.md, section 1): a home-grown index job.
+	{"MNT09", CardUpkeep, "A home-grown index job", "Does a procedure of its own rebuild indexes on a schedule?", OwnerUs,
+		"After a week without it: MNT09 gone, and MNT04 stays quiet."},
 	// Phase 5f (docs/phase5f-contract.md): the default trace that feeds the change log.
 	{"CHG01", CardUpkeep, "Changes made outside kakapo are seen", "Can kakapo see the changes made outside it, for a week back?", OwnerUs,
 		"Re-run: CHG01 gone, and the line under Recent changes names the trace's days."},

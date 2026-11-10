@@ -1123,8 +1123,8 @@ func (b *setupBuild) databaseChecks() {
 		}
 		b.dbc("DBC06", rank, "Planned", EffortModerate,
 			fmt.Sprintf("Compatibility level is %d; this server supports %d.", f.CompatLevel, serverCompat), dbc06Why,
-			fmt.Sprintf("Check vendor support, then test the application at the higher level (with Query Store on to catch regressions) before: ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;", db, serverCompat),
-			fmt.Sprintf("compatibility_level = %d", f.CompatLevel), "")
+			fmt.Sprintf("With Query Store on and a week of history, raise it in a quiet hour, then let the Tuning report compare the days after against the week before (force the old plan of any query that got slower): ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;", db, serverCompat),
+			fmt.Sprintf("compatibility_level = %d", f.CompatLevel), b.dbFix(FixCompatLevel))
 	}
 	if f.OwnerMissing {
 		rank := 4

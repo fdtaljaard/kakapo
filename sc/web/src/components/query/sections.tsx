@@ -1,7 +1,9 @@
-import type { QueryAction, QueryDetail, QueryHour, QueryTable } from "@/api-queries"
+import { useState } from "react"
+import { queriesApi, type IndexShape, type QueryAction, type QueryDetail, type QueryHour, type QueryTable } from "@/api-queries"
 import { ActionButton } from "@/components/query/action-button"
 import { formatMs, formatRows, formatWhole, serverWhen, type ServerClock } from "@/components/query/format"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
@@ -156,9 +158,63 @@ function statsAge(t: QueryTable): string {
   return t.ageDays === 0 ? "today" : t.ageDays === 1 ? "1 day" : `${t.ageDays} days`
 }
 
+// Measure: one index a plan reads in full, measured when asked (SAMPLED reads part of a big index, so not on
+// every page load); the sentence and, when there is something to gain, Reorganise.
+function IndexMeasure({
+  serverId,
+  database,
+  table,
+  index,
+  onAction,
+}: {
+  serverId: number
+  database: string
+  table: QueryTable
+  index: string
+  onAction: (a: QueryAction) => void
+}) {
+  const [state, setState] = useState<{ busy: boolean; shape?: IndexShape; error?: string }>({ busy: false })
+  const measure = () => {
+    setState({ busy: true })
+    queriesApi
+      .indexShape(serverId, database, table.schema, table.table, index)
+      .then((shape) => setState({ busy: false, shape }))
+      .catch((e: unknown) => setState({ busy: false, error: e instanceof Error ? e.message : String(e) }))
+  }
+  return (
+    <div className="grid gap-1.5">
+      {!state.shape && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-muted-foreground break-all">The plan reads all of {index}.</span>
+          <Button size="sm" variant="outline" disabled={state.busy} onClick={measure}>
+            {state.busy ? "Measuring…" : "Measure"}
+          </Button>
+        </div>
+      )}
+      {state.error && <span className="text-destructive break-words">{state.error}</span>}
+      {state.shape && <span className="break-words">{state.shape.text}</span>}
+      {state.shape?.action && (
+        <div>
+          <ActionButton action={state.shape.action} onAction={onAction} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // "Tables": the tables of this database the plans touch, largest first, with the statistics' age and how
 // much of each changed since; update-statistics-table on each.
-export function TablesTable({ detail, onAction }: { detail: QueryDetail; onAction: (a: QueryAction) => void }) {
+export function TablesTable({
+  detail,
+  onAction,
+  serverId,
+  database,
+}: {
+  detail: QueryDetail
+  onAction: (a: QueryAction) => void
+  serverId: number
+  database: string
+}) {
   return (
     <div className="rounded-xl border">
       <Table className="text-xs sm:text-sm">
@@ -190,6 +246,18 @@ export function TablesTable({ detail, onAction }: { detail: QueryDetail; onActio
                       <ActionButton action={t.action} onAction={onAction} />
                     </div>
                   )}
+                  {/* Phase 5q: the indexes a plan reads in full, measured on request (docs/phase5q-contract.md, section 4). */}
+                  {t.indexNote && <span className="break-words">{t.indexNote}</span>}
+                  {t.scanned.map((ix) => (
+                    <IndexMeasure
+                      key={ix}
+                      serverId={serverId}
+                      database={database}
+                      table={t}
+                      index={ix}
+                      onAction={onAction}
+                    />
+                  ))}
                   {/* Phase 5o: a safe copy from the Design card's IDX04, with its Apply (docs/phase5o-contract.md). */}
                   {t.copies?.map((c) => (
                     <div key={c.text} className="grid gap-1.5">

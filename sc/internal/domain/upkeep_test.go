@@ -16,7 +16,7 @@ func goodUpkeep() UpkeepFacts {
 		ServerName: `SQL01\WMS`, ProductVersion: "16.0.4255.3", EngineEdition: 2,
 		Database: "WarehouseLive", State: "ONLINE", CanChange: true,
 		AgentStatus: "Running", AgentStartup: "Automatic",
-		FailedJobs: []FailedJob{}, MaintenanceJob: "IndexOptimize - USER_DATABASES", ShrinkJobs: []ShrinkJob{},
+		FailedJobs: []FailedJob{}, MaintenanceJob: "IndexOptimize - USER_DATABASES", StatisticsJob: "IndexOptimize - USER_DATABASES", ShrinkJobs: []ShrinkJob{},
 		MissingAlerts: []string{}, Operators: 1, AlertsOn: 10,
 		TraceRunning: true, TraceCommands: []TraceCommand{}, SevereErrors: []SevereErrors{},
 		BackupHistoryRows: 4200, JobHistoryRows: 900, CleanupJob: "sp_delete_backuphistory",
@@ -48,11 +48,11 @@ func TestUpkeepGreen(t *testing.T) {
 	}
 	wantFacts(t, c, "SQL Agent=running, automatic/normal", "Failed jobs, 7 days=0/normal", "Maintenance job=found/normal",
 		"Told about errors=operator and 10 alerts/normal")
-	if len(cs) != 9 {
+	if len(cs) != 10 {
 		t.Fatalf("checks %+v", cs)
 	}
 	for i, x := range cs {
-		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07", "MNT08", "CHG01"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
+		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07", "MNT08", "MNT09", "CHG01"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
 			t.Errorf("check %+v", x)
 		}
 	}
@@ -187,8 +187,23 @@ func TestUpkeepMNT02(t *testing.T) {
 }
 
 func TestUpkeepMNT03(t *testing.T) {
+	// Phase 5q: an index job without a statistics job is not enough.
+	g := goodUpkeep()
+	g.MaintenanceJob, g.StatisticsJob = "Nightly indexes", ""
+	_, gs, _ := runUpkeep(g)
+	if x := one(t, gs, "MNT03"); x.Finding != `Indexes are maintained by "Nightly indexes", but nothing updates statistics, which is what keeps query plans good.` {
+		t.Errorf("index job only: %q", x.Finding)
+	}
+	// A home-grown procedure's job counts as the index job.
+	g.MaintenanceJob = ""
+	g.IndexProcedures = []IndexProcedure{{Schema: "dbo", Name: "RebuildIndexes", Rebuilds: true, Jobs: []string{"Rebuild"}}}
+	_, gs, _ = runUpkeep(g)
+	if x := one(t, gs, "MNT03"); !strings.HasPrefix(x.Finding, `Indexes are maintained by "Rebuild"`) {
+		t.Errorf("procedure job: %q", x.Finding)
+	}
+
 	f := goodUpkeep()
-	f.MaintenanceJob = ""
+	f.MaintenanceJob, f.StatisticsJob = "", ""
 	c, fs, _ := runUpkeep(f)
 	x := one(t, fs, "MNT03")
 	if x.Severity != SeverityMedium || x.Effort != EffortModerate || x.Finding != "No enabled index or statistics maintenance job was found." ||
@@ -449,7 +464,7 @@ func TestUpkeepGrey(t *testing.T) {
 	f = goodUpkeep()
 	f.Error = "could not read the upkeep facts: timeout"
 	c, fs, cs = runUpkeep(f)
-	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 9 || statusOf(cs, "MNT07").Note != f.Error {
+	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 10 || statusOf(cs, "MNT07").Note != f.Error {
 		t.Errorf("error %+v %+v", c, cs)
 	}
 	f = goodUpkeep()
@@ -568,11 +583,11 @@ func TestBuildCardsWithUpkeep(t *testing.T) {
 
 func TestUpkeepCatalogue(t *testing.T) {
 	checks := ChecksFor(CardUpkeep)
-	if len(checks) != 9 {
+	if len(checks) != 10 {
 		t.Fatalf("upkeep checks: %d", len(checks))
 	}
 	owners := map[string]string{"MNT01": OwnerClientIT, "MNT02": OwnerUs, "MNT03": OwnerUs, "MNT04": OwnerUs, "MNT05": OwnerUs,
-		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT, "MNT08": OwnerUs, "CHG01": OwnerUs}
+		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT, "MNT08": OwnerUs, "MNT09": OwnerUs, "CHG01": OwnerUs}
 	for _, c := range checks {
 		if c.Title == "" || c.Question == "" || c.ThenCheck == "" || c.Owner != owners[c.ID] {
 			t.Errorf("check %+v", c)

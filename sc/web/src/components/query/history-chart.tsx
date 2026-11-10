@@ -20,6 +20,7 @@ function barColour(h: QueryHour, inUse: number, costliest: number): string {
 }
 
 function eventLabel(e: QueryEvent): string {
+  if (e.kind === "change") return "kakapo"
   return e.text.startsWith("Index ") ? "index" : "statistics"
 }
 
@@ -41,7 +42,7 @@ export function HistoryChart({ detail: d }: { detail: QueryDetail }) {
   const dayName = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric" })
 
   // Statistics updates as markers; a label only when it does not crowd the one before.
-  const marks = d.events.filter((e) => e.kind === "statistics" && new Date(e.at).getTime() >= first)
+  const marks = d.events.filter((e) => (e.kind === "statistics" || e.kind === "change") && new Date(e.at).getTime() >= first)
   const labelled = marks.reduce<{ e: QueryEvent; x: number; show: boolean; last: number }[]>((out, e) => {
     const x = at(e.at)
     const last = out.length > 0 ? out[out.length - 1].last : -100

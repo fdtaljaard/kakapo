@@ -1,5 +1,5 @@
 import { ApiError, type FixPreview, type FixResult } from "./api"
-import type { QueryAction, QueryDetail, QueryPlan, QueryTable } from "./api-queries"
+import type { IndexShape, QueryAction, QueryDetail, QueryPlan, QueryTable } from "./api-queries"
 import type { FeatureMock } from "./api.mock"
 
 // Phase 4c (queries): fixture answers for this part's routes; undefined means "not mine".
@@ -20,7 +20,11 @@ const onTheHour = (h: number) => {
 }
 
 const detailPath = /^\/api\/servers\/(\d+)\/databases\/([^/]+)\/queries\/([^/]+)$/
-const fixPath = /^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/(force-plan|unforce-plan|evict-plan|update-statistics-table)\/(preview|apply)$/
+const fixPath =
+  /^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/(force-plan|unforce-plan|evict-plan|update-statistics-table|reorganize-index)\/(preview|apply)$/
+// Phase 5q: GET .../indexes/shape. IX_StockUnit_Location is scanned, 58% full and 41% out of order until
+// reorganised; anything else is under 1,000 pages.
+const shapePath = /^\/api\/servers\/(\d+)\/databases\/([^/]+)\/indexes\/shape(\?.*)?$/
 
 const AUDIT = "0x51C0D7A2E94B3F18"
 const handle15 = "0x060005004A3B2C1D50E1F2A3B4C5D6E7F8091A2B3C4D5E6F000000000000000000"
@@ -30,6 +34,7 @@ const state = {
   forced: new Map<string, number | null>(), // `${db}/${hash}` -> the forced plan
   evicted: new Set<string>(), // plan handles removed
   freshStats: new Set<string>(), // `${db}/${table}`
+  reorganised: new Set<string>(), // `${db}/${index}`
 }
 let nextChangeId = 9000
 
@@ -86,6 +91,8 @@ function trackingTable(db: string): QueryTable {
     maxModifiedPct: fresh ? 0 : 48,
     stale: !fresh,
     indexes: ["PK_StockUnit", "IX_StockUnit_Location"],
+    scanned: ["IX_StockUnit_Location"],
+    ...(fresh ? {} : { indexNote: "Update its statistics first: it is cheaper than index work, and often all a slow query needs." }),
     action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.StockUnit", {
       table: "[dbo].[StockUnit]",
     }),
@@ -105,6 +112,7 @@ function locationTable(): QueryTable {
     maxModifiedPct: 2,
     stale: false,
     indexes: ["PK_Location"],
+    scanned: [],
     action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.Location", {
       table: "[dbo].[Location]",
     }),
@@ -409,6 +417,7 @@ function auditDetail(db: string, hash: string): QueryDetail {
         maxModifiedPct: 6,
         stale: false,
         indexes: ["PK_StockUnitAudit"],
+        scanned: [],
         action: action("update-statistics-table", "Update statistics", "Update statistics on dbo.StockUnitAudit", {
           table: "[dbo].[StockUnitAudit]",
         }),
@@ -591,6 +600,34 @@ function fixPreview(db: string, fixId: string, options: Record<string, string>):
         ],
       }
     }
+    case "reorganize-index": {
+      const index = options.index ?? ""
+      const done = state.reorganised.has(`${db}/${index}`)
+      return {
+        ...base,
+        options,
+        lead: done
+          ? `${index}: 7,250 pages, 99% full and 1% out of order. Reorganised, about 7,250 pages.`
+          : `${index}: 12,400 pages, 58% full and 41% out of order. Reorganised, about 7,192 pages.`,
+        changes: [
+          {
+            setting: "Index",
+            current: done ? "7,250 pages, 99% full, 1% out of order" : "12,400 pages, 58% full, 41% out of order",
+            target: "reorganised (packed to 100% full, in order)",
+          },
+        ],
+        statement: `ALTER INDEX [${index}] ON [${db}].${options.table} REORGANIZE;`,
+        rollback: "",
+        warnings: [
+          "Reorganising is online on every edition: queries and changes to the table carry on while it runs. If it is stopped, the work done so far is kept.",
+          "Reorganising does not update statistics. If this table's statistics are old, update them first (Update statistics on this table): it is cheaper, and often all a slow query needs.",
+          "In FULL recovery every page it moves is logged: the next log backup carries roughly 97 MB more, and the log file grows if the log backups cannot keep up.",
+          "It needs a little free space in the data file that holds the index; when that file is full it stops with error 1105.",
+          "Afterwards kakapo measures the index again, and the query's verdict compares the runs before the change with the runs after it.",
+          "Needs the ALTER permission on dbo.StockUnit (db_ddladmin or db_owner in the database).",
+        ],
+      }
+    }
     default: {
       const table = options.table ?? ""
       const m = /^\[(.+)\]\.\[(.+)\]$/.exec(table)
@@ -643,6 +680,10 @@ async function applyFix(db: string, fixId: string, options: Record<string, strin
       state.evicted.add(options.planHandle)
       after = "removed from the plan cache"
       break
+    case "reorganize-index":
+      state.reorganised.add(`${db}/${options.index}`)
+      after = `${options.index}: 12,400 pages to 7,250; 41% out of order to 1%, 58% full to 99%.`
+      break
     default:
       state.freshStats.add(`${db}/${options.table}`)
       after = `oldest statistics updated ${new Date().toISOString().slice(0, 19).replace("T", " ")}`
@@ -654,6 +695,40 @@ async function applyFix(db: string, fixId: string, options: Record<string, strin
     verified: true,
     changeId: nextChangeId++,
     appliedAt: new Date().toISOString(),
+  }
+}
+
+function shapeFor(db: string, schema: string, table: string, index: string): IndexShape {
+  const base = { schema, table, index, measured: true, sizeMB: 0, density: 0, fragmentation: 0, estimatedPages: 0, savedPct: 0 }
+  if (index !== "IX_StockUnit_Location") {
+    return {
+      ...base,
+      pages: 310,
+      sizeMB: 2.4,
+      text: `The plan reads all of ${index} (310 pages, 2.4 MB). It is under 1,000 pages: index work on an index this small does not change how a query runs (Ola Hallengren's floor).`,
+    }
+  }
+  if (state.reorganised.has(`${db}/${index}`)) {
+    return {
+      ...base,
+      pages: 7_250,
+      sizeMB: 57,
+      density: 99,
+      fragmentation: 1,
+      estimatedPages: 7_250,
+      text: `The plan reads all of ${index} (7,250 pages, 57 MB). Its pages are 99% full and 1% out of order. Index work would not help this query.`,
+    }
+  }
+  return {
+    ...base,
+    pages: 12_400,
+    sizeMB: 97,
+    density: 58,
+    fragmentation: 41,
+    estimatedPages: 7_192,
+    savedPct: 42,
+    text: `The plan reads all of ${index} (12,400 pages, 97 MB). Its pages are 58% full and 41% out of order. Reorganising it would pack it into about 7,192 pages, so each scan would read about 42% fewer.`,
+    action: action("reorganize-index", "Reorganise index", `Reorganise ${index}`, { table: `[${schema}].[${table}]`, index }),
   }
 }
 
@@ -670,6 +745,13 @@ export const mockQueries: FeatureMock = async (method, path, init) => {
       throw new ApiError("could not read the query on CLIENTSQL01\\WMS: the login does not have VIEW SERVER STATE", 502)
     }
     return structuredClone(detailFor(db, "0x" + hash.slice(2).toUpperCase()))
+  }
+  const shape = shapePath.exec(path)
+  if (method === "GET" && shape) {
+    const db = decodeURIComponent(shape[2])
+    const q = new URL(path, "http://mock").searchParams
+    await delay(1500) // SAMPLED reads part of the index
+    return structuredClone(shapeFor(db, q.get("schema") ?? "", q.get("table") ?? "", q.get("index") ?? ""))
   }
   const fix = fixPath.exec(path)
   if (method === "POST" && fix) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"sqlmonitor/internal/domain"
 )
@@ -223,6 +224,56 @@ func ReadScopedConfigs(ctx context.Context, db *sql.DB, database string) (domain
 		}
 		c.Value = v.String
 		f.Configs = append(f.Configs, c)
+	}
+	return f, friendlyErrOrNil(rows.Err())
+}
+
+// compatBatch reads a database's compatibility level and, inside it, Query Store's state and how many
+// days of history it holds, for the compat-level fix and its read-back. Query Store's read has its own
+// TRY: without it the fix still previews, with the reason.
+func compatBatch(database string) string {
+	name := strings.ReplaceAll(database, "'", "''")
+	return Tag(safeSession + `SET NOCOUNT ON;
+SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)), CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
+       ISNULL((SELECT compatibility_level FROM sys.databases WHERE name = N'` + name + `'), 0);
+EXEC ` + domain.QuoteName(database) + `.sys.sp_executesql N'` + KakapoTag + `
+BEGIN TRY
+    SELECT (SELECT CONVERT(nvarchar(60), actual_state_desc) FROM sys.database_query_store_options),
+           ISNULL((SELECT DATEDIFF(MINUTE, MIN(start_time), SYSDATETIMEOFFSET()) FROM sys.query_store_runtime_stats_interval), 0),
+           CAST(NULL AS nvarchar(2048));
+END TRY
+BEGIN CATCH
+    SELECT CAST(NULL AS nvarchar(60)), 0, ERROR_MESSAGE();
+END CATCH;';`)
+}
+
+// ReadCompatFacts reads what the compat-level fix needs about one database.
+func ReadCompatFacts(ctx context.Context, db *sql.DB, database string) (domain.CompatFacts, error) {
+	f := domain.CompatFacts{Database: database}
+	rows, err := db.QueryContext(ctx, compatBatch(database))
+	if err != nil {
+		return f, friendlyError(err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return f, fmt.Errorf("SQL Server returned nothing for the compatibility level of %q", database)
+	}
+	if err := rows.Scan(&f.ServerName, &f.ProductVersion, &f.CompatLevel); err != nil {
+		return f, err
+	}
+	if f.CompatLevel == 0 {
+		return f, fmt.Errorf("there is no database named %q", database)
+	}
+	if err := nextResultSet(rows, "Query Store"); err != nil {
+		return f, err
+	}
+	if rows.Next() {
+		var state, qsErr sql.NullString
+		var minutes int64
+		if err := rows.Scan(&state, &minutes, &qsErr); err != nil {
+			return f, err
+		}
+		f.QueryStoreState, f.QueryStoreDays, f.QueryStoreError = state.String, float64(minutes)/1440, qsErr.String
 	}
 	return f, friendlyErrOrNil(rows.Err())
 }

@@ -87,6 +87,11 @@ type QueryFacts struct {
 	// (docs/phase5o-contract.md, section 5): a table of the query with a safe copy says so. nil when
 	// the card was never read.
 	DuplicateFindings []Finding
+
+	// Changes are this database's change log rows in the query's window (docs/phase5q-contract.md,
+	// decision 3): kakapo's own changes on the tables the plans read become events, and the latest
+	// one splits the verdict's Before and Now. Rows seen on the server stay out.
+	Changes []Change
 }
 
 // UnindexedForeignKeyFact is an enabled foreign key of Schema.Table (the referencing table, with its
@@ -354,18 +359,22 @@ type ProcStatement struct {
 
 // QueryTable is one table of this database the query's plans touch.
 type QueryTable struct {
-	Schema         string       `json:"schema"`
-	Table          string       `json:"table"`
-	Name           string       `json:"name"` // schema.table
-	Found          bool         `json:"found"`
-	Rows           int64        `json:"rows"`
-	Statistics     int          `json:"statistics"`
-	OldestUpdate   *time.Time   `json:"oldestUpdate"` // server time
-	AgeDays        *int         `json:"ageDays"`
-	MaxModifiedPct float64      `json:"maxModifiedPct"`
-	Stale          bool         `json:"stale"`
-	Indexes        []string     `json:"indexes"` // the indexes the plans use
-	Action         *QueryAction `json:"action,omitempty"`
+	Schema         string     `json:"schema"`
+	Table          string     `json:"table"`
+	Name           string     `json:"name"` // schema.table
+	Found          bool       `json:"found"`
+	Rows           int64      `json:"rows"`
+	Statistics     int        `json:"statistics"`
+	OldestUpdate   *time.Time `json:"oldestUpdate"` // server time
+	AgeDays        *int       `json:"ageDays"`
+	MaxModifiedPct float64    `json:"maxModifiedPct"`
+	Stale          bool       `json:"stale"`
+	Indexes        []string   `json:"indexes"` // the indexes the plans use
+	// Scanned are the indexes a plan reads in full, each with Measure on the page; IndexNote says to
+	// update stale statistics first (docs/phase5q-contract.md, section 4).
+	Scanned   []string     `json:"scanned"`
+	IndexNote string       `json:"indexNote,omitempty"`
+	Action    *QueryAction `json:"action,omitempty"`
 	// Copies are the table's indexes that IDX04 found safe to disable on the Design card's last read,
 	// one line each with the disable-index action (docs/phase5o-contract.md, section 5).
 	Copies []ExplainLine `json:"copies,omitempty"`
@@ -377,6 +386,18 @@ type ShowplanObject struct {
 	Schema   string
 	Table    string
 	Index    string
+	// Scan says a plan reads the whole index: the <Object> is an <IndexScan>'s whose RelOp is a
+	// Clustered Index Scan or an Index Scan (docs/phase5q-contract.md, section 4). A seek reads part of
+	// it, and a heap's Table Scan names no index.
+	Scan bool
+	// Scanned are, in ShowplanTables' result only, the indexes of the table a plan scans, one per
+	// line as Index lists the indexes used.
+	Scanned string
+}
+
+// qScanOp says whether a RelOp's PhysicalOp reads a whole rowstore index.
+func qScanOp(physicalOp string) bool {
+	return physicalOp == "Clustered Index Scan" || physicalOp == "Index Scan"
 }
 
 // Showplan is what kakapo reads from a plan's XML besides PlanWarnings: the compiled parameters,
@@ -419,8 +440,9 @@ func ParseShowplan(plan string) Showplan {
 		cols    map[string][]string
 		params  = map[string]bool{}
 		mis     = map[string]bool{}
-		objects = map[string]bool{}
-		relOps  []string // the LogicalOp of each open <RelOp>
+		objects = map[string]int{} // the position in out.Objects
+		relOps  []string           // the LogicalOp of each open <RelOp>
+		physOps []string           // the PhysicalOp of each open <RelOp>
 		read    = map[string]bool{}
 		changed = map[string]bool{}
 	)
@@ -448,6 +470,7 @@ func ParseShowplan(plan string) Showplan {
 			switch name {
 			case "RelOp":
 				relOps = append(relOps, attr(t, "LogicalOp"))
+				physOps = append(physOps, attr(t, "PhysicalOp"))
 			case "ColumnReference":
 				if parent != "ParameterList" {
 					continue
@@ -473,9 +496,14 @@ func ParseShowplan(plan string) Showplan {
 			case "Object":
 				o := ShowplanObject{Database: qUnbracket(attr(t, "Database")), Schema: qUnbracket(attr(t, "Schema")),
 					Table: qUnbracket(attr(t, "Table")), Index: qUnbracket(attr(t, "Index"))}
+				if len(physOps) > 0 && o.Index != "" && (parent == "IndexScan") {
+					o.Scan = qScanOp(physOps[len(physOps)-1])
+				}
 				key := strings.ToLower(o.Database + "|" + o.Schema + "|" + o.Table + "|" + o.Index)
-				if o.Table != "" && !objects[key] {
-					objects[key] = true
+				if i, seen := objects[key]; o.Table != "" && seen {
+					out.Objects[i].Scan = out.Objects[i].Scan || o.Scan
+				} else if o.Table != "" {
+					objects[key] = len(out.Objects)
 					out.Objects = append(out.Objects, o)
 				}
 				if o.Table == "" {
@@ -507,6 +535,7 @@ func ParseShowplan(plan string) Showplan {
 			}
 			if t.Name.Local == "RelOp" && len(relOps) > 0 {
 				relOps = relOps[:len(relOps)-1]
+				physOps = physOps[:len(physOps)-1]
 			}
 			if t.Name.Local == "MissingIndex" && current != nil {
 				current.Equality = strings.Join(cols["EQUALITY"], ", ")
@@ -568,6 +597,12 @@ func ShowplanTables(database string, plans ...string) []ShowplanObject {
 					out[i].Index += "\n"
 				}
 				out[i].Index += o.Index
+			}
+			if o.Scan && !qContainsFold(strings.Split(out[i].Scanned, "\n"), o.Index) {
+				if out[i].Scanned != "" {
+					out[i].Scanned += "\n"
+				}
+				out[i].Scanned += o.Index
 			}
 		}
 	}
@@ -1198,10 +1233,13 @@ func qProcStatements(ss []ProcStatementFact, hash string) []ProcStatement {
 // qQueryTables are the tables of this database the plans touch, with their size and statistics
 // age, largest first; stale statistics carry the update-statistics-table action.
 func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable {
-	indexes := map[string][]string{}
+	indexes, scanned := map[string][]string{}, map[string][]string{}
 	for _, o := range ShowplanTables(f.Database, qPlanXMLs(f, plans)...) {
 		if o.Index != "" {
 			indexes[strings.ToLower(o.Schema+"."+o.Table)] = strings.Split(o.Index, "\n")
+		}
+		if o.Scanned != "" {
+			scanned[strings.ToLower(o.Schema+"."+o.Table)] = strings.Split(o.Scanned, "\n")
 		}
 	}
 	out := []QueryTable{}
@@ -1212,11 +1250,17 @@ func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable 
 		if x.Indexes == nil {
 			x.Indexes = []string{}
 		}
+		if x.Scanned = scanned[strings.ToLower(t.Schema+"."+t.Table)]; x.Scanned == nil || !t.Found {
+			x.Scanned = []string{}
+		}
 		if t.OldestUpdate != nil {
 			days := qStatsAgeDays(*t.OldestUpdate, f)
 			x.AgeDays = &days
 		}
 		x.Stale = qStatsStale(x)
+		if x.Stale && len(x.Scanned) > 0 {
+			x.IndexNote = QueryStatsFirst
+		}
 		if t.Found && t.Stats > 0 && canChange {
 			x.Action = qStatsAction(t.Schema, t.Table)
 		}
@@ -1226,6 +1270,10 @@ func qQueryTables(f QueryFacts, plans []QueryPlan, canChange bool) []QueryTable 
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Rows > out[j].Rows })
 	return out
 }
+
+// QueryStatsFirst is said on a table whose statistics are stale and whose index a plan reads in
+// full: statistics before index work (Microsoft, "Maintain indexes optimally").
+const QueryStatsFirst = "Update its statistics first: it is cheaper than index work, and often all a slow query needs."
 
 // qTableCopies are a table's safe copies from the Design card's stored IDX04 findings: "IX_B is a copy
 // of IX_A, which has the same keys and every one of its columns (IDX04 on the Design card).", with the
