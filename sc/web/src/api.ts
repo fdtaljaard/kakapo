@@ -394,6 +394,8 @@ export interface Finding {
   thenCheck: string
   evidence: string // the raw numbers
   fixId?: string // present when the app can apply the change (phase 3c)
+  // A second way out with its own Apply (BAK02: the schedule is fixId, "recovery-model" the switch to SIMPLE).
+  altFixId?: string
   // Phase 3e, the Performance card: which clock the figure is on. The card page groups by it ("Right
   // now", "Since restart", "Last 7 days"); the other cards leave it out.
   clock?: "since-restart" | "now" | "window"

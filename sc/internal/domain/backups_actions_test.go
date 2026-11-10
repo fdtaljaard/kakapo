@@ -381,3 +381,135 @@ func TestSuspectPagesClearFix(t *testing.T) {
 		t.Errorf("no pages: %v", err)
 	}
 }
+
+// BAK02 on a Standard-edition server (docs/phase3g-contract.md, revision 3): both ways out are its own Apply, the
+// wording names SIMPLE plainly and the full backup that must exist first, and the finding is ours.
+func TestBak02OffersBothFixes(t *testing.T) {
+	f := scheduleFacts("FULL")
+	nightlyFulls(&f)
+	_, fs, _ := build(f)
+	x := findingOf(t, fs, "BAK02")
+	if x.FixID != FixBackupSchedule || x.AltFixID != FixRecoveryModel || x.Owner != OwnerUs {
+		t.Fatalf("BAK02: fix %q, also %q, owner %q", x.FixID, x.AltFixID, x.Owner)
+	}
+	if x.DoThis != bak02Do || strings.Contains(x.DoThis, "DBC08") || !strings.Contains(x.DoThis, "switch to SIMPLE recovery") ||
+		!strings.Contains(x.DoThis, "A full backup must exist first, or the log backup job fails.") {
+		t.Errorf("Do this %q", x.DoThis)
+	}
+	b, _ := json.Marshal(x)
+	if !strings.Contains(string(b), `"fixId":"backup-schedule"`) || !strings.Contains(string(b), `"altFixId":"recovery-model"`) {
+		t.Errorf("JSON %s", b)
+	}
+
+	// Both are listed with the finding that carries them, and both preview and roll back.
+	ids := []string{}
+	for _, fix := range AvailableBackupFixes(f, fs) {
+		ids = append(ids, fix.ID+"/"+fix.CheckID)
+	}
+	if got := strings.Join(ids, " "); got != "backup-schedule/BAK02 recovery-model/BAK02" {
+		t.Errorf("available %q", got)
+	}
+	p, fix, err := BuildRecoveryModelFix(f, false, nil)
+	if err != nil || fix.CheckID != "BAK02" || fix.Target != "SIMPLE" || p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" ||
+		p.Rollback != "ALTER DATABASE [WarehouseLive] SET RECOVERY FULL;" {
+		t.Errorf("switch: %v %+v %+v", err, fix, p)
+	}
+	if p, _ := mustSchedule(t, f, nil, true, false); p.Statement == "" || p.Rollback == "" {
+		t.Errorf("schedule: %+v", p)
+	}
+	// The card counts it as ours, not Client IT's.
+	if c, _, _ := build(f); c.ForClientIT != 0 {
+		t.Errorf("for Client IT: %d", c.ForClientIT)
+	}
+}
+
+// Not offered where the database cannot be changed from here, or a job should be taking the log backups.
+func TestBak02SimpleSwitchNotOffered(t *testing.T) {
+	for name, change := range map[string]func(*BackupFacts){
+		"availability group": func(f *BackupFacts) { f.IsAgMember = true },
+		"secondary replica":  func(f *BackupFacts) { f.IsSecondary = true },
+		"a log job":          func(f *BackupFacts) { f.BackupJobs = []BackupJob{{Name: "Logs", Enabled: true, Kind: JobLog}} },
+	} {
+		f := scheduleFacts("FULL")
+		nightlyFulls(&f)
+		change(&f)
+		_, fs, _ := build(f)
+		x := findingOf(t, fs, "BAK02")
+		if x.AltFixID != "" || x.FixID == FixRecoveryModel {
+			t.Errorf("%s: %+v", name, x)
+		}
+		for _, fix := range AvailableBackupFixes(f, fs) {
+			if fix.ID == FixRecoveryModel {
+				t.Errorf("%s: lists the recovery model fix", name)
+			}
+		}
+	}
+}
+
+// Without the Agent jobs read the schedule is not offered, and the Do this says why; the switch to
+// SIMPLE is the fix, with a warning about a job it cannot see.
+func TestBak02JobsUnreadable(t *testing.T) {
+	f := scheduleFacts("FULL")
+	nightlyFulls(&f)
+	f.JobsError = "The SELECT permission was denied on the object 'sysjobs'"
+	_, fs, _ := build(f)
+	x := findingOf(t, fs, "BAK02")
+	if x.FixID != FixRecoveryModel || x.AltFixID != "" || x.Owner != OwnerUs ||
+		!strings.Contains(x.DoThis, "could not read the Agent jobs in msdb (The SELECT permission was denied on the object 'sysjobs'). Connect with a sysadmin login.") {
+		t.Errorf("BAK02 %+v", x)
+	}
+	p, _, err := BuildRecoveryModelFix(f, false, nil)
+	if err != nil || !bakHasWarning(p, "kakapo could not read the Agent jobs") || p.Statement == "" {
+		t.Errorf("preview %v %q", err, p.Warnings)
+	}
+}
+
+// A login that is not sysadmin: the schedule's Apply is refused, and the card says so first on the
+// finding and on the preview; the finding stays Client IT's when kakapo is refused both ways.
+func TestBak02NotSysadmin(t *testing.T) {
+	f := scheduleFacts("FULL")
+	nightlyFulls(&f)
+	f.PermsRead, f.IsSysadmin, f.CanAlter = true, false, true
+	_, fs, _ := build(f)
+	x := findingOf(t, fs, "BAK02")
+	// Still ours: the switch to SIMPLE needs only ALTER on the database, which this login has.
+	if x.FixID != FixBackupSchedule || x.AltFixID != FixRecoveryModel || x.Owner != OwnerUs ||
+		!strings.Contains(x.DoThis, `SQL01\WMS, so Apply for the schedule will be refused: connect with a sysadmin login.`) {
+		t.Errorf("BAK02 %+v", x)
+	}
+	if p, _ := mustSchedule(t, f, nil, true, false); p.Warnings[0] != `kakapo's login is not sysadmin on SQL01\WMS, so Apply for the schedule will be refused: connect with a sysadmin login.` {
+		t.Errorf("schedule warnings %q", p.Warnings)
+	}
+	if p, _, err := BuildRecoveryModelFix(f, false, nil); err != nil || p.Statement == "" || bakHasWarning(p, "kakapo's login cannot ALTER") {
+		t.Errorf("switch %v %q", err, p.Warnings)
+	}
+
+	// No ALTER either: refused both ways, so it is Client IT's again, and the preview says why first.
+	f.CanAlter = false
+	_, fs, _ = build(f)
+	x = findingOf(t, fs, "BAK02")
+	if x.Owner != OwnerClientIT || !strings.Contains(x.DoThis, "kakapo's login cannot ALTER the database WarehouseLive, so Apply will be refused") {
+		t.Errorf("BAK02 %+v", x)
+	}
+	if p, _, _ := BuildRecoveryModelFix(f, false, nil); p.Warnings[0] != "kakapo's login cannot ALTER the database WarehouseLive, so Apply will be refused: connect with a sysadmin login." {
+		t.Errorf("switch warnings %q", p.Warnings)
+	}
+
+	// Permissions not read (facts built by hand): nothing is said about them.
+	f.PermsRead = false
+	_, fs, _ = build(f)
+	if x = findingOf(t, fs, "BAK02"); x.DoThis != bak02Do || x.Owner != OwnerUs {
+		t.Errorf("unread permissions: %+v", x)
+	}
+}
+
+// On a secondary replica the schedule belongs on the primary: the Do this says so.
+func TestBak02SecondaryReason(t *testing.T) {
+	f := scheduleFacts("FULL")
+	nightlyFulls(&f)
+	f.IsSecondary = true
+	_, fs, _ := build(f)
+	if x := findingOf(t, fs, "BAK02"); x.FixID != "" || !strings.HasSuffix(x.DoThis, noScheduleSecondary) || x.Owner != OwnerClientIT {
+		t.Errorf("BAK02 %+v", x)
+	}
+}

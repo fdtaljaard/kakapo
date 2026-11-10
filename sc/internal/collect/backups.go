@@ -229,7 +229,10 @@ SELECT CAST(d.state_desc AS nvarchar(60)),
        /* Web and Express cannot compress backups, nor anything before SQL Server 2008 */
        CAST(CASE WHEN CAST(SERVERPROPERTY('Edition') AS nvarchar(128)) LIKE N'Web%' OR @express = 1
                    OR CONVERT(int, PARSENAME(CONVERT(nvarchar(64), SERVERPROPERTY('ProductVersion')), 4)) < 10
-                 THEN 0 ELSE 1 END AS bit)
+                 THEN 0 ELSE 1 END AS bit),
+       /* What the fixes need: sysadmin creates the Agent jobs, ALTER on the database changes its recovery model */
+       CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS bit),
+       CAST(ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'ALTER'), 0) AS bit)
 FROM sys.databases AS d WHERE d.database_id = @dbid;
 
 SELECT t FROM @points ORDER BY t;
@@ -269,9 +272,10 @@ func BackupFacts(ctx context.Context, db *sql.DB, database string) (domain.Backu
 		&f.Fulls7, &f.Diffs7, &f.Logs7, &f.SuspectPages, &suspectLast, &f.EngineVersion,
 		&lastRealFull, &durability, &durabilityErr, &lastRestore,
 		&serverName, &edition, &f.HasAgent, &agentStatus, &agentErr, &jobsErr,
-		&f.MaintenancePlans, &plansErr, &f.OlaBackup, &operator, &operatorErr, &dir, &f.CompressionOK); err != nil {
+		&f.MaintenancePlans, &plansErr, &f.OlaBackup, &operator, &operatorErr, &dir, &f.CompressionOK, &f.IsSysadmin, &f.CanAlter); err != nil {
 		return f, fmt.Errorf("read the backup facts of %s: %w", database, err)
 	}
+	f.PermsRead = true
 	f.ServerName, f.Edition = serverName.String, edition.String
 	f.AgentStatus, f.AgentError = agentStatus.String, agentErr.String
 	f.AgentRunning = f.AgentStatus == "Running"

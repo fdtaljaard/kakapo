@@ -178,3 +178,42 @@ jobs yet, and a full or log job would be created. The findings still carry Apply
 it too when nothing was backed up in 7 days (an old full backup and a stopped schedule is the common case, which
 BAK01 does not catch). `OffersBackupSchedule` is that rule; `CardDetail.Fixes` lists the fix under the firing
 check or BAK01.
+
+## Revision 3 (2026-11-10): BAK02 can be fixed entirely in kakapo
+
+A user who sees BAK02 (FULL recovery, the log not backed up) must not have to hand it to Client IT. BAK02 has
+two ways out, each its own **Apply** on the finding with the usual preview, approve, apply, verify and rollback:
+
+| Button | Fix | What it does |
+|---|---|---|
+| **Schedule log backups** | `backup-schedule` (`fixId`) | The log job (and the full job if none exists), as above. |
+| **Switch to SIMPLE** | `recovery-model` (`altFixId`) | `ALTER DATABASE [db] SET RECOVERY SIMPLE`; rollback sets the previous model back. |
+
+- `Finding.altFixId` is new: the second fix of one finding, left out of the JSON when there is none. `fixId` is
+  the schedule when it is offered; when it is not (jobs unreadable, covered, a secondary replica), the switch
+  to SIMPLE is the `fixId` and there is no `altFixId`. `CardDetail.Fixes` lists both, under BAK02 (the switch)
+  and the check carrying the schedule.
+- The switch to SIMPLE is not offered where it would be wrong: an availability group member (needs FULL), a
+  secondary replica, or an enabled job that takes the log backups (that job is failing; SIMPLE would not fix it,
+  and the Do this points at the job). When the jobs could not be read, it is offered with the warning that a job
+  taking log backups of this database fails in SIMPLE recovery.
+- **Do this** (answer first, no pointer to DBC08): "Back up the log every 15 minutes, or switch to SIMPLE
+  recovery if a restore to the last full backup is enough. A full backup must exist first, or the log backup job
+  fails."
+- **Owner**: Us while kakapo can apply a fix (the card then counts it as ours, not Client IT's); Client IT when
+  no fix is offered, or the login is refused every way. The catalogue's owner (Client IT) stays the default.
+
+**Why Apply may not be usable, said on the card.** The schedule creates Agent jobs owned by `sa` (sysadmin) and
+the switch needs ALTER on the database. The Backups read now also asks `IS_SRVROLEMEMBER('sysadmin')` and
+`HAS_PERMS_BY_NAME(db, 'DATABASE', 'ALTER')` (`BackupFacts.PermsRead`, `IsSysadmin`, `CanAlter`; unread, nothing
+is said). The finding's Do this and the first warning of the preview then say so plainly, before the user tries:
+
+- "kakapo's login is not sysadmin on {server}, so Apply for the schedule will be refused: connect with a sysadmin
+  login."
+- "kakapo's login cannot ALTER the database {db}, so Apply will be refused: connect with a sysadmin login."
+- No schedule offered because the Agent jobs could not be read (usually the same cause): "kakapo cannot create the
+  schedule: it could not read the Agent jobs in msdb ({reason}). Connect with a sysadmin login."
+- A secondary replica: "This database is a secondary replica: schedule the backups on the primary."
+
+Tests: BAK02 offers both fixes (`TestBak02OffersBothFixes`), where the switch is not offered, the reasons above,
+and the web card's two buttons (`scripts/handover.test.ts`).

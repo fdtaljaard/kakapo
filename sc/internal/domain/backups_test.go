@@ -86,15 +86,20 @@ func wantNoFinding(t *testing.T, fs []Finding, id string) {
 	}
 }
 
-func wantCard(t *testing.T, c Card, status, statusText, verdict string, toDo int) {
+// forIT is the findings left to Client IT: all of them unless given (BAK02 is ours when kakapo can fix it).
+func wantCard(t *testing.T, c Card, status, statusText, verdict string, toDo int, forIT ...int) {
 	t.Helper()
 	if c.Status != status || c.StatusText != statusText || c.Verdict != verdict {
 		t.Errorf("card %s %q %q, want %s %q %q", c.Status, c.StatusText, c.Verdict, status, statusText, verdict)
 	}
 	// Fixable counts the findings with a fix; since phase 4d BAK03, BAK04 and DBC08 carry one
 	// (TestBackupActionFindings checks the count).
-	if c.ToDo != toDo || c.ForClientIT != toDo {
-		t.Errorf("toDo %d forClientIT %d, want %d %d", c.ToDo, c.ForClientIT, toDo, toDo)
+	wantIT := toDo
+	if len(forIT) > 0 {
+		wantIT = forIT[0]
+	}
+	if c.ToDo != toDo || c.ForClientIT != wantIT {
+		t.Errorf("toDo %d forClientIT %d, want %d %d", c.ToDo, c.ForClientIT, toDo, wantIT)
 	}
 }
 
@@ -118,7 +123,12 @@ func wantFinding(t *testing.T, f Finding, severity Severity, when, effort, findi
 	if f.Severity != severity || f.When != when || f.Effort != effort || f.Finding != finding {
 		t.Errorf("%s: %s %s %s %q\nwant %s %s %s %q", f.CheckID, f.Severity, f.When, f.Effort, f.Finding, severity, when, effort, finding)
 	}
-	if f.Owner != OwnerClientIT || f.Title == "" || f.ThenCheck == "" || f.Why == "" || f.DoThis == "" || f.Evidence == "" || f.Object != "WarehouseLive" {
+	// BAK02 is ours when kakapo can fix it (it can switch the recovery model), else Client IT's.
+	owner := OwnerClientIT
+	if f.CheckID == "BAK02" && f.FixID != "" {
+		owner = OwnerUs
+	}
+	if f.Owner != owner || f.Title == "" || f.ThenCheck == "" || f.Why == "" || f.DoThis == "" || f.Evidence == "" || f.Object != "WarehouseLive" {
 		t.Errorf("%s: incomplete finding %+v", f.CheckID, f)
 	}
 }
@@ -132,7 +142,7 @@ func TestBackupsNeverBackedUp(t *testing.T) {
 	f := facts("FULL")
 	f.CreateDate = serverNow.AddDate(0, -1, 0)
 	c, fs, checks := build(f)
-	wantCard(t, c, StatusRed, "Needs attention today", bak01Sentence, 2)
+	wantCard(t, c, StatusRed, "Needs attention today", bak01Sentence, 2, 1)
 	wantFinding(t, findingOf(t, fs, "BAK01"), SeverityCritical, WhenOnline, EffortQuickWin, bak01Sentence)
 	if e := fs[0].Evidence; e != "Last full: never. Last differential: never." {
 		t.Errorf("BAK01 evidence %q", e)
@@ -162,7 +172,7 @@ func TestBackupsFullWithoutLogBackups(t *testing.T) {
 	f := facts("FULL")
 	nightlyFulls(&f)
 	c, fs, checks := build(f)
-	wantCard(t, c, StatusAmber, "1 thing to do", bak02Never, 1)
+	wantCard(t, c, StatusAmber, "1 thing to do", bak02Never, 1, 0)
 	b2 := findingOf(t, fs, "BAK02")
 	wantFinding(t, b2, SeverityHigh, WhenOnline, EffortQuickWin, bak02Never)
 	if b2.Evidence != "Log file size: 512 MB." || b2.Why != bak02Why || b2.DoThis != bak02Do {
@@ -264,7 +274,7 @@ func TestBackupsNothingInSevenDays(t *testing.T) {
 	addFull(&f, serverNow.AddDate(0, 0, -10))
 	f.LastLog = at(serverNow.AddDate(0, 0, -10))
 	c, fs, _ := build(f)
-	wantCard(t, c, StatusRed, "Needs attention today", bak05Lost7, 2)
+	wantCard(t, c, StatusRed, "Needs attention today", bak05Lost7, 2, 1)
 	wantFinding(t, findingOf(t, fs, "BAK05"), SeverityCritical, WhenDecideFirst, EffortModerate, bak05Lost7)
 	wantFinding(t, findingOf(t, fs, "BAK02"), SeverityHigh, WhenOnline, EffortQuickWin, "Last log backup was 240 hours ago.")
 	wantFacts(t, c, "Worst-case data loss=7.0 days/worse", "Last full backup=10 days ago/bad",

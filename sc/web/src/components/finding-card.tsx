@@ -48,10 +48,11 @@ export function FindingCard({
   context,
 }: {
   finding: Finding
-  onApply?: (f: Finding, options?: Record<string, string>) => void
+  onApply?: (f: Finding, options?: Record<string, string>, fixId?: string) => void
   // Phase 5o: one Apply per entry when a finding has several fixes of its kind (two safe copies on one
-  // table), each labelled and sending its own options; otherwise the one Apply.
-  choices?: { label: string; options: Record<string, string> }[]
+  // table), each labelled and sending its own options; otherwise the one Apply. A choice with a fixId
+  // applies that fix instead of the finding's (BAK02: schedule the log backups, or switch to SIMPLE).
+  choices?: { label: string; options?: Record<string, string>; fixId?: string }[]
   // Where the next read lives (docs/phase4c-contract.md): an Investigate link next to Apply.
   investigate?: { label?: string; to: string }
   context?: HandoverContext
@@ -94,7 +95,7 @@ export function FindingCard({
             )}
             {canApply &&
               choices?.map((c) => (
-                <Button key={c.label} variant="outline" size="sm" className="max-w-full" onClick={() => onApply?.(f, c.options)}>
+                <Button key={c.label} variant="outline" size="sm" className="max-w-full" onClick={() => onApply?.(f, c.options, c.fixId)}>
                   <span className="truncate">{c.label}</span>
                 </Button>
               ))}

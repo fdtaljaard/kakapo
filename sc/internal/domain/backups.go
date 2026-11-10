@@ -87,6 +87,12 @@ type BackupFacts struct {
 	// IsSecondary says this instance holds the database as an availability group secondary; the
 	// service fills it in from the database as listed. No fix is offered on a secondary.
 	IsSecondary bool
+	// PermsRead says the login's permissions were read (they are not in facts built by hand).
+	// IsSysadmin is IS_SRVROLEMEMBER('sysadmin') and CanAlter HAS_PERMS_BY_NAME(db, 'DATABASE',
+	// 'ALTER'): what the schedule and the recovery model fix need. Unread, nothing is said about them.
+	PermsRead  bool
+	IsSysadmin bool
+	CanAlter   bool
 
 	// LastCheckdbRun is the last CHECKDB run from the app (checkdb-now) stored for this database, or
 	// nil; the service fills it in from the store. BAK04 offers to clear the suspect-page records
@@ -115,7 +121,7 @@ const (
 	bak01Why      = "Without a recent backup, a disk failure, corruption or a mistake can mean permanent data loss."
 	bak01Do       = "Schedule daily full backups (or weekly full plus daily differential), keep copies off this server, and test a restore regularly. If another tool takes backups (e.g. VM snapshots), confirm it is SQL-aware and restores are tested."
 	bak02Why      = "In FULL recovery the log keeps growing until it is backed up. It can fill the disk and stop the database, and it limits how recent a restore can be."
-	bak02Do       = "Schedule log backups (commonly every 15-60 minutes). If point-in-time restore is not needed, the business can decide to switch to SIMPLE recovery instead (DBC08)."
+	bak02Do       = "Back up the log every 15 minutes, or switch to SIMPLE recovery if a restore to the last full backup is enough. A full backup must exist first, or the log backup job fails."
 	bak03Why      = "CHECKDB finds corruption early, while good backups still exist to recover from. Unnoticed corruption ends up in the backups too."
 	bak03Do       = "Schedule DBCC CHECKDB weekly outside peak hours (on very large databases: WITH PHYSICAL_ONLY weekly and a full check monthly). Ola Hallengren's free maintenance solution is a common way to set this up."
 	bak04Why      = "This is a sign of corruption, usually caused by storage. It can spread and lead to data loss."
@@ -338,8 +344,46 @@ func (b *backupBuild) bak02() {
 		size = fmt.Sprint(*f.LogSizeMB)
 	}
 	fixID, doThis := f.scheduleFix(JobLog, bak02Do)
+	// Two ways out, each its own Apply: the schedule (FixID) and the switch to SIMPLE (an alternative
+	// when the schedule is offered, else the fix itself).
+	alt := ""
+	// Which offered fix the login is known to be refused: the schedule needs sysadmin (an Agent
+	// is needed too: on Express it is a script to run by hand), the switch needs ALTER on the database.
+	ours := fixID != "" && !(f.HasAgent && f.PermsRead && !f.IsSysadmin)
+	if f.offersSimpleSwitch() {
+		if f.PermsRead && !f.CanAlter {
+			doThis += " " + fmt.Sprintf(recoveryNoAlter, f.Database)
+		} else {
+			ours = true
+		}
+		if fixID == "" {
+			fixID = FixRecoveryModel
+		} else {
+			alt = FixRecoveryModel
+		}
+	}
 	b.addFix("BAK02", agBump(2, f.IsAgMember), "Online", EffortQuickWin, finding, bak02Why, doThis,
 		"Log file size: "+size+" MB."+b.agNote("Database is in an Availability Group: log backups may run on another replica."), fixID)
+	x := &b.findings[len(b.findings)-1]
+	x.AltFixID = alt
+	// kakapo can fix it itself, so it is ours; when the login is refused every way out, it stays a
+	// request to Client IT.
+	if ours {
+		x.Owner = OwnerUs
+	}
+}
+
+// offersSimpleSwitch says whether BAK02 can offer the switch to SIMPLE: the database can be changed
+// from this instance (not a secondary replica) and does not need FULL for an availability group, and
+// no enabled job is meant to take its log backups (that job is failing, and SIMPLE would not fix it).
+func (f BackupFacts) offersSimpleSwitch() bool {
+	if f.IsSecondary || f.IsAgMember || !fullOrBulk(f.RecoveryModel) {
+		return false
+	}
+	if _, covered := f.CoveringJob(JobLog); covered && f.HasAgent {
+		return false
+	}
+	return true
 }
 
 // bak05: the worst-case data loss, whenever a full backup exists.

@@ -923,7 +923,11 @@ function lastFullFact(d: Date): string {
 function backupFinding(
   checkId: string,
   database: string,
-  f: Pick<Finding, "severity" | "when" | "effort" | "finding" | "why" | "doThis" | "evidence"> & { fixId?: string },
+  f: Pick<Finding, "severity" | "when" | "effort" | "finding" | "why" | "doThis" | "evidence"> & {
+    fixId?: string
+    altFixId?: string
+    owner?: Finding["owner"]
+  },
 ): Finding {
   const check = backupChecks.find((c) => c.checkId === checkId)!
   return { checkId, title: check.title, owner: "Client IT", object: database, thenCheck: check.thenCheck, ...f }
@@ -1013,6 +1017,12 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
   if (db.name === "WarehouseTest") {
     const lastFull = lastAt(1, 0)
     const checkDb = daysAgoAt(20, 3, 12)
+    // Two ways out while kakapo's log job does not exist: Create the schedule, or switch to SIMPLE. Ours then.
+    const bak02 = scheduleDoThis(
+      db,
+      "log",
+      "Back up the log every 15 minutes, or switch to SIMPLE recovery if a restore to the last full backup is enough. A full backup must exist first, or the log backup job fails.",
+    )
     const findings: Finding[] = [
       backupFinding("BAK02", db.name, {
         severity: "High",
@@ -1020,11 +1030,8 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
         effort: "Quick win",
         finding: "Database uses FULL recovery but its log has never been backed up.",
         why: "In FULL recovery the log keeps growing until it is backed up. It can fill the disk and stop the database, and it limits how recent a restore can be.",
-        ...scheduleDoThis(
-          db,
-          "log",
-          "Schedule log backups (commonly every 15-60 minutes). If point-in-time restore is not needed, the business can decide to switch to SIMPLE recovery instead (DBC08).",
-        ),
+        ...bak02,
+        ...(bak02.fixId ? { altFixId: "recovery-model", owner: "Us" as const } : {}),
         evidence: "Log file size: 18432 MB.",
       }),
       backupFinding("BAK03", db.name, {
@@ -1060,7 +1067,7 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
           { label: "Log backups", value: "none in FULL recovery", tone: "bad" },
         ],
         toDo: 2,
-        forClientIT: 2,
+        forClientIT: findings.filter((f) => f.owner === "Client IT" && f.severity !== "Info").length,
         fixable: findings.filter((f) => f.fixId).length,
       },
       findings,
@@ -1149,6 +1156,22 @@ function backupFixes(db: DatabaseStatus): Fix[] {
   }
   const kinds = scheduleKinds(db)
   if (kinds.length === 0) return []
+  // BAK02 (FULL without log backups) also offers the switch to SIMPLE.
+  const simple: Fix[] =
+    db.name === "WarehouseTest"
+      ? [
+          {
+            id: "recovery-model",
+            title: "Change the recovery model",
+            scope: "database",
+            checkId: "BAK02",
+            setting: "RECOVERY",
+            current: "FULL",
+            target: "SIMPLE",
+            needsRestart: false,
+          },
+        ]
+      : []
   return [
     {
       id: "backup-schedule",
@@ -1162,6 +1185,7 @@ function backupFixes(db: DatabaseStatus): Fix[] {
         .join(" and "),
       needsRestart: false,
     },
+    ...simple,
   ]
 }
 

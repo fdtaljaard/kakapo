@@ -75,19 +75,23 @@ var LogMinuteChoices = []string{"5", "10", "15", "30", "60"}
 
 // Texts of the fix (docs/phase3g-contract.md, docs/phase4b-contract.md).
 const (
-	jobCoversDo    = "The job %s should be doing this; check why it has not produced a backup (MNT02)."
-	expressDo      = "SQL Server Express has no Agent: kakapo cannot schedule the backup here; see the script in the preview."
-	logNotNeeded   = "not needed (SIMPLE recovery; DBC08 decides)"
-	noOperator     = "no one (MNT07: no operator with an email)"
-	folderHelp     = "A folder on the database server, as the SQL Server service sees it: a local drive (D:\\Backup) or a share (\\\\nas\\sql). kakapo makes a folder for the database inside it."
-	runNowHelp     = "Start the full backup job as soon as the jobs are created, so the database has a backup now rather than tonight."
-	fullTimeHelp   = "Daily, server time. Pick a quiet hour after the day's work and before any overnight job that reads the database."
-	logMinutesHelp = "How much work you could lose. 15 minutes is the usual answer; 5 for a busy site."
-	keepDaysHelp   = "Files older than this are deleted by the job. Copies kept elsewhere are not affected."
-	compressHelp   = "About half the size and faster to write; costs CPU while the backup runs."
-	fullTimeWarn   = "The full backup time must be HH:MM, for example 22:00."
-	logMinutesWarn = "The log backup must run every 5, 10, 15, 30 or 60 minutes."
-	keepDaysWarn   = "Keep between 1 and 60 days."
+	jobCoversDo = "The job %s should be doing this; check why it has not produced a backup (MNT02)."
+	expressDo   = "SQL Server Express has no Agent: kakapo cannot schedule the backup here; see the script in the preview."
+	// Why a finding has no Apply for the schedule, or why the one it has will be refused.
+	noScheduleJobs      = "kakapo cannot create the schedule: it could not read the Agent jobs in msdb (%s). Connect with a sysadmin login."
+	noScheduleSecondary = "This database is a secondary replica: schedule the backups on the primary."
+	scheduleNotSysadmin = "kakapo's login is not sysadmin on %s, so Apply for the schedule will be refused: connect with a sysadmin login."
+	logNotNeeded        = "not needed (SIMPLE recovery; DBC08 decides)"
+	noOperator          = "no one (MNT07: no operator with an email)"
+	folderHelp          = "A folder on the database server, as the SQL Server service sees it: a local drive (D:\\Backup) or a share (\\\\nas\\sql). kakapo makes a folder for the database inside it."
+	runNowHelp          = "Start the full backup job as soon as the jobs are created, so the database has a backup now rather than tonight."
+	fullTimeHelp        = "Daily, server time. Pick a quiet hour after the day's work and before any overnight job that reads the database."
+	logMinutesHelp      = "How much work you could lose. 15 minutes is the usual answer; 5 for a busy site."
+	keepDaysHelp        = "Files older than this are deleted by the job. Copies kept elsewhere are not affected."
+	compressHelp        = "About half the size and faster to write; costs CPU while the backup runs."
+	fullTimeWarn        = "The full backup time must be HH:MM, for example 22:00."
+	logMinutesWarn      = "The log backup must run every 5, 10, 15, 30 or 60 minutes."
+	keepDaysWarn        = "Keep between 1 and 60 days."
 )
 
 // scheduleFix decides what a BAK01 (kind JobFull) or BAK02 (JobLog) finding offers: the backup
@@ -96,7 +100,12 @@ const (
 // Facts without the jobs (or with an error reading them) and a secondary replica offer nothing.
 // On Express the fix is offered as a script to run by hand.
 func (f BackupFacts) scheduleFix(kind, doThis string) (string, string) {
-	if !f.JobsRead || f.JobsError != "" {
+	if f.JobsError != "" {
+		// The usual cause is a login that is not sysadmin (and has no read access to msdb): say so, so the
+		// missing Apply is not a mystery.
+		return "", doThis + " " + fmt.Sprintf(noScheduleJobs, f.JobsError)
+	}
+	if !f.JobsRead {
 		return "", doThis
 	}
 	if f.HasAgent {
@@ -105,10 +114,13 @@ func (f BackupFacts) scheduleFix(kind, doThis string) (string, string) {
 		}
 	}
 	if f.IsSecondary {
-		return "", doThis
+		return "", doThis + " " + noScheduleSecondary
 	}
 	if !f.HasAgent {
 		return FixBackupSchedule, doThis + " " + expressDo
+	}
+	if f.PermsRead && !f.IsSysadmin {
+		return FixBackupSchedule, doThis + " " + fmt.Sprintf(scheduleNotSysadmin, f.ServerName)
 	}
 	return FixBackupSchedule, doThis
 }
@@ -770,6 +782,10 @@ func buildBackupSchedule(f BackupFacts, options map[string]string, folderOK, sam
 		p.Warnings = append(p.Warnings, "Needs sysadmin on "+server+" for the Windows account that runs the scheduled task (sqlcmd -E logs in as that account).")
 	} else {
 		p.Warnings = append(p.Warnings, BackupFixPermission(server))
+	}
+	if !s.Express && f.PermsRead && !f.IsSysadmin {
+		// First, so the reason Apply will fail is not buried under the notes.
+		p.Warnings = append([]string{fmt.Sprintf(scheduleNotSysadmin, server)}, p.Warnings...)
 	}
 
 	if !usable {

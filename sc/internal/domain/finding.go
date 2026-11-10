@@ -102,6 +102,10 @@ type Finding struct {
 	// FixID names the fix the app can apply for this finding (docs/phase3c-contract.md); "" when
 	// there is none, and then it is left out of the JSON.
 	FixID string `json:"fixId,omitempty"`
+	// AltFixID is a second fix the app can apply for the same finding when there are two ways out (BAK02:
+	// schedule log backups, or switch to SIMPLE); it is its own Apply next to FixID's. Left out when
+	// there is none.
+	AltFixID string `json:"altFixId,omitempty"`
 	// Clock says which clock a Performance finding reads (docs/phase3e-contract.md): ClockNow,
 	// ClockSinceRestart or ClockWindow; "" on the other cards, and then it is left out of the JSON.
 	Clock string `json:"clock,omitempty"`

@@ -33,6 +33,7 @@ import { FindingContext } from "@/lib/finding-context"
 import { formatUptime, formatWhen } from "@/lib/format"
 import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
+import { twoWaysChoices } from "@/lib/two-ways"
 import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
 import { StorageDrivesBlock } from "@/components/room-line"
 import { ForeignKeysFold } from "@/components/foreign-keys-fold"
@@ -106,13 +107,13 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
     if (setup) setAppliedOn(ov.overview)
     refresh()
   }
-  const applyFinding = (f: Finding, options?: Record<string, string>) => {
-    if (!f.fixId) return
+  const applyFinding = (f: Finding, options?: Record<string, string>, fixId = f.fixId) => {
+    if (!fixId) return
     // The Backups card's fix is titled by itself ("Create a backup schedule"), and so is a costly query's
     // archive ("Archive or delete old rows"); the others by the finding.
-    const ownTitle = cardId === "backups" || (f.checkId === "QRY01" && f.fixId === archiveTableFixId)
-    const fix = ownTitle ? detail?.fixes?.find((x) => x.id === f.fixId) : undefined
-    setFixing({ fixId: f.fixId, title: fix?.title ?? f.title, options: options ?? fixOptionsFor(f, detail?.fixes) })
+    const ownTitle = cardId === "backups" || (f.checkId === "QRY01" && fixId === archiveTableFixId)
+    const fix = ownTitle ? detail?.fixes?.find((x) => x.id === fixId) : undefined
+    setFixing({ fixId, title: fix?.title ?? f.title, options: options ?? fixOptionsFor(f, detail?.fixes, fixId) })
   }
   // Where a finding's next read lives (docs/phase4c-contract.md): a costly query opens its page, a
   // blocking or open-transaction finding opens the chain.
@@ -462,7 +463,7 @@ function DetailBody({
 }: {
   detail: CardDetail
   between?: ReactNode
-  onApply?: (f: Finding, options?: Record<string, string>) => void
+  onApply?: (f: Finding, options?: Record<string, string>, fixId?: string) => void
   investigate?: (f: Finding) => { to: string } | undefined
   startedAt?: string
 }) {
@@ -700,7 +701,13 @@ function NotCheckedBody({ card }: { card: CardData }) {
 
 // Phase 5o: an IDX04 finding with two or more safe copies on one table has one disable-index entry per copy
 // (docs/phase5o-contract.md, section 2): one button each, "Disable IX_B". undefined for every other finding.
-function applyChoices(f: Finding, fixes?: Fix[]): { label: string; options: Record<string, string> }[] | undefined {
+function applyChoices(
+  f: Finding,
+  fixes?: Fix[],
+): { label: string; options?: Record<string, string>; fixId?: string }[] | undefined {
+  // A finding with two ways out (BAK02) has one Apply for each, named for what it does.
+  const two = twoWaysChoices(f, fixes)
+  if (two) return two
   if (f.fixId !== "disable-index") return undefined
   const mine = (fixes ?? []).filter((x) => x.id === f.fixId && x.options?.object === f.object)
   if (mine.length < 2) return undefined
@@ -710,8 +717,8 @@ function applyChoices(f: Finding, fixes?: Fix[]): { label: string; options: Reco
 // The options a finding's fix needs (docs/phase4c-contract.md): the detail's fixes entry with this id whose
 // options name the finding's object (a table, an index suggestion, a flag), else the first with this id.
 // A costly query's archive fix also names its query hash, which the finding's evidence holds.
-function fixOptionsFor(f: Finding, fixes?: Fix[]): Record<string, string> | undefined {
-  const mine = fixes?.filter((x) => x.id === f.fixId) ?? []
+function fixOptionsFor(f: Finding, fixes?: Fix[], fixId = f.fixId): Record<string, string> | undefined {
+  const mine = fixes?.filter((x) => x.id === fixId) ?? []
   const onObject = mine.filter((x) => Object.values(x.options ?? {}).includes(f.object))
   // Two suggestions on one table (WRK03): the evidence names the columns, so the entry whose column
   // options all appear in it is the finding's own. Two costly queries on one object (QRY01): the hash. Two

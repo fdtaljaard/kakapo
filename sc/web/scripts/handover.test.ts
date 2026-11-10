@@ -149,3 +149,21 @@ test("the finding's object is named in the header unless it repeats the database
   assert.equal(findingObject({ object: "" }, ctx), "")
   assert.equal(findingObject({ object: "tempdb" }, ctx), "tempdb")
 })
+
+// BAK02 has two ways out, each its own Apply (docs/phase3g-contract.md, revision 3).
+import { twoWaysChoices } from "../src/lib/two-ways.ts"
+
+test("a finding with two fixes gets one named Apply for each", () => {
+  const fixes = [
+    { id: "backup-schedule", title: "Create a backup schedule", target: "kakapo: GraniteTest log backup (every 15 minutes)" },
+    { id: "recovery-model", title: "Change the recovery model", target: "SIMPLE" },
+  ]
+  assert.deepEqual(twoWaysChoices({ fixId: "backup-schedule", altFixId: "recovery-model" }, fixes), [
+    { label: "Schedule log backups", fixId: "backup-schedule" },
+    { label: "Switch to SIMPLE", fixId: "recovery-model" },
+  ])
+  // One fix, or none: the ordinary single Apply.
+  assert.equal(twoWaysChoices({ fixId: "backup-schedule" }, fixes), undefined)
+  assert.equal(twoWaysChoices({ altFixId: "recovery-model" }, fixes), undefined)
+  assert.equal(twoWaysChoices({}), undefined)
+})

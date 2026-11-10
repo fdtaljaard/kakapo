@@ -358,10 +358,12 @@ func TestAvailableBackupFixesCoverage(t *testing.T) {
 		return f, fs, fixes
 	}
 
-	// 1. No job: the fix on BAK01 and BAK02, both jobs.
+	// 1. No job: the fix on BAK01 and BAK02, both jobs; BAK02 also offers the switch to SIMPLE.
 	f, fs, fixes := run()
-	if len(fixes) != 1 || fixes[0].ID != FixBackupSchedule || fixes[0].CheckID != "BAK01" ||
-		findingOf(t, fs, "BAK01").FixID == "" || findingOf(t, fs, "BAK02").FixID == "" {
+	if len(fixes) != 2 || fixes[0].ID != FixBackupSchedule || fixes[0].CheckID != "BAK01" ||
+		fixes[1].ID != FixRecoveryModel || fixes[1].CheckID != "BAK02" || fixes[1].Target != "SIMPLE" ||
+		findingOf(t, fs, "BAK01").FixID == "" || findingOf(t, fs, "BAK02").FixID != FixBackupSchedule ||
+		findingOf(t, fs, "BAK02").AltFixID != FixRecoveryModel {
 		t.Errorf("no job: %+v", fixes)
 	}
 	if s := NewBackupSchedule(f, nil); !s.Full || !s.Log {
@@ -374,8 +376,9 @@ func TestAvailableBackupFixesCoverage(t *testing.T) {
 	if b1.FixID != "" || b1.DoThis != "The job Nightly full should be doing this; check why it has not produced a backup (MNT02)." {
 		t.Errorf("BAK01 with a full job: %+v", b1)
 	}
-	if findingOf(t, fs, "BAK02").FixID != FixBackupSchedule || len(fixes) != 1 || fixes[0].CheckID != "BAK02" ||
-		fixes[0].Current != "no log backup job" || fixes[0].Target != "kakapo: WarehouseLive log backup (every 15 minutes)" {
+	if findingOf(t, fs, "BAK02").FixID != FixBackupSchedule || len(fixes) != 2 || fixes[0].CheckID != "BAK02" ||
+		fixes[0].Current != "no log backup job" || fixes[0].Target != "kakapo: WarehouseLive log backup (every 15 minutes)" ||
+		fixes[1].ID != FixRecoveryModel {
 		t.Errorf("BAK02 with a full job: %+v", fixes)
 	}
 	p, _ := mustSchedule(t, f, nil, true, false)
@@ -393,8 +396,9 @@ func TestAvailableBackupFixesCoverage(t *testing.T) {
 
 	// 4. A log job: BAK02 points at it, BAK01 offers the full job only.
 	f, fs, fixes = run(BackupJob{Name: "Log every 15", Enabled: true, Kind: JobLog})
-	if findingOf(t, fs, "BAK02").FixID != "" || findingOf(t, fs, "BAK01").FixID != FixBackupSchedule || len(fixes) != 1 ||
-		fixes[0].Current != "no full backup job" {
+	// (The log job should be producing the log backups: the switch to SIMPLE is not offered either.)
+	if findingOf(t, fs, "BAK02").FixID != "" || findingOf(t, fs, "BAK02").AltFixID != "" || findingOf(t, fs, "BAK01").FixID != FixBackupSchedule ||
+		len(fixes) != 1 || fixes[0].Current != "no full backup job" {
 		t.Errorf("log job: %+v", fixes)
 	}
 	if s := NewBackupSchedule(f, nil); !s.Full || s.Log {
@@ -408,25 +412,37 @@ func TestAvailableBackupFixesCoverage(t *testing.T) {
 	}
 }
 
-// No fix without the jobs read, with an error reading them, or on a secondary replica.
+// No schedule fix without the jobs read, with an error reading them, or on a secondary replica. BAK02
+// then still offers the switch to SIMPLE where the database can be changed from here: not on a secondary,
+// not when a job takes the log backups, and not when the msdb history is unreadable (no finding).
 func TestBackupScheduleNotOffered(t *testing.T) {
-	for name, change := range map[string]func(*BackupFacts){
-		"jobs not read": func(f *BackupFacts) { f.JobsRead = false },
-		"jobs error":    func(f *BackupFacts) { f.JobsError = "SELECT permission denied" },
-		"secondary":     func(f *BackupFacts) { f.IsSecondary = true },
-		"msdb error":    func(f *BackupFacts) { f.MsdbError = "denied" },
-		"covered":       func(f *BackupFacts) { f.BackupJobs = []BackupJob{{Name: "Ola", Enabled: true, Kind: JobBoth}} },
+	for name, c := range map[string]struct {
+		change func(*BackupFacts)
+		simple bool // BAK02 offers the switch to SIMPLE
+	}{
+		"jobs not read": {func(f *BackupFacts) { f.JobsRead = false }, true},
+		"jobs error":    {func(f *BackupFacts) { f.JobsError = "SELECT permission denied" }, true},
+		"secondary":     {func(f *BackupFacts) { f.IsSecondary = true }, false},
+		"msdb error":    {func(f *BackupFacts) { f.MsdbError = "denied" }, false},
+		"covered":       {func(f *BackupFacts) { f.BackupJobs = []BackupJob{{Name: "Ola", Enabled: true, Kind: JobBoth}} }, false},
 	} {
 		f := scheduleFacts("FULL")
-		change(&f)
-		c, fs, _ := build(f)
+		c.change(&f)
+		card, fs, _ := build(f)
+		want := 0
 		for _, x := range fs {
+			if x.FixID == FixBackupSchedule || x.AltFixID != "" || (x.FixID != "" && !(c.simple && x.CheckID == "BAK02" && x.FixID == FixRecoveryModel)) {
+				t.Errorf("%s: %s offers %s/%s", name, x.CheckID, x.FixID, x.AltFixID)
+			}
 			if x.FixID != "" {
-				t.Errorf("%s: %s offers %s", name, x.CheckID, x.FixID)
+				want++
 			}
 		}
-		if c.Fixable != 0 || OffersBackupSchedule(f) || len(AvailableBackupFixes(f, fs)) != 0 {
-			t.Errorf("%s: fixable %d", name, c.Fixable)
+		if (want == 1) != c.simple || card.Fixable != want || OffersBackupSchedule(f) {
+			t.Errorf("%s: fixable %d, want %d", name, card.Fixable, want)
+		}
+		if fixes := AvailableBackupFixes(f, fs); len(fixes) != want {
+			t.Errorf("%s: fixes %+v", name, fixes)
 		}
 		if _, _, err := BuildBackupScheduleFix(f, "", nil, true, false); !errors.Is(err, ErrFixNotApplicable) {
 			t.Errorf("%s: %v", name, err)

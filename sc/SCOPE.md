@@ -169,7 +169,7 @@ Decisions to make before building:
 
 The preview shows the two job definitions in words and the exact `sp_add_job`/`sp_add_jobschedule` statements;
 the read-back checks the jobs exist, are enabled and have a next run time; the change row records the job names
-so the remove fix can delete exactly those. Owner Client IT on the card, as BAK01 and BAK02 are.
+so the remove fix can delete exactly those. Owner Client IT on the card, as BAK01 is; BAK02 is ours while kakapo can apply a fix for it (`docs/phase3g-contract.md`, revision 3).
 
 **Out (for now)**
 

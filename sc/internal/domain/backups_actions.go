@@ -49,6 +49,7 @@ const (
 	recoveryToFull    = "The log grows until it is backed up: create the log backup job (the Backup schedule row) right after this, or the disk fills."
 	recoveryChain     = "The log-backup chain starts at the next full backup: until then the log cannot be backed up and a restore still goes back to the last full backup only."
 	recoveryToSimple  = "Point-in-time restore is lost; agree the data-loss window with the business (BAK05)."
+	recoveryNoAlter   = "kakapo's login cannot ALTER the database %s, so Apply will be refused: connect with a sysadmin login."
 	checkdbDayHelp    = "The day of the week the check runs, server time."
 	checkdbTimeHelp   = "Server time, HH:MM. Pick a quiet hour that does not overlap the full backup."
 	physicalOnlyHelp  = "Checks the pages and their checksums only: far quicker and lighter on a large database, but not the logical consistency. Run a full check monthly (or on a restored copy) when you tick this."
@@ -226,6 +227,19 @@ func findingByID(fs []Finding, id string) (Finding, bool) {
 	return Finding{}, false
 }
 
+// findingOffering is the finding that offers a fix, as its fix or as one of its alternatives.
+func findingOffering(fs []Finding, fixID string) (Finding, bool) {
+	for _, x := range fs {
+		if x.FixID == fixID {
+			return x, true
+		}
+		if x.AltFixID == fixID {
+			return x, true
+		}
+	}
+	return Finding{}, false
+}
+
 // --- recovery-model ---
 
 // otherRecoveryModel is the model the fix suggests: FULL from SIMPLE, SIMPLE otherwise.
@@ -301,9 +315,15 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 		p.Warnings = append(p.Warnings, recoveryToSimple)
 		if j, ok := f.CoveringJob(JobLog); ok {
 			p.Warnings = append(p.Warnings, "The job "+j.Name+" takes log backups of this database: they fail in SIMPLE recovery, so disable or change it (kakapo's own: Remove on the Backup schedule row).")
+		} else if f.JobsError != "" {
+			p.Warnings = append(p.Warnings, "kakapo could not read the Agent jobs ("+f.JobsError+"): a job that takes log backups of this database fails in SIMPLE recovery, so check for one.")
 		}
 	}
 	p.Warnings = append(p.Warnings, "Takes effect at once and online.", permission(ScopeDatabase, f.Database))
+	if f.PermsRead && !f.CanAlter {
+		// First, so the reason Apply will fail is not buried under the notes.
+		p.Warnings = append([]string{fmt.Sprintf(recoveryNoAlter, f.Database)}, p.Warnings...)
+	}
 	if !usable {
 		return p, fix, nil
 	}
@@ -773,8 +793,9 @@ func availableBackupActionFixes(f BackupFacts, findings []Finding) []Fix {
 		fix := Fix{ID: d.ID, Title: d.Title, Scope: d.Scope, CheckID: d.CheckID, Setting: d.Setting}
 		switch id {
 		case FixRecoveryModel:
-			x, ok := findingByID(findings, "DBC08")
-			if !ok || x.FixID != FixRecoveryModel {
+			// DBC08 (SIMPLE, switch to FULL) or BAK02 (FULL without log backups, switch to SIMPLE).
+			x, ok := findingOffering(findings, FixRecoveryModel)
+			if !ok {
 				continue
 			}
 			fix.CheckID, fix.Current, fix.Target = x.CheckID, f.RecoveryModel, otherRecoveryModel(f.RecoveryModel)
