@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"strings"
 	"testing"
@@ -235,4 +236,26 @@ func TestStorageFactsLive(t *testing.T) {
 	if _, err := StorageFacts(ctx, db, "NoSuchDatabase_x9"); err == nil {
 		t.Error("an unknown database should be an error")
 	}
+}
+
+// TestStorageLive reads a real database's storage facts, read-only, when SQLMONITOR_TEST_HOST (Windows
+// authentication) and SQLMONITOR_TEST_DB name one: the CPUs and the schedulers SQL Server uses are read.
+func TestStorageLive(t *testing.T) {
+	host, dbName := os.Getenv("SQLMONITOR_TEST_HOST"), os.Getenv("SQLMONITOR_TEST_DB")
+	if host == "" || dbName == "" {
+		t.Skip("set SQLMONITOR_TEST_HOST and SQLMONITOR_TEST_DB to read a live instance")
+	}
+	db, err := sql.Open("sqlserver", ConnString(domain.ServerInput{Host: host, Auth: domain.AuthWindows}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	f, err := StorageFacts(context.Background(), db, dbName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.CPUError != "" || f.CPUCount <= 0 || f.OnlineSchedulers <= 0 || f.OnlineSchedulers > f.CPUCount {
+		t.Fatalf("CPUs %d, schedulers %d, error %q", f.CPUCount, f.OnlineSchedulers, f.CPUError)
+	}
+	t.Logf("edition %d, %d CPUs, SQL Server uses %d", f.EngineEdition, f.CPUCount, f.OnlineSchedulers)
 }

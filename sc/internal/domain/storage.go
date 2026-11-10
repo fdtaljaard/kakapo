@@ -179,6 +179,10 @@ type StorageFacts struct {
 	EngineEdition int    // SERVERPROPERTY('EngineEdition'): 4 is Express
 	EngineVersion string
 	CPUCount      int // sys.dm_os_sys_info cpu_count; 0 when not read
+	// OnlineSchedulers are the CPUs SQL Server may use (sys.dm_os_schedulers VISIBLE ONLINE): fewer
+	// than CPUCount when the edition's limit (Express: one socket or four cores) or affinity leaves
+	// some offline; 0 when not read.
+	OnlineSchedulers int
 
 	Files []StorageFile // this database's files, then tempdb's
 
@@ -338,7 +342,7 @@ const (
 	sto05Finding  = "Database files are on the system drive (C:)."
 	sto05Why      = "C: holds Windows. If a database fills it, the whole server can become unstable. It is usually also the smallest and slowest disk."
 	sto05Do       = "Move the files to a dedicated data or log volume in a maintenance window (ALTER DATABASE ... MODIFY FILE, take the database offline, move the files, bring it online). For TempDB, change the path and restart SQL Server."
-	sto06Finding  = "1 database(s) have data and log files on the same volume."
+	sto06Finding  = "The data and log files are on the same volume."
 	sto06Why      = "Data files do random reads and writes while the log needs fast sequential writes, so on one disk they compete. Matters less on modern SAN or SSD storage."
 	sto06Do       = "Low priority unless WRITELOG waits (WRK01) or log write latency (STO09) are high. When storage is next reviewed, place log files on a separate fast volume."
 	sto07Why      = "An oversized log usually means log space is not being reused: missing log backups, a transaction left open, or replication falling behind. It wastes disk and slows restores."
@@ -353,7 +357,7 @@ const (
 	tmp02Do       = "Apply \"Set up the TempDB files\": it grows the smaller files to the size of the largest and gives every file the same fixed growth, online and at once. Shrinking a larger file is best done by hand in a restart window."
 	tmp03Why      = "When TempDB is full, every query that sorts, hashes or uses a temp table fails, in every database on the server."
 	tmp03Do       = "Find what is using it right now (sys.dm_db_session_space_usage shows the pages per session: a runaway report, a huge sort, or a session holding a temp table) and deal with that query. If this is its normal size, pre-size TempDB larger in a maintenance window and make sure it can grow."
-	idx01Why      = "The biggest tables in this database. Tables where indexes are much bigger than the data are flagged in IDX02."
+	idx01Why      = "The biggest tables in this database, with the space their data and their other indexes take."
 	idx06Why      = "Without a clustered index, an updated row that no longer fits is moved and leaves a forwarding pointer behind, so reads get slower over time, and the space of deleted rows is not always reused."
 	idx06WhyNone  = " With no other index either, every query on it reads the whole table."
 	idx06Do       = "Add a clustered index in a maintenance window (it rewrites the whole table and needs about its size free in the data files). Choose the key with the application's owner: usually the primary key or an ever-increasing ID column."
@@ -486,7 +490,10 @@ func BuildStorageCard(f StorageFacts, def CardDef, lastRoom *CheckdbRoom, trend 
 	default:
 		c.Status, c.StatusText = StatusGreen, "No problem found"
 	}
-	if actionable > 0 {
+	// The answer to "Will it run out of room?" leads: the worst finding when it is about room (a
+	// disk, a file's or Express's limit, the log, the forecast) or urgent, else the room left. A
+	// to-do such as TempDB's file count is listed, not given as the answer.
+	if actionable > 0 && (storageRoomChecks[b.findings[0].CheckID] || b.findings[0].Severity == SeverityCritical || b.findings[0].Severity == SeverityHigh) {
 		c.Verdict = b.findings[0].Finding
 	} else {
 		c.Verdict = b.greenVerdict()
@@ -497,6 +504,9 @@ func BuildStorageCard(f StorageFacts, def CardDef, lastRoom *CheckdbRoom, trend 
 	c.Facts = b.facts()
 	return c, b.findings, checks
 }
+
+// storageRoomChecks answer the card's question themselves, so the worst of them is the answer line.
+var storageRoomChecks = map[string]bool{"STO01": true, "STO04": true, "STO11": true, "STO12": true}
 
 type storageBuild struct {
 	f        StorageFacts
@@ -966,9 +976,14 @@ func (b *storageBuild) sto09() {
 		}
 		if len(g.files) == 1 {
 			x := g.files[0]
+			// Only the kind that was judged: a log file's few reads (or a data file's writes) are not
+			// part of the finding and read as if they were.
+			evidence := fmt.Sprintf("Reads: %s (avg %d ms).", n0int(x.Reads), x.AvgReadMs())
+			if g.log {
+				evidence = fmt.Sprintf("Writes: %s (avg %d ms).", n0int(x.Writes), x.AvgWriteMs())
+			}
 			b.add("STO09", rank, "Planned", EffortProject, x.LogicalName,
-				fmt.Sprintf("%s average %d ms on %s.", kind, worstMs, x.PhysicalName), why, sto09Do,
-				fmt.Sprintf("Reads: %d (avg %d ms). Writes: %d (avg %d ms).", x.Reads, x.AvgReadMs(), x.Writes, x.AvgWriteMs()))
+				fmt.Sprintf("%s average %d ms on %s.", kind, worstMs, x.PhysicalName), why, sto09Do, evidence)
 			continue
 		}
 		b.add("STO09", rank, "Planned", EffortProject, g.volume,
@@ -988,7 +1003,25 @@ func (f StorageFacts) tempdbData() []StorageFile {
 	return out
 }
 
-// tmp01: fewer tempdb data files than min(CPUs, 8).
+// sqlCPUs are the CPUs TempDB's file count follows: the ones SQL Server may use, which on Express
+// (one socket or four cores) or with affinity are fewer than the machine has; cpu_count when the
+// schedulers were not read.
+func (f StorageFacts) sqlCPUs() int {
+	if f.OnlineSchedulers > 0 {
+		return f.OnlineSchedulers
+	}
+	return f.CPUCount
+}
+
+// cpuText: "Logical CPUs: 4" or "Logical CPUs: 8, of which SQL Server uses 4".
+func (f StorageFacts) cpuText() string {
+	if f.OnlineSchedulers > 0 && f.OnlineSchedulers < f.CPUCount {
+		return fmt.Sprintf("Logical CPUs: %d, of which SQL Server uses %d", f.CPUCount, f.OnlineSchedulers)
+	}
+	return fmt.Sprintf("Logical CPUs: %d", f.CPUCount)
+}
+
+// tmp01: fewer tempdb data files than min(the CPUs SQL Server uses, 8).
 func (b *storageBuild) tmp01() {
 	files := b.f.tempdbData()
 	switch {
@@ -1003,7 +1036,7 @@ func (b *storageBuild) tmp01() {
 		b.skipped["TMP01"] = note
 		return
 	}
-	target := min(b.f.CPUCount, 8)
+	target := min(b.f.sqlCPUs(), 8)
 	n := len(files)
 	if n >= target {
 		return
@@ -1023,15 +1056,15 @@ func (b *storageBuild) tmp01() {
 	if n == 1 {
 		rank = 3
 	}
-	finding := fmt.Sprintf("TempDB has %d data file(s); %d is recommended for this server.", n, target)
-	evidence := fmt.Sprintf("Data files: %d. Logical CPUs: %d.", n, b.f.CPUCount)
+	finding := fmt.Sprintf("TempDB has %s; %d is recommended for this server.", plural(int64(n), "data file", "data files"), target)
+	evidence := fmt.Sprintf("Data files: %d. %s.", n, b.f.cpuText())
 	if pct, ok := b.f.pageLatchPct(); ok {
 		evidence += fmt.Sprintf(" PAGELATCH waits: %s%% of uptime.", n1(pct))
 		if pct >= 1 {
 			// Likely, not certain: PAGELATCH waits are not only on TempDB's allocation pages.
 			rank--
-			finding = fmt.Sprintf("TempDB has %d data file(s); %d is recommended for this server, and the server is likely already queuing on TempDB allocation pages (%s%% of uptime in PAGELATCH waits).",
-				n, target, n1(pct))
+			finding = fmt.Sprintf("TempDB has %s; %d is recommended for this server, and the server is likely already queuing on TempDB allocation pages (%s%% of uptime in PAGELATCH waits).",
+				plural(int64(n), "data file", "data files"), target, n1(pct))
 		}
 	}
 	b.add("TMP01", rank, "Online", EffortQuickWin, "tempdb", finding, tmp01Why,
@@ -1308,7 +1341,7 @@ func (b *storageBuild) idx01() {
 			// The clustered index is counted as data; IndexCount counts the nonclustered ones.
 			idx := "no nonclustered index"
 			if t.IndexCount > 0 {
-				idx = fmt.Sprintf("%d nonclustered index(es)", t.IndexCount)
+				idx = plural(int64(t.IndexCount), "nonclustered index", "nonclustered indexes")
 			}
 			finding = fmt.Sprintf("The biggest table, %s, has %s MB in total: %s MB data and %s MB in %s.",
 				t.Name, n0(t.DataMB+t.IndexMB), n0(t.DataMB), n0(t.IndexMB), idx)
@@ -1575,13 +1608,20 @@ func (b *storageBuild) sizeMB() float64 {
 	return float64(data)
 }
 
-// greenVerdict: "{db} is {size} on {volume}, which has {free} free."
+// greenVerdict, the room left: "{db} is {size} on {volume}, which has {free} free." On Express the
+// size is said against the 10 GB a database may hold, which runs out before the disk does.
 func (b *storageBuild) greenVerdict() string {
+	size := n1(b.sizeMB()/1024) + " GB"
 	v, ok := b.f.dataVolume()
-	if !ok {
-		return fmt.Sprintf("%s is %s GB.", b.f.Database, n1(b.sizeMB()/1024))
+	switch {
+	case b.f.EngineEdition == 4 && ok:
+		return fmt.Sprintf("%s is %s of the 10 GB SQL Server Express allows; %s has %s GB free.", b.f.Database, size, v.Name, n0int(v.FreeMB/1024))
+	case b.f.EngineEdition == 4:
+		return fmt.Sprintf("%s is %s of the 10 GB SQL Server Express allows.", b.f.Database, size)
+	case !ok:
+		return fmt.Sprintf("%s is %s.", b.f.Database, size)
 	}
-	return fmt.Sprintf("%s is %s GB on %s, which has %s GB free.", b.f.Database, n1(b.sizeMB()/1024), v.Name, n0int(v.FreeMB/1024))
+	return fmt.Sprintf("%s is %s on %s, which has %s GB free.", b.f.Database, size, v.Name, n0int(v.FreeMB/1024))
 }
 
 // worstTone is the tone of the worst of these findings: Critical and High worse, Medium bad.
@@ -1638,6 +1678,11 @@ func (b *storageBuild) facts() []Fact {
 			size.Value = n1(float64(alloc)/1024) + " GB allocated"
 			if allUsed {
 				size.Value += ", " + n1(float64(used)/1024) + " GB used"
+			}
+			if f.EngineEdition == 4 {
+				// Express stops a database at 10 GB of data (STO04 says so from 8 GB).
+				size.Value += " of Express's 10 GB"
+				size.Tone = worstTone(b.all("STO04"))
 			}
 		}
 	}
@@ -1766,13 +1811,13 @@ func (b *storageBuild) idx06() {
 			continue
 		}
 		size := fmt.Sprintf("%s, %s rows", mbText(int64(math.Round(t.DataMB))), n0int(t.Rows))
-		finding := "Table has no clustered index (a heap): " + size + "."
+		finding := t.Name + " has no clustered index (it is a heap): " + size + "."
 		why := idx06Why
 		indexes := "no nonclustered index"
 		if t.IndexCount > 0 {
 			indexes = plural(int64(t.IndexCount), "nonclustered index", "nonclustered indexes") + ", " + mbText(int64(math.Round(t.IndexMB)))
 		} else {
-			finding = "Table has no index at all (a heap with no nonclustered index): " + size + "."
+			finding = t.Name + " has no index at all (a heap with no nonclustered index): " + size + "."
 			why += idx06WhyNone
 		}
 		b.add("IDX06", 3, "Offline", EffortModerate, t.Name, finding, why, idx06Do,

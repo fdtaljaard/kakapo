@@ -30,7 +30,8 @@ export function copyLabel(owner: Owner): string {
 // "None" (no window, no effort) says nothing, so it is left out of the "What to do" line, as on the card.
 export function handoverText(f: Finding, ctx: HandoverContext): string {
   const where = [ctx.server, ctx.database].filter(Boolean).join(" / ")
-  const head = [`${f.title} (${f.checkId}, ${f.severity})${where ? ` on ${where}` : ""}`]
+  const object = findingObject(f, ctx)
+  const head = [`${f.title} (${f.checkId}, ${f.severity})${object ? `: ${object}` : ""}${where ? ` on ${where}` : ""}`]
   if (ctx.asOf) head.push(`As of ${ctx.asOf}`)
   const meta = [ownerWords[f.owner] ?? f.owner, f.when, f.effort].filter((v) => v && v !== "None").join("; ")
   return [
@@ -44,6 +45,16 @@ export function handoverText(f: Finding, ctx: HandoverContext): string {
   ]
     .filter(Boolean)
     .join("\n\n")
+}
+
+// What the finding is about (the table, file, column or job: Finding.object), or "" when it only repeats
+// the database or the server the block already names. Without it "a heap with no index, 409 MB" leaves
+// the reader asking which table.
+export function findingObject(f: Pick<Finding, "object">, ctx: Pick<HandoverContext, "server" | "database">): string {
+  const o = f.object?.trim() ?? ""
+  const bare = (s: string) => s.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase()
+  if (!o || bare(o) === bare(ctx.database) || bare(o) === bare(ctx.server)) return ""
+  return o
 }
 
 function section(label: string, text: string | undefined): string {

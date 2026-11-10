@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { FindingContext } from "@/lib/finding-context"
-import { copyLabel, handoverText, type HandoverContext } from "@/lib/handover"
+import { copyLabel, findingObject, handoverText, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { cn } from "@/lib/utils"
 
@@ -62,6 +62,9 @@ export function FindingCard({
   const meta = metaText(f)
   const canApply = !!f.fixId && !!onApply
   const ctx = context ?? inherited ?? noContext
+  // The table, file or column the finding is about, unless the sentence already names it.
+  const object = findingObject(f, ctx)
+  const showObject = !!object && !f.finding.includes(object)
   return (
     <Card size="sm" className={cn(info && "bg-transparent shadow-none ring-0 border border-dashed")}>
       <CardContent className={cn("grid gap-3 min-w-0", info && "text-muted-foreground")}>
@@ -69,6 +72,7 @@ export function FindingCard({
           <SeverityBadge severity={f.severity} />
           <span className="font-mono text-xs text-muted-foreground">{f.checkId}</span>
           <span className={cn("font-medium", !info && "text-foreground")}>{f.title}</span>
+          {showObject && <span className="font-mono text-xs text-foreground break-all">{object}</span>}
           <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
             {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
             <Button variant="ghost" size="sm" onClick={() => copy(handoverText(f, ctx))}>

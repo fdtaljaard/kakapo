@@ -383,7 +383,7 @@ func BuildAddTempdbFilesFix(f StorageFacts, options map[string]string) (FixPrevi
 		return FixPreview{}, Fix{}, ErrFixNotApplicable
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].FileID < files[j].FileID })
-	n, target := len(files), min(f.CPUCount, 8)
+	n, target := len(files), min(f.sqlCPUs(), 8)
 	gap := target - n
 	d, _ := FindFixDef(FixAddTempdbFiles)
 	fix := Fix{ID: d.ID, Title: d.Title, Scope: d.Scope, CheckID: d.CheckID, Setting: d.Setting,
@@ -393,7 +393,7 @@ func BuildAddTempdbFilesFix(f StorageFacts, options map[string]string) (FixPrevi
 	usable := true
 	count := gap
 	in := FixInput{Name: OptionTempdbCount, Label: "Files to add", Kind: "text", Value: strconv.Itoa(gap),
-		Help: fmt.Sprintf("How many data files to add. %d in all is the recommendation for %d logical CPUs (one per CPU, at most 8).", target, f.CPUCount)}
+		Help: fmt.Sprintf("How many data files to add. %d in all is the recommendation for the %d CPUs SQL Server uses (one per CPU, at most 8).", target, f.sqlCPUs())}
 	if typed, given := options[OptionTempdbCount]; given {
 		if v, ok := parseWholeNumber(typed, 1, gap); ok {
 			count = v

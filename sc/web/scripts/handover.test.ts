@@ -6,7 +6,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import type { Decision, Finding } from "../src/api.ts"
-import { copyLabel, decisionHandoverText, findingsFor, handoverAll, handoverText, scriptText } from "../src/lib/handover.ts"
+import { copyLabel, decisionHandoverText, findingObject, findingsFor, handoverAll, handoverText, scriptText } from "../src/lib/handover.ts"
 
 const ctx = { server: "CLIENTSQL01\\WMS", database: "GraniteTest", asOf: "09:21", version: "2026.11.03-abc123" }
 
@@ -66,7 +66,7 @@ test("empty sections, None and an empty context are left out; Query: stays in Ev
   assert.equal(
     handoverText(f, { server: "", database: "", asOf: "", version: "" }),
     [
-      "Transaction log backups (BAK02, Info)",
+      "Transaction log backups (BAK02, Info): GraniteTest",
       "",
       "What was found",
       f.finding,
@@ -139,4 +139,13 @@ test("a decision's row as a block (phase 5m): verdict, found, costs, record, sou
       "From kakapo build 2026.11.03-abc123",
     ].join("\n\n"),
   )
+})
+
+test("the finding's object is named in the header unless it repeats the database or server", () => {
+  const heap: Finding = { ...bak02, checkId: "IDX06", title: "Heaps", severity: "Medium", object: "[dbo].[DocumentLog]" }
+  assert.equal(handoverText(heap, ctx).split("\n")[0], "Heaps (IDX06, Medium): [dbo].[DocumentLog] on CLIENTSQL01\\WMS / GraniteTest")
+  assert.equal(findingObject({ object: "[GraniteTest]" }, ctx), "")
+  assert.equal(findingObject({ object: "clientsql01\\wms" }, ctx), "")
+  assert.equal(findingObject({ object: "" }, ctx), "")
+  assert.equal(findingObject({ object: "tempdb" }, ctx), "tempdb")
 })

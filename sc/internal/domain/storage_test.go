@@ -127,7 +127,7 @@ func TestStorageGreen(t *testing.T) {
 		t.Fatalf("findings %+v", fs)
 	}
 	wantStorageFinding(t, fs[0], SeverityInfo, WhenNone, EffortNone, "WarehouseLive",
-		"The biggest table, [dbo].[Transaction], has 1,200 MB in total: 800 MB data and 400 MB in 3 nonclustered index(es).")
+		"The biggest table, [dbo].[Transaction], has 1,200 MB in total: 800 MB data and 400 MB in 3 nonclustered indexes.")
 	if !strings.HasPrefix(fs[0].Evidence, "Top 2: [dbo].[Transaction]: 1,200 MB total, 800 MB data, 400 MB index, 1,234,567 rows; [dbo].[SalesOrder]: 120 MB total") ||
 		!strings.HasSuffix(fs[0].Evidence, "All 120 tables: 2,048 MB data, 1,024 MB indexes.") {
 		t.Errorf("IDX01 evidence %q", fs[0].Evidence)
@@ -348,7 +348,7 @@ func TestStorageSTO05AndSTO06(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("STO06: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityLow, WhenWindow, EffortProject, "WarehouseLive", "1 database(s) have data and log files on the same volume.")
+	wantStorageFinding(t, got[0], SeverityLow, WhenWindow, EffortProject, "WarehouseLive", "The data and log files are on the same volume.")
 	if got[0].Evidence != "Databases: WarehouseLive" {
 		t.Errorf("STO06 evidence %q", got[0].Evidence)
 	}
@@ -469,7 +469,7 @@ func TestStorageSTO09(t *testing.T) {
 	set(&f, "WarehouseLive_log", 0, 0, 2000, 30000)
 	_, fs, _ := sbuild(f)
 	got := allOf(fs, "STO09")
-	if len(got) != 2 || got[0].Evidence != "Reads: 2000 (avg 30 ms). Writes: 0 (avg 0 ms)." {
+	if len(got) != 2 || got[0].Evidence != "Reads: 2,000 (avg 30 ms)." || got[1].Evidence != "Writes: 2,000 (avg 15 ms)." {
 		t.Errorf("per file: %+v", got)
 	}
 	// Latency unreadable: skipped, the card still answers.
@@ -503,7 +503,7 @@ func TestStorageTMP01AndTMP02(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("TMP01: %+v", got)
 	}
-	wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "tempdb", "TempDB has 4 data file(s); 8 is recommended for this server.")
+	wantStorageFinding(t, got[0], SeverityLow, WhenOnline, EffortQuickWin, "tempdb", "TempDB has 4 data files; 8 is recommended for this server.")
 	if got[0].DoThis != `Add data files until there are 8, all the same size and growth. Example: ALTER DATABASE tempdb ADD FILE (NAME = N'tempdev5', FILENAME = N'T:\TempDB\tempdb5.ndf', SIZE = 128MB, FILEGROWTH = 256MB);  No restart needed.` ||
 		got[0].Evidence != "Data files: 4. Logical CPUs: 8." {
 		t.Errorf("TMP01 %q %q", got[0].DoThis, got[0].Evidence)
@@ -905,6 +905,30 @@ func TestStorageFourthFact(t *testing.T) {
 	}
 }
 
+// The answer line is the room left when the worst finding is a to-do that is not about room
+// (TempDB's files, files on C:), and on Express it says the size against the 10 GB limit.
+func TestStorageVerdictRoomFirst(t *testing.T) {
+	f := sfacts()
+	f.Files = f.Files[:3] // one TempDB data file: TMP01 Medium, not about room
+	c, fs, _ := sbuild(f)
+	if fs[0].CheckID != "TMP01" || c.Status != StatusAmber || c.Verdict != `WarehouseLive is 3.0 GB on D:\, which has 50 GB free.` {
+		t.Errorf("top %s, verdict %q", fs[0].CheckID, c.Verdict)
+	}
+	f.EngineEdition = 4
+	c, _, _ = sbuild(f)
+	if c.Verdict != `WarehouseLive is 3.0 GB of the 10 GB SQL Server Express allows; D:\ has 50 GB free.` {
+		t.Errorf("Express verdict %q", c.Verdict)
+	}
+	wantFacts(t, c, `Tightest drive=D:\ 50% free (50 GB)/normal`, "Database size=4.0 GB allocated, 3.4 GB used of Express's 10 GB/normal",
+		"Log=1.0 GB, 10% used/normal", "TempDB=12% full of 1.0 GB/normal")
+	// From 8 GB STO04 fires and, being about room, is the answer.
+	file(&f, "WarehouseLive").SizeMB = 9300
+	c, _, _ = sbuild(f)
+	if c.Verdict != sto04Express || c.Facts[1].Tone != ToneWorse {
+		t.Errorf("Express near the limit: %q %+v", c.Verdict, c.Facts[1])
+	}
+}
+
 func TestStorageCounts(t *testing.T) {
 	f := sfacts()
 	file(&f, "WarehouseLive").VolumeFreeMB = 15000                                    // STO01 Medium, Client IT
@@ -1210,9 +1234,9 @@ func TestStorageTMP01PageLatch(t *testing.T) {
 		finding string
 		latch   string
 	}{
-		{35999, 100, SeverityLow, "TempDB has 4 data file(s); 8 is recommended for this server.", " PAGELATCH waits: 0.0% of uptime."},
-		{3600000, 100, SeverityMedium, "TempDB has 4 data file(s); 8 is recommended for this server, and the server is likely already queuing on TempDB allocation pages (1.0% of uptime in PAGELATCH waits).", " PAGELATCH waits: 1.0% of uptime."},
-		{180000, 0.5, SeverityMedium, "TempDB has 4 data file(s); 8 is recommended for this server, and the server is likely already queuing on TempDB allocation pages (5.0% of uptime in PAGELATCH waits).", " PAGELATCH waits: 5.0% of uptime."},
+		{35999, 100, SeverityLow, "TempDB has 4 data files; 8 is recommended for this server.", " PAGELATCH waits: 0.0% of uptime."},
+		{3600000, 100, SeverityMedium, "TempDB has 4 data files; 8 is recommended for this server, and the server is likely already queuing on TempDB allocation pages (1.0% of uptime in PAGELATCH waits).", " PAGELATCH waits: 1.0% of uptime."},
+		{180000, 0.5, SeverityMedium, "TempDB has 4 data files; 8 is recommended for this server, and the server is likely already queuing on TempDB allocation pages (5.0% of uptime in PAGELATCH waits).", " PAGELATCH waits: 5.0% of uptime."},
 	} {
 		f := sfacts()
 		keep4(&f)
@@ -1243,6 +1267,18 @@ func TestStorageTMP01PageLatch(t *testing.T) {
 	f.PageLatchError = "denied"
 	if _, fs, _ := sbuild(f); allOf(fs, "TMP01")[0].Severity != SeverityMedium || allOf(fs, "TMP01")[0].Evidence != "Data files: 1. Logical CPUs: 8." {
 		t.Errorf("not read: %+v", allOf(fs, "TMP01"))
+	}
+
+	// Express on 8 vCPUs uses 4 of them: 4 files is the target, and the evidence says why.
+	f.OnlineSchedulers = 4
+	if _, fs, _ := sbuild(f); allOf(fs, "TMP01")[0].Finding != "TempDB has 1 data file; 4 is recommended for this server." ||
+		allOf(fs, "TMP01")[0].Evidence != "Data files: 1. Logical CPUs: 8, of which SQL Server uses 4." {
+		t.Errorf("Express: %+v", allOf(fs, "TMP01"))
+	}
+	// One socket of one core: one file is right, so no finding.
+	f.OnlineSchedulers = 1
+	if _, fs, _ := sbuild(f); len(allOf(fs, "TMP01")) != 0 {
+		t.Errorf("one CPU in use: %+v", allOf(fs, "TMP01"))
 	}
 }
 
@@ -1426,12 +1462,12 @@ func TestStorageIDX06(t *testing.T) {
 	}
 	x := got[0]
 	if x.Object != "[dbo].[ImportRows]" || x.Severity != SeverityMedium || x.When != WhenWindow || x.Effort != EffortModerate || x.Owner != OwnerUs ||
-		x.Finding != "Table has no index at all (a heap with no nonclustered index): 1.4 GB, 13,000,000 rows." ||
+		x.Finding != "[dbo].[ImportRows] has no index at all (a heap with no nonclustered index): 1.4 GB, 13,000,000 rows." ||
 		x.Why != idx06Why+idx06WhyNone || x.DoThis != idx06Do || x.Evidence != "Data 1,434 MB, 13,000,000 rows, no nonclustered index." ||
 		x.ThenCheck != "Re-run after adding the clustered index: IDX06 gone." {
 		t.Errorf("no index: %+v", x)
 	}
-	if y := got[1]; y.Finding != "Table has no clustered index (a heap): 40 MB, 1,200,000 rows." || y.Why != idx06Why ||
+	if y := got[1]; y.Finding != "[dbo].[Audit] has no clustered index (it is a heap): 40 MB, 1,200,000 rows." || y.Why != idx06Why ||
 		y.Evidence != "Data 40 MB, 1,200,000 rows, 2 nonclustered indexes, 12 MB." {
 		t.Errorf("heap with indexes: %+v", y)
 	}

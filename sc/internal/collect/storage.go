@@ -38,7 +38,7 @@ FROM sys.databases AS d WHERE d.name = @db;
 DECLARE @vss bit = CASE WHEN HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1 THEN 1 ELSE 0 END;
 DECLARE @noVss nvarchar(100) = N'the login does not have VIEW SERVER STATE.';
 DECLARE @filesError nvarchar(2048), @volError nvarchar(2048), @cpuError nvarchar(2048), @tempError nvarchar(2048);
-DECLARE @cpu int, @tAlloc bigint, @tFree bigint, @tLogPct decimal(5, 1), @tUser bigint, @tInternal bigint, @tVersion bigint;
+DECLARE @cpu int, @sched int, @tAlloc bigint, @tFree bigint, @tLogPct decimal(5, 1), @tUser bigint, @tInternal bigint, @tVersion bigint;
 DECLARE @tsessError nvarchar(2048), @snapSession int, @snapSecs bigint;
 DECLARE @tsess TABLE (session_id int NOT NULL, login_name nvarchar(256) NULL, program_name nvarchar(256) NULL, mb decimal(18, 1) NOT NULL);
 DECLARE @latchError nvarchar(2048), @latchMs bigint, @uptimeHours float;
@@ -89,6 +89,8 @@ BEGIN
     ELSE
     BEGIN TRY
         SELECT @cpu = cpu_count FROM sys.dm_os_sys_info;
+        /* The CPUs SQL Server may use: an edition's limit (Express: one socket or four cores) or affinity leave the rest offline. */
+        SELECT @sched = COUNT(*) FROM sys.dm_os_schedulers WHERE status = N'VISIBLE ONLINE';
     END TRY
     BEGIN CATCH
         SET @cpuError = ERROR_MESSAGE();
@@ -182,7 +184,7 @@ SELECT CAST(CASE WHEN @dbid IS NULL THEN 0 ELSE 1 END AS bit),
        @state, @recovery, @reuse,
        CONVERT(int, SERVERPROPERTY('EngineEdition')),
        CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
-       @cpu, @tAlloc, @tFree, @tLogPct,
+       @cpu, @sched, @tAlloc, @tFree, @tLogPct,
        @now, DATEPART(TZOFFSET, SYSDATETIMEOFFSET()),
        @filesError, @volError, @cpuError, @tempError,
        @tUser, @tInternal, @tVersion, @snapSession, @snapSecs, @tsessError,
@@ -458,7 +460,7 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 	var (
 		found                             bool
 		state, recovery, reuse            sql.NullString
-		cpu                               sql.NullInt32
+		cpu, sched                        sql.NullInt32
 		tAlloc, tFree                     sql.NullInt64
 		tLogPct                           sql.NullFloat64
 		now                               time.Time
@@ -475,7 +477,7 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 		tgLast, tgSlowAt                  sql.NullTime
 		tgSlowFile                        sql.NullString
 	)
-	if err := rows.Scan(&found, &state, &recovery, &reuse, &f.EngineEdition, &f.EngineVersion, &cpu,
+	if err := rows.Scan(&found, &state, &recovery, &reuse, &f.EngineEdition, &f.EngineVersion, &cpu, &sched,
 		&tAlloc, &tFree, &tLogPct, &now, &f.UTCOffsetMinutes,
 		&filesErr, &volErr, &cpuErr, &tempErr,
 		&tUser, &tInternal, &tVersion, &snapSession, &snapSecs, &tsessErr,
@@ -488,7 +490,7 @@ func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *do
 		return fmt.Errorf("there is no database named %q", database)
 	}
 	f.State, f.RecoveryModel, f.LogReuseWait = state.String, recovery.String, reuse.String
-	f.CPUCount = int(cpu.Int32)
+	f.CPUCount, f.OnlineSchedulers = int(cpu.Int32), int(sched.Int32)
 	if tAlloc.Valid && tFree.Valid {
 		f.TempdbAllocMB, f.TempdbFreeMB = &tAlloc.Int64, &tFree.Int64
 	}
