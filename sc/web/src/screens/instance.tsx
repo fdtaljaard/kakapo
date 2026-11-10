@@ -89,7 +89,7 @@ function InstanceHeader({ server }: { server: Server }) {
           <span>{server.lastTestedAt ? `last tested ${formatWhen(server.lastTestedAt)}` : "never tested"}</span>
         </div>
         {build && <div className="text-sm text-muted-foreground">{build}</div>}
-        {isExpress(server.lastEdition) && <ExpressNotice />}
+        {isExpress(server.lastEdition) && <ExpressNotice version={server.lastVersion} />}
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" asChild>

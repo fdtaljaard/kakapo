@@ -53,7 +53,7 @@ export function DatabaseHeader({
             loading && <Skeleton className="h-4 w-64 max-w-full" />
           )}
         </div>
-        {isExpress(instance?.edition) && <ExpressNotice />}
+        {isExpress(instance?.edition) && <ExpressNotice version={instance?.productVersion} />}
       </div>
       <Button variant="outline" onClick={onRefresh} disabled={loading}>
         {loading ? <Loader2 className="animate-spin" /> : <RotateCw />}

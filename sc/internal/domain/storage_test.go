@@ -327,6 +327,25 @@ func TestStorageSTO04(t *testing.T) {
 		}
 		wantStorageFinding(t, got[0], sev, WhenDecideFirst, EffortProject, "WarehouseLive", "Database is close to the 10 GB limit of SQL Server Express.")
 	}
+
+	// SQL Server 2025 Express holds 50 GB: 9 GB is nothing to say, 40 GB is 80%.
+	f = sfacts()
+	f.EngineEdition, f.EngineVersion = 4, "17.0.1000.7"
+	file(&f, "WarehouseLive").SizeMB = 9216
+	if c, fs, _ := sbuild(f); len(allOf(fs, "STO04")) != 0 || !strings.Contains(c.Verdict, "of the 50 GB SQL Server Express allows") ||
+		!strings.HasSuffix(c.Facts[1].Value, "of Express's 50 GB") {
+		t.Errorf("2025 at 9 GB: %+v %q %+v", allOf(fs, "STO04"), c.Verdict, c.Facts[1])
+	}
+	file(&f, "WarehouseLive").SizeMB = 40960
+	if got := allOf(fs2(f), "STO04"); len(got) != 1 || got[0].Finding != "Database is close to the 50 GB limit of SQL Server Express." ||
+		got[0].Severity != SeverityMedium || got[0].Evidence != "Data size: 40960 MB of the 51200 MB limit." {
+		t.Errorf("2025 at 40 GB: %+v", got)
+	}
+}
+
+func fs2(f StorageFacts) []Finding {
+	_, fs, _ := sbuild(f)
+	return fs
 }
 
 func TestStorageSTO05AndSTO06(t *testing.T) {
@@ -924,7 +943,7 @@ func TestStorageVerdictRoomFirst(t *testing.T) {
 	// From 8 GB STO04 fires and, being about room, is the answer.
 	file(&f, "WarehouseLive").SizeMB = 9300
 	c, _, _ = sbuild(f)
-	if c.Verdict != sto04Express || c.Facts[1].Tone != ToneWorse {
+	if c.Verdict != sto04ExpressFinding(10) || c.Facts[1].Tone != ToneWorse {
 		t.Errorf("Express near the limit: %q %+v", c.Verdict, c.Facts[1])
 	}
 }

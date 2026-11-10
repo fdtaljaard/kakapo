@@ -336,8 +336,6 @@ const (
 	sto03WhySmall = "Many tiny growths fragment the file, create too many VLFs on log files, and each growth briefly pauses writes."
 	sto03WhyFull  = "Once the file is full, inserts and updates fail."
 	sto04Why      = "When the file reaches its maximum size it cannot grow, and inserts and updates start failing."
-	sto04Express  = "Database is close to the 10 GB limit of SQL Server Express."
-	sto04WhyExp   = "Express databases cannot grow past 10 GB of data. When the limit is reached, inserts fail and the application stops."
 	sto04DoExp    = "Archive or purge old data, or plan an upgrade to Standard edition."
 	sto05Finding  = "Database files are on the system drive (C:)."
 	sto05Why      = "C: holds Windows. If a database fills it, the whole server can become unstable. It is usually also the smallest and slowest disk."
@@ -702,13 +700,15 @@ func (b *storageBuild) sto04() {
 			"Raise or remove the limit (check disk space first): "+alterFile(x.Database, x.LogicalName, "MAXSIZE = UNLIMITED"),
 			fmt.Sprintf("Size: %d MB, max: %d MB.", x.SizeMB, maxMB))
 	}
-	if b.f.EngineEdition == 4 && dataMB >= 8192 {
+	if limit := ExpressLimitMB(b.f.EngineVersion); b.f.EngineEdition == 4 && dataMB*10 >= limit*8 {
 		rank := 3
-		if dataMB >= 9216 {
+		if dataMB*10 >= limit*9 {
 			rank = 2
 		}
-		b.add("STO04", rank, "Planned", EffortProject, b.f.Database, sto04Express, sto04WhyExp, sto04DoExp,
-			fmt.Sprintf("Data size: %d MB.", dataMB))
+		gb := limit / 1024
+		b.add("STO04", rank, "Planned", EffortProject, b.f.Database, sto04ExpressFinding(gb),
+			fmt.Sprintf("Express databases cannot grow past %d GB of data. When the limit is reached, inserts fail and the application stops.", gb),
+			sto04DoExp, fmt.Sprintf("Data size: %d MB of the %d MB limit.", dataMB, limit))
 	}
 }
 
@@ -1001,6 +1001,21 @@ func (f StorageFacts) tempdbData() []StorageFile {
 		}
 	}
 	return out
+}
+
+// ExpressLimitMB is the most data one Express database may hold: 10 GB up to SQL Server 2022, 50 GB
+// from SQL Server 2025 (Microsoft Learn, "Editions and supported features of SQL Server 2025": maximum
+// relational database size; "What's new in SQL Server 2025"). The log does not count.
+func ExpressLimitMB(productVersion string) int64 {
+	if EngineMajor(productVersion) >= 17 {
+		return 50 * 1024
+	}
+	return 10 * 1024
+}
+
+// sto04ExpressFinding is STO04's sentence for an Express database near its limit.
+func sto04ExpressFinding(gb int64) string {
+	return fmt.Sprintf("Database is close to the %d GB limit of SQL Server Express.", gb)
 }
 
 // sqlCPUs are the CPUs TempDB's file count follows: the ones SQL Server may use, which on Express
@@ -1609,15 +1624,17 @@ func (b *storageBuild) sizeMB() float64 {
 }
 
 // greenVerdict, the room left: "{db} is {size} on {volume}, which has {free} free." On Express the
-// size is said against the 10 GB a database may hold, which runs out before the disk does.
+// size is said against the data an Express database may hold (ExpressLimitMB), which runs out before
+// the disk does.
 func (b *storageBuild) greenVerdict() string {
 	size := n1(b.sizeMB()/1024) + " GB"
+	limit := ExpressLimitMB(b.f.EngineVersion) / 1024
 	v, ok := b.f.dataVolume()
 	switch {
 	case b.f.EngineEdition == 4 && ok:
-		return fmt.Sprintf("%s is %s of the 10 GB SQL Server Express allows; %s has %s GB free.", b.f.Database, size, v.Name, n0int(v.FreeMB/1024))
+		return fmt.Sprintf("%s is %s of the %d GB SQL Server Express allows; %s has %s GB free.", b.f.Database, size, limit, v.Name, n0int(v.FreeMB/1024))
 	case b.f.EngineEdition == 4:
-		return fmt.Sprintf("%s is %s of the 10 GB SQL Server Express allows.", b.f.Database, size)
+		return fmt.Sprintf("%s is %s of the %d GB SQL Server Express allows.", b.f.Database, size, limit)
 	case !ok:
 		return fmt.Sprintf("%s is %s.", b.f.Database, size)
 	}
@@ -1680,8 +1697,8 @@ func (b *storageBuild) facts() []Fact {
 				size.Value += ", " + n1(float64(used)/1024) + " GB used"
 			}
 			if f.EngineEdition == 4 {
-				// Express stops a database at 10 GB of data (STO04 says so from 8 GB).
-				size.Value += " of Express's 10 GB"
+				// Express stops a database at its limit (STO04 says so from 80% of it).
+				size.Value += fmt.Sprintf(" of Express's %d GB", ExpressLimitMB(f.EngineVersion)/1024)
 				size.Tone = worstTone(b.all("STO04"))
 			}
 		}

@@ -20,10 +20,18 @@ export function ExpressBadge({ className }: { className?: string }) {
   )
 }
 
+// The most data one Express database may hold: 50 GB from SQL Server 2025 (major version 17), 10 GB
+// before (Microsoft Learn, "Editions and supported features of SQL Server 2025"; the Go side's
+// domain.ExpressLimitMB). An unknown version says 10 GB, the stricter.
+export function expressLimitGB(version: string | null | undefined): number {
+  const major = parseInt((version ?? "").split(".")[0], 10)
+  return major >= 17 ? 50 : 10
+}
+
 // The limits that shape the advice (Microsoft Learn, "Editions and supported features of SQL Server":
 // compute capacity, maximum memory for the buffer pool, maximum relational database size; and no SQL
 // Server Agent in Express).
-export function ExpressNotice() {
+export function ExpressNotice({ version }: { version?: string | null }) {
   return (
     <div role="note" className={cn("grid gap-1 rounded-md border px-3 py-2 text-sm", amber)}>
       <div className="flex items-center gap-1.5 font-medium">
@@ -31,9 +39,9 @@ export function ExpressNotice() {
         This is SQL Server Express, the free edition
       </div>
       <ul className="grid gap-0.5 pl-6 list-disc">
-        <li>Each database stops at 10 GB of data (the log does not count): inserts fail at the limit.</li>
+        <li>Each database stops at {expressLimitGB(version)} GB of data (the log does not count): inserts fail at the limit.</li>
         <li>It uses at most one CPU socket or four cores, whichever is less, and 1.4 GB of memory for data.</li>
-        <li>It has no SQL Server Agent, so backups and maintenance cannot be scheduled on the server itself.</li>
+        <li>It has no SQL Server Agent, so backups and maintenance cannot be scheduled on the server itself: the Upkeep card's maintenance procedure does it instead, called by Windows Task Scheduler.</li>
       </ul>
     </div>
   )
