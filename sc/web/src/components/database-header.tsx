@@ -1,6 +1,7 @@
 import { Loader2, RotateCw } from "lucide-react"
 
 import type { InstanceInfo } from "@/api"
+import { ExpressNotice, isExpress } from "@/components/express-notice"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatAgo, formatWhen, shortEdition } from "@/lib/format"
@@ -52,6 +53,7 @@ export function DatabaseHeader({
             loading && <Skeleton className="h-4 w-64 max-w-full" />
           )}
         </div>
+        {isExpress(instance?.edition) && <ExpressNotice />}
       </div>
       <Button variant="outline" onClick={onRefresh} disabled={loading}>
         {loading ? <Loader2 className="animate-spin" /> : <RotateCw />}

@@ -2,6 +2,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { ChevronRight, Database, Loader2, Plus, XCircle } from "lucide-react"
 
 import { type Server } from "@/api"
+import { ExpressBadge, isExpress } from "@/components/express-notice"
 import { PageShell } from "@/components/page-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -90,6 +91,7 @@ function ServerTile({ server }: { server: Server }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-0.5 text-muted-foreground">
+          {isExpress(server.lastEdition) && <ExpressBadge className="mb-1" />}
           {server.lastEdition || server.lastVersion ? (
             <div>
               {[server.lastEdition, server.lastVersion && `build ${server.lastVersion}`].filter(Boolean).join(", ")}

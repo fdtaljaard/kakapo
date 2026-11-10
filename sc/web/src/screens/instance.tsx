@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from "react-route
 import { ArrowRight, ChevronRight, Loader2, Pencil, RotateCw, XCircle } from "lucide-react"
 
 import { api, type DatabaseStatus, type Server } from "@/api"
+import { ExpressNotice, isExpress } from "@/components/express-notice"
 import { InstalledHelpers } from "@/components/installed-helpers"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
@@ -88,6 +89,7 @@ function InstanceHeader({ server }: { server: Server }) {
           <span>{server.lastTestedAt ? `last tested ${formatWhen(server.lastTestedAt)}` : "never tested"}</span>
         </div>
         {build && <div className="text-sm text-muted-foreground">{build}</div>}
+        {isExpress(server.lastEdition) && <ExpressNotice />}
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" asChild>
