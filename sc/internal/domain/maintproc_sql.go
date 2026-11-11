@@ -276,7 +276,10 @@ BEGIN
                    N'/* kakapo */' + NCHAR(10)
                    + N'DECLARE @oldest datetime = DATEADD(DAY, -' + CONVERT(nvarchar(10), @historyDays) + N', GETDATE());' + NCHAR(10)
                    + N'EXEC msdb.dbo.sp_delete_backuphistory @oldest_date = @oldest;' + NCHAR(10)
-                   + N'IF OBJECT_ID(N''msdb.dbo.sp_purge_jobhistory'', N''P'') IS NOT NULL EXEC msdb.dbo.sp_purge_jobhistory @oldest_date = @oldest;' + NCHAR(10)
+                   /* The job history directly: msdb.dbo.sp_purge_jobhistory checks the caller's role itself and refuses
+                      the certificate's sysadmin (error 14392), where sp_delete_backuphistory accepts it. */
+                   + N'IF OBJECT_ID(N''msdb.dbo.sysjobhistory'', N''U'') IS NOT NULL DELETE FROM msdb.dbo.sysjobhistory '
+                   + N'WHERE run_date < CONVERT(int, CONVERT(char(8), @oldest, 112));' + NCHAR(10)
                    + N'IF OBJECT_ID(N''master.dbo.CommandLog'', N''U'') IS NOT NULL DELETE FROM master.dbo.CommandLog WHERE StartTime < @oldest;' + NCHAR(10)
                    + N'DELETE FROM master.dbo.kakapo_MaintenanceLog WHERE StartTime < @oldest;';
 
@@ -407,25 +410,91 @@ func MaintSettingsUpsert(s MaintSettings) string {
 // maintUseMaster starts every script: the procedure must be created in master.
 const maintUseMaster = "USE master;"
 
+// The procedure is signed with a certificate so that the scheduled task can run as NT AUTHORITY\SYSTEM,
+// which is not sysadmin, with EXECUTE on this one procedure and nothing else. The certificate's login
+// is sysadmin; while the signed procedure runs, the caller's security context carries that login's
+// token, its dynamic SQL included. The private key is removed after signing, so nothing else can ever
+// be signed with it; every re-apply (ALTER PROCEDURE drops the signature) makes a new certificate.
+//
+// Sources: Erland Sommarskog, "Packaging Permissions in Stored Procedures"
+// (https://www.sommarskog.se/grantperm.html), the certificate, its login, ADD SIGNATURE and REMOVE
+// PRIVATE KEY; Microsoft Learn, "Module signing (Database Engine)" and "ADD SIGNATURE (Transact-SQL)".
+const (
+	MaintCertName       = "kakapo_MaintenanceCert"
+	MaintCertLogin      = "kakapo_MaintenanceLogin"
+	MaintSchedulerLogin = `NT AUTHORITY\SYSTEM`
+)
+
+// maintSignBatch signs the procedure: the old signature, login and certificate dropped, a new
+// certificate with a throwaway password, a login from it in sysadmin, the signature, the private key
+// removed. One transaction: a half-made signing (a sysadmin login with no signature) never stays.
+const maintSignBatch = `/* kakapo */
+/* Sign kakapo_Maintenance (module signing: Erland Sommarskog, "Packaging Permissions in Stored Procedures";
+   Microsoft Learn, "Module signing"). The certificate's login is sysadmin, because every task reaches other
+   databases, msdb and xp_delete_file; the private key is removed, so nothing else can be signed with it. */
+SET XACT_ABORT ON;
+DECLARE @pw nvarchar(80) = CONVERT(nvarchar(36), NEWID()) + LOWER(CONVERT(nvarchar(36), NEWID())), @sql nvarchar(max);
+BEGIN TRANSACTION;
+IF EXISTS (SELECT 1 FROM sys.crypt_properties AS cp JOIN sys.certificates AS c ON c.thumbprint = cp.thumbprint
+           WHERE cp.class = 1 AND cp.major_id = OBJECT_ID(N'dbo.kakapo_Maintenance') AND c.name = N'kakapo_MaintenanceCert')
+    DROP SIGNATURE FROM dbo.kakapo_Maintenance BY CERTIFICATE [kakapo_MaintenanceCert];
+IF SUSER_ID(N'kakapo_MaintenanceLogin') IS NOT NULL DROP LOGIN [kakapo_MaintenanceLogin];
+IF CERT_ID(N'kakapo_MaintenanceCert') IS NOT NULL DROP CERTIFICATE [kakapo_MaintenanceCert];
+SET @sql = N'CREATE CERTIFICATE [kakapo_MaintenanceCert] ENCRYPTION BY PASSWORD = ''' + @pw + N''''
+         + N' WITH SUBJECT = N''kakapo: signs master.dbo.kakapo_Maintenance'', EXPIRY_DATE = ''99991231'';';
+EXEC (@sql);
+CREATE LOGIN [kakapo_MaintenanceLogin] FROM CERTIFICATE [kakapo_MaintenanceCert];
+ALTER SERVER ROLE [sysadmin] ADD MEMBER [kakapo_MaintenanceLogin];
+SET @sql = N'ADD SIGNATURE TO dbo.kakapo_Maintenance BY CERTIFICATE [kakapo_MaintenanceCert] WITH PASSWORD = ''' + @pw + N''';';
+EXEC (@sql);
+ALTER CERTIFICATE [kakapo_MaintenanceCert] REMOVE PRIVATE KEY;
+COMMIT;`
+
+// maintSchedulerBatch lets the scheduled task's account (SYSTEM) execute the procedure and nothing
+// more: its master user, made (and marked as kakapo's) when there is none, and EXECUTE on the procedure.
+const maintSchedulerBatch = `/* kakapo */
+/* The scheduled task runs as NT AUTHORITY\SYSTEM: it may EXECUTE kakapo_Maintenance and nothing else. */
+DECLARE @user sysname = (SELECT dp.name FROM sys.database_principals AS dp WHERE dp.sid = SUSER_SID(N'NT AUTHORITY\SYSTEM')), @sql nvarchar(400);
+IF SUSER_SID(N'NT AUTHORITY\SYSTEM') IS NOT NULL
+BEGIN
+    IF @user IS NULL
+    BEGIN
+        CREATE USER [NT AUTHORITY\SYSTEM] FOR LOGIN [NT AUTHORITY\SYSTEM];
+        EXEC sys.sp_addextendedproperty @name = N'kakapo', @value = N'created by kakapo for kakapo_Maintenance',
+             @level0type = N'USER', @level0name = N'NT AUTHORITY\SYSTEM';
+        SET @user = N'NT AUTHORITY\SYSTEM';
+    END;
+    SET @sql = N'GRANT EXECUTE ON dbo.kakapo_Maintenance TO ' + QUOTENAME(@user) + N';';
+    EXEC (@sql);
+END;`
+
 // MaintInstallStatement is install-maintenance-proc's statement, in batches separated by GO (the
 // service runs them one by one on one connection; sqlcmd and SSMS run the same text): master, the
 // tables, the log's index, the procedure (created as a stub, then altered: it is updated in place when
-// it is there), then each settings row.
+// it is there), its signature, SYSTEM's EXECUTE, then each settings row.
 func MaintInstallStatement(compress bool, rows ...MaintSettings) string {
-	batches := []string{maintUseMaster, maintTablesBatch, maintIndexBatch, maintStubBatch, MaintProcSQL(compress)}
+	batches := []string{maintUseMaster, maintTablesBatch, maintIndexBatch, maintStubBatch, MaintProcSQL(compress), maintSignBatch, maintSchedulerBatch}
 	for _, s := range rows {
 		batches = append(batches, MaintSettingsUpsert(s))
 	}
 	return JoinBatches(batches)
 }
 
-// MaintDropStatement drops the procedure and both tables (the log with them): remove-maintenance-proc's
-// statement, and the rollback of a first install.
+// MaintDropStatement drops the procedure (its signature and SYSTEM's EXECUTE with it) and both tables
+// (the log with them), the certificate's login and the certificate, and SYSTEM's master user when kakapo
+// made it: remove-maintenance-proc's statement, and the rollback of a first install.
 func MaintDropStatement() string {
 	return JoinBatches([]string{maintUseMaster, "/* kakapo */\n" +
 		"IF OBJECT_ID(N'dbo.kakapo_Maintenance', N'P') IS NOT NULL DROP PROCEDURE dbo.kakapo_Maintenance;\n" +
 		"IF OBJECT_ID(N'dbo.kakapo_MaintenanceLog', N'U') IS NOT NULL DROP TABLE dbo.kakapo_MaintenanceLog;\n" +
-		"IF OBJECT_ID(N'dbo.kakapo_MaintenanceSettings', N'U') IS NOT NULL DROP TABLE dbo.kakapo_MaintenanceSettings;"})
+		"IF OBJECT_ID(N'dbo.kakapo_MaintenanceSettings', N'U') IS NOT NULL DROP TABLE dbo.kakapo_MaintenanceSettings;\n" +
+		"IF SUSER_ID(N'kakapo_MaintenanceLogin') IS NOT NULL DROP LOGIN [kakapo_MaintenanceLogin];\n" +
+		"IF CERT_ID(N'kakapo_MaintenanceCert') IS NOT NULL DROP CERTIFICATE [kakapo_MaintenanceCert];\n" +
+		"DECLARE @user sysname = (SELECT dp.name FROM sys.database_principals AS dp\n" +
+		"    JOIN sys.extended_properties AS ep ON ep.class = 4 AND ep.major_id = dp.principal_id AND ep.name = N'kakapo'\n" +
+		"    WHERE dp.sid = SUSER_SID(N'NT AUTHORITY\\SYSTEM')), @sql nvarchar(400);\n" +
+		"SET @sql = N'DROP USER ' + QUOTENAME(@user) + N';';\n" +
+		"IF @user IS NOT NULL EXEC (@sql);"})
 }
 
 // MaintDeleteRowStatement deletes one database's settings row: the procedure stops serving it, its log

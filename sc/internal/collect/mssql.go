@@ -22,7 +22,7 @@ func ConnString(in domain.ServerInput) string {
 
 	parts := []string{
 		"server=" + adoValue(host),
-		"app name=SQLMonitor",
+		"app name=" + domain.BlockingAppName,
 		"dial timeout=10",
 		// No socket deadline: go-mssqldb applies "connection timeout" to every read and write, so a
 		// statement that sends nothing for that long (a CHECKDB, an index build) dies with an i/o

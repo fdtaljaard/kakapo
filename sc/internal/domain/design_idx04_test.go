@@ -59,7 +59,7 @@ func TestIDX04Catalogue(t *testing.T) {
 		c.ThenCheck != "Re-run: IDX04 gone for that table; the keeper's reads went up by what the copy had." {
 		t.Errorf("IDX04 %+v", c)
 	}
-	if checks := ChecksFor(CardDesign); len(checks) != 2 || checks[0].ID != "IDX14" || checks[1].ID != "IDX04" {
+	if checks := ChecksFor(CardDesign); len(checks) != 3 || checks[0].ID != "IDX14" || checks[1].ID != "IDX04" || checks[2].ID != "DES01" {
 		t.Errorf("design checks %+v", checks)
 	}
 	if d, ok := FindFixDef(FixDisableIndex); !ok || d.Title != "Disable a duplicate index" || d.Scope != ScopeDatabase || d.CheckID != "IDX04" ||

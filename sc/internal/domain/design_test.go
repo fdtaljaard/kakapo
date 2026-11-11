@@ -35,7 +35,7 @@ func TestDesignCatalogueAndDef(t *testing.T) {
 		t.Errorf("IDX14 %+v", c)
 	}
 	if designDef.Question != "Does the way it is built cost you anything?" ||
-		designDef.Note != "Foreign keys without an index and duplicate indexes, and later unused indexes and constraints SQL Server no longer trusts." {
+		designDef.Note != "Foreign keys without an index, duplicate indexes and tables without a primary key, and later unused indexes and constraints SQL Server no longer trusts." {
 		t.Errorf("design def %+v", designDef)
 	}
 	if def, _ := FindFixDef(FixCreateIndex); def.CheckID != "WRK03" {
@@ -70,7 +70,7 @@ func TestIDX14Fires(t *testing.T) {
 		c.ToDo != 1 || c.Fixable != 1 {
 		t.Errorf("card %+v", c)
 	}
-	if len(checks) != 2 || checks[0].CheckID != "IDX14" || checks[0].Status != CheckFinding || checks[1].CheckID != "IDX04" || checks[1].Status != CheckPassed {
+	if len(checks) != 3 || checks[0].CheckID != "IDX14" || checks[0].Status != CheckFinding || checks[1].CheckID != "IDX04" || checks[1].Status != CheckPassed {
 		t.Errorf("checks %+v", checks)
 	}
 	if c.Facts[1] != (Fact{Label: "Costing work now", Value: "1", Tone: ToneBad}) {
@@ -161,7 +161,7 @@ func TestDesignVerdicts(t *testing.T) {
 		t.Errorf("no finding %+v", c)
 	}
 	wantFacts := []Fact{{"Foreign keys", "39, 2 without an index", ToneNormal}, {"Costing work now", "0", ToneNormal},
-		{"Duplicate indexes", "none", ToneNormal}, {"Counted since", "the restart on 1 Oct", ToneNormal}, {"Tables", "95", ToneNormal}}
+		{"Duplicate indexes", "none", ToneNormal}, {"No primary key", "none", ToneNormal}, {"Counted since", "the restart on 1 Oct", ToneNormal}, {"Tables", "95", ToneNormal}}
 	for i, x := range wantFacts {
 		if c.Facts[i] != x {
 			t.Errorf("fact %d %+v, want %+v", i, c.Facts[i], x)
@@ -199,7 +199,7 @@ func TestDesignVerdicts(t *testing.T) {
 	f.LastRestore = &restore
 	c, _, _ = dbuild(f)
 	if c.Verdict != "Too early to tell which foreign keys cost work: deletes counted for 3 days, since the restore on 5 Nov. 2 foreign keys on large tables have no index." ||
-		c.Facts[3].Value != "the restore on 5 Nov" {
+		c.Facts[4].Value != "the restore on 5 Nov" {
 		t.Errorf("too early (restore) %q %+v", c.Verdict, c.Facts)
 	}
 	// A database created this morning: the creation is the window.
@@ -320,7 +320,7 @@ func TestDesignDetailJSON(t *testing.T) {
 func TestBuildCardsDesign(t *testing.T) {
 	f := dfacts()
 	cards := BuildCards(nil, nil, nil, nil, nil, nil, &f)
-	if cards[5].ID != CardDesign || cards[5].Status != StatusGreen || len(cards[5].Facts) != 5 {
+	if cards[5].ID != CardDesign || cards[5].Status != StatusGreen || len(cards[5].Facts) != 6 {
 		t.Errorf("design card %+v", cards[5])
 	}
 	if cards := BuildCards(nil, nil, nil, nil, nil, nil, nil); cards[5].Status != StatusGrey || cards[5].StatusText != "Not checked yet" {

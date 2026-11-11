@@ -60,7 +60,7 @@ var CardDefs = []CardDef{
 	// Phase 5n (docs/phase5n-contract.md, section 1): design review answers whether the way the database
 	// is built costs anything; the note shows only while the card is grey.
 	{CardDesign, "Database design", "Does the way it is built cost you anything?",
-		"Foreign keys without an index and duplicate indexes, and later unused indexes and constraints SQL Server no longer trusts."},
+		"Foreign keys without an index, duplicate indexes and tables without a primary key, and later unused indexes and constraints SQL Server no longer trusts."},
 }
 
 // Fact is one labelled value on a card.

@@ -17,7 +17,7 @@ func TestConnString(t *testing.T) {
 		{
 			name: "named instance, windows auth",
 			in:   domain.ServerInput{Host: `CLIENTSQL01\WMS`, Auth: domain.AuthWindows},
-			want: []string{"odbc:server={CLIENTSQL01\\WMS}", "encrypt=false", "app name=SQLMonitor"},
+			want: []string{"odbc:server={CLIENTSQL01\\WMS}", "encrypt=false", "app name=kakapo"},
 			not:  []string{"user id", "password", "port="},
 		},
 		{

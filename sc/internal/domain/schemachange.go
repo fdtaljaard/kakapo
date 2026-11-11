@@ -31,10 +31,6 @@ const (
 	traceFirstUserDatabase = 5
 )
 
-// KakapoProgram is the application name kakapo connects with (collect/mssql.go): its own changes
-// are already in the log as fixes.
-const KakapoProgram = "SQLMonitor"
-
 // ObjectType codes (Microsoft, "ObjectType Trace Event Column").
 const (
 	objTypeProcedure      = 8272
@@ -128,7 +124,7 @@ type SchemaChangeFact struct {
 // mapped object type, not by kakapo; an index created or dropped (its alters are the nightly rebuild
 // and reorganise); the database only altered (ALTER DATABASE, a setting).
 func (x SchemaChangeFact) kept() bool {
-	if x.SubClass != traceSubclassCommit || x.DatabaseID < traceFirstUserDatabase || strings.EqualFold(strings.TrimSpace(x.Program), KakapoProgram) {
+	if x.SubClass != traceSubclassCommit || x.DatabaseID < traceFirstUserDatabase || IsKakapoProgram(x.Program) {
 		return false
 	}
 	if _, ok := schemaObjectTypes[x.ObjectType]; !ok {

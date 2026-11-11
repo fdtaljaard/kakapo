@@ -37,6 +37,7 @@ import { twoWaysChoices } from "@/lib/two-ways"
 import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
 import { StorageDrivesBlock } from "@/components/room-line"
 import { ForeignKeysFold } from "@/components/foreign-keys-fold"
+import { NoKeyTablesFold } from "@/components/no-key-tables-fold"
 
 // "/instances/:id/databases/:db/cards/:card": the frame of one card (title, question, status, verdict)
 // and what sits behind it, for one database (docs/phase3a-contract.md). The card detail is read on load
@@ -223,8 +224,12 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                   </FindingContext.Provider>
                 </>
               ) : cardId === "design" ? (
-                // Phase 5n: the keys that would cost work if rows were deleted (docs/phase5n-contract.md).
-                detail.foreignKeys && <ForeignKeysFold fold={detail.foreignKeys} />
+                // Phase 5n: the keys that would cost work if rows were deleted (docs/phase5n-contract.md); phase 5s:
+                // the smaller tables without a primary key.
+                <>
+                  {detail.foreignKeys && <ForeignKeysFold fold={detail.foreignKeys} />}
+                  {detail.noKeyTables && <NoKeyTablesFold fold={detail.noKeyTables} />}
+                </>
               ) : cardId === "upkeep" ? (
                 // Phase 5b: the maintenance plan row (docs/phase5b-contract.md).
                 <MaintenancePlanRow

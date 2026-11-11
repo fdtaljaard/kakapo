@@ -41,6 +41,36 @@ BEGIN CATCH
     SET @procErr = ERROR_MESSAGE();
 END CATCH;
 
+/* The signature (phase 5p): the certificate, whether it signs the procedure and still has its private key,
+   its login and whether that is sysadmin; SYSTEM's login, its master user (kakapo's or not) and its EXECUTE */
+DECLARE @certExists bit = 0, @certKey bit = 0, @signed bit = 0, @certLogin bit = 0, @certSysadmin bit = 0,
+        @systemLogin bit = 0, @systemUser bit = 0, @systemUserOurs bit = 0, @systemExecute bit = 0, @signErr nvarchar(2048);
+BEGIN TRY
+    SELECT @certExists = 1, @certKey = CASE WHEN c.pvt_key_encryption_type = 'NA' THEN 0 ELSE 1 END,
+           @signed = CASE WHEN EXISTS (SELECT 1 FROM master.sys.crypt_properties AS cp
+                                       WHERE cp.class = 1 AND cp.major_id = OBJECT_ID(N'master.dbo.kakapo_Maintenance', N'P')
+                                         AND cp.thumbprint = c.thumbprint) THEN 1 ELSE 0 END
+    FROM master.sys.certificates AS c WHERE c.name = N'kakapo_MaintenanceCert';
+    /* From the role's members: IS_SRVROLEMEMBER does not answer for a login made from a certificate */
+    SELECT @certLogin = 1,
+           @certSysadmin = CASE WHEN EXISTS (SELECT 1 FROM sys.server_role_members AS rm
+                                             JOIN sys.server_principals AS r ON r.principal_id = rm.role_principal_id AND r.name = N'sysadmin'
+                                             WHERE rm.member_principal_id = p.principal_id) THEN 1 ELSE 0 END
+    FROM sys.server_principals AS p WHERE p.name = N'kakapo_MaintenanceLogin' AND p.type = 'C';
+    SET @systemLogin = CASE WHEN SUSER_SID(N'NT AUTHORITY\SYSTEM') IS NOT NULL THEN 1 ELSE 0 END;
+    SELECT @systemUser = 1,
+           @systemUserOurs = CASE WHEN EXISTS (SELECT 1 FROM master.sys.extended_properties AS ep
+                                               WHERE ep.class = 4 AND ep.major_id = dp.principal_id AND ep.name = N'kakapo') THEN 1 ELSE 0 END,
+           @systemExecute = CASE WHEN EXISTS (SELECT 1 FROM master.sys.database_permissions AS pe
+                                              WHERE pe.grantee_principal_id = dp.principal_id AND pe.class = 1
+                                                AND pe.major_id = OBJECT_ID(N'master.dbo.kakapo_Maintenance', N'P')
+                                                AND pe.type = 'EX' AND pe.state IN ('G', 'W')) THEN 1 ELSE 0 END
+    FROM master.sys.database_principals AS dp WHERE dp.sid = SUSER_SID(N'NT AUTHORITY\SYSTEM');
+END TRY
+BEGIN CATCH
+    SET @signErr = ERROR_MESSAGE();
+END CATCH;
+
 /* The instance's default backup folder, which the preview suggests; NULL when refused */
 DECLARE @backupDir nvarchar(4000);
 DECLARE @reg TABLE (value nvarchar(400) NULL, data nvarchar(4000) NULL);
@@ -88,6 +118,7 @@ END CATCH;
 SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)), CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
        CONVERT(int, SERVERPROPERTY('EngineEdition')), CAST(SERVERPROPERTY('Edition') AS nvarchar(128)), GETDATE(), @recovery, @backupDir,
        @procExists, @header, @settingsExists, @logExists, @procErr, @tablesErr,
+       @certExists, @certKey, @signed, @certLogin, @certSysadmin, @systemLogin, @systemUser, @systemUserOurs, @systemExecute, @signErr,
        CAST(CASE WHEN OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NOT NULL AND OBJECT_ID(N'master.dbo.DatabaseBackup', N'P') IS NOT NULL THEN 1 ELSE 0 END AS bit),
        CAST(CASE WHEN OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NOT NULL AND OBJECT_ID(N'master.dbo.DatabaseIntegrityCheck', N'P') IS NOT NULL THEN 1 ELSE 0 END AS bit),
        CAST(CASE WHEN OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NOT NULL AND OBJECT_ID(N'master.dbo.IndexOptimize', N'P') IS NOT NULL THEN 1 ELSE 0 END AS bit);
@@ -136,9 +167,14 @@ func ReadMaintProc(ctx context.Context, db *sql.DB, database string) (domain.Mai
 		edition                                       sql.NullString
 		now                                           time.Time
 		recovery, backupDir, header, procErr, tablErr sql.NullString
+		signErr                                       sql.NullString
 	)
+	s := &f.Signing
 	if err := rows.Scan(&f.ServerName, &f.ProductVersion, &f.EngineEdition, &edition, &now, &recovery, &backupDir,
-		&f.ProcExists, &header, &f.SettingsExists, &f.LogExists, &procErr, &tablErr, &f.OlaBackup, &f.OlaCheck, &f.OlaIndex); err != nil {
+		&f.ProcExists, &header, &f.SettingsExists, &f.LogExists, &procErr, &tablErr,
+		&s.CertExists, &s.CertPrivateKey, &s.Signed, &s.CertLogin, &s.CertSysadmin, &s.SchedulerLogin, &s.SchedulerUser, &s.SchedulerUserOurs,
+		&s.SchedulerExecute, &signErr,
+		&f.OlaBackup, &f.OlaCheck, &f.OlaIndex); err != nil {
 		return f, fmt.Errorf("read kakapo's maintenance procedure: %w", err)
 	}
 	f.Edition, f.ServerNow, f.RecoveryModel, f.DefaultBackupDir = edition.String, naive(now), recovery.String, backupDir.String
@@ -149,6 +185,9 @@ func ReadMaintProc(ctx context.Context, db *sql.DB, database string) (domain.Mai
 	}
 	if tablErr.String != "" {
 		errs = append(errs, "its tables ("+tablErr.String+")")
+	}
+	if signErr.String != "" {
+		errs = append(errs, "its signature ("+signErr.String+")")
 	}
 	if len(errs) > 0 {
 		f.Error = "could not read " + strings.Join(errs, "; ")

@@ -219,7 +219,7 @@ BEGIN TRY
         CROSS APPLY (SELECT CASE
             WHEN x.StartTime >= DATEADD(DAY, -7, GETDATE()) AND x.EventClass IN (22, 92, 93, 94, 95, 116) THEN 1
             WHEN x.EventClass IN (46, 47, 164) AND x.EventSubClass = 1 AND x.DatabaseID > 4
-                 AND ISNULL(x.ApplicationName, N'') <> N'SQLMonitor'
+                 AND ISNULL(x.ApplicationName, N'') NOT IN (N'kakapo', N'SQLMonitor')
                  AND x.ObjectType IN (` + schemaObjectTypeList + `)
                  AND NOT (x.EventClass = 164 AND x.ObjectType = 22601)
                  AND (x.ObjectType <> 16964 OR x.EventClass = 164) THEN 2

@@ -1,4 +1,4 @@
-// Package domain holds the model of SQLMonitor and the rules that need no I/O.
+// Package domain holds the model of kakapo and the rules that need no I/O.
 package domain
 
 import (

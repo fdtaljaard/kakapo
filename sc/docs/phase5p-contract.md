@@ -33,7 +33,40 @@ pattern, listed under Installed helpers, and taken away by a remove fix.
 |---|---|
 | `dbo.kakapo_MaintenanceSettings` | One row per database: the backup folder, backup retention (days), the full-backup time, log minutes, the integrity-check day and time, the statistics time, index work on or off, the cleanup day and time, how many days of history to keep, and `Enabled`. |
 | `dbo.kakapo_MaintenanceLog` | One row per task run: database, task, started, ended, outcome (`OK` / `Failed` / `Skipped`), error number and message, the command, and the file for a backup. This is what kakapo reads to show what ran. It is also where the planned nightly summary email (`docs/nightly-summary-email.md`) would read last night's results. |
-| `dbo.kakapo_Maintenance` | The procedure. |
+| `dbo.kakapo_Maintenance` | The procedure, signed by the certificate below. |
+| Certificate `kakapo_MaintenanceCert` | Signs the procedure. Made with a throwaway password; its private key is removed after signing, so nothing else can ever be signed with it. A new one at every apply. |
+| Login `kakapo_MaintenanceLogin` | Made from the certificate, in `sysadmin`. Nobody can log in with it: it only lends its rights to the signed procedure while it runs. |
+| Master user for `NT AUTHORITY\SYSTEM` | Made (and marked as kakapo's with an extended property) only when SYSTEM has none; it gets `EXECUTE` on the procedure and nothing else. |
+
+## Signing: the scheduled task runs as SYSTEM, which is not sysadmin (added 2026-11-10)
+
+The Task Scheduler command runs `sqlcmd -E` as `NT AUTHORITY\SYSTEM`. SYSTEM has not been sysadmin since SQL
+Server 2012, so a call as SYSTEM could not back up, check or read another database. The procedure is
+therefore **signed with a certificate** whose login is sysadmin, and SYSTEM is given `EXECUTE` on the
+procedure only. While the signed procedure runs, the caller's security context carries the certificate
+login's token, so the procedure (and its dynamic SQL) has sysadmin's rights and the caller has none.
+
+Sources: Erland Sommarskog, "Packaging Permissions in Stored Procedures" (https://www.sommarskog.se/grantperm.html):
+the certificate, the login from it, `ADD SIGNATURE`, and `ALTER CERTIFICATE ... REMOVE PRIVATE KEY`; Microsoft
+Learn, "Module signing (Database Engine)" and "ADD SIGNATURE (Transact-SQL)".
+
+- **Why sysadmin.** Every task reaches other databases (BACKUP, DBCC CHECKDB, statistics), msdb (the history
+  cleanup) and `xp_create_subdir` / `xp_delete_file`, which only sysadmin may run together.
+- **Re-applying.** `ALTER PROCEDURE` drops the signature, and with its private key gone the old certificate
+  cannot sign again. So every apply drops the old signature, login and certificate and makes new ones, in
+  one transaction, so a sysadmin login without a signature never stays.
+- **Nested calls, proven live as SYSTEM** (a signed probe, then the procedure itself, on SQL Server 2022 and
+  2025 Express): `xp_create_subdir`, `BACKUP DATABASE`, `BACKUP LOG`, `RESTORE VERIFYONLY`, `xp_delete_file`,
+  `sp_updatestats`, `DBCC CHECKDB`, `msdb.dbo.sp_delete_backuphistory`, `sp_getapplock`, and reads of msdb
+  and `sys.database_recovery_status` all carry the certificate's token. **`msdb.dbo.sp_purge_jobhistory`
+  does not:** it checks the caller's role itself and refuses (error 14392). The cleanup therefore deletes the
+  old rows of `msdb.dbo.sysjobhistory` itself, in the signed procedure's dynamic SQL, instead of calling it.
+  Ola Hallengren's procedures were not there to prove: unproven.
+- **What SYSTEM can do**, proven as SYSTEM: execute the procedure. A plain `BACKUP`, `DBCC CHECKDB`, reading
+  the database, `xp_delete_file`, reading the procedure's log, changing its settings and altering the
+  procedure are all refused.
+- **A procedure changed by hand** loses its signature: the read-back, the plan row and the Installed
+  helpers row say it is not ready for the scheduled task, and applying the fix again signs it anew.
 
 ## What the procedure does on each call
 
@@ -91,19 +124,24 @@ Rules:
      schtasks /Create /TN "kakapo maintenance" /SC MINUTE /MO 15 /RU SYSTEM /TR "sqlcmd -S {server} -E -b -Q \"EXEC master.dbo.kakapo_Maintenance\""
      ```
 
-     It adds that the account that runs it needs to be sysadmin, or db_owner of each database (for backup,
-     CHECKDB and statistics).
+     It adds that the task runs as `NT AUTHORITY\SYSTEM`, which may EXECUTE this one procedure and nothing
+     else (see Signing). When SYSTEM has no login on the server, a warning says so: the task could not connect.
   2. In FULL recovery, call it every 15 minutes, or the log is backed up less often.
   3. The backup folder must let the SQL Server service account write.
   4. Express cannot compress backups.
   5. The free-space warning before a change that uses space (5l), for the backups.
-  6. The permission needed: sysadmin.
+  6. The signature: the procedure runs with a certificate login that is sysadmin, whose private key is
+     gone; changing the procedure by hand removes the signature, and applying again signs it anew.
+  7. The permission needed: sysadmin.
+- Two more changes rows: **Signature** (a new certificate, its login in sysadmin) and **`NT AUTHORITY\SYSTEM`
+  in master** (EXECUTE on the procedure only).
 - It blocks when:
   - the folder is missing;
   - a `kakapo_Maintenance` exists that kakapo did not create;
   - an option is bad.
 
-**Statement.** The CREATE TABLE and CREATE PROCEDURE batches, then the settings row. On a server where it
+**Statement.** The CREATE TABLE and CREATE PROCEDURE batches, the signing batch, SYSTEM's EXECUTE, then the
+settings row. On a server where it
 is already installed, the same fix updates the procedure in place and upserts this database's settings row:
 adding a second database is the same Apply.
 
@@ -113,12 +151,15 @@ backup is taken at once.
 **Read-back:**
 - the objects exist;
 - the settings row matches;
+- the procedure is signed by the certificate (`sys.crypt_properties`), the certificate has no private key,
+  its login is in sysadmin (`sys.server_role_members`), and SYSTEM may EXECUTE the procedure;
 - with Run now, the log's rows.
 
 **Change row:** object "Maintenance procedure", type HELPER.
 
 **Rollback** (and the fix `remove-maintenance-proc`):
-- drop the procedure and both tables;
+- drop the procedure and both tables, the certificate's login and the certificate, and SYSTEM's master user
+  when kakapo made it (else only its EXECUTE goes, with the procedure);
 - with an "only this database" option, delete just its settings row instead;
 - warn that the backup files stay on disk and that the scheduled task must be deleted by hand (the
   command is given).
@@ -152,15 +193,24 @@ backup is taken at once.
 
 ## Done when
 
-`go test ./...` and the web build pass. Live on `localhost\SQL2022`: the procedure is not limited to Express,
-so it can be proven on the Developer edition there, with a throwaway database. The checks:
+`go test ./...` and the web build pass. Live (`TestMaintProcLive`, `internal/service/maintproc_live_test.go`)
+on `localhost\SQL2022` with a throwaway database, and on `.\SQLEXPRESS` (SQL Server 2025 Express) with its
+test database only (`SQLMONITOR_TEST_MAINT_DB`). After the install, every call is made as the scheduler makes
+it: `EXECUTE AS LOGIN = N'NT AUTHORITY\SYSTEM'`. The checks:
 
-1. Install it, with Run now: a full backup and a CHECKDB-or-statistics row in the log.
+1. Install it, with Run now: a full backup and a CHECKDB-or-statistics row in the log; the procedure signed.
 2. A second call within 15 minutes does nothing heavy and takes a log backup.
-3. A call with the heavy lock held by another session skips the heavy work.
-4. A failing task (the folder made read-only) writes Failed, the call raises, and the other tasks still run.
-5. The plan row shows the last runs.
-6. Remove leaves nothing in master.
+3. A call with the heavy lock held by another session skips the heavy work; the next call runs it.
+4. Applying again signs it with a new certificate; then a full backup and statistics run as SYSTEM.
+5. A failing task (the backup folder on a drive that is not there; a read-only flag does not stop SQL Server
+   writing) writes Failed, the call raises, and the other tasks (the cleanup) still run.
+6. SYSTEM can do nothing else (a plain BACKUP, CHECKDB, reading the database, `xp_delete_file`, the
+   procedure's tables, altering it: all refused).
+7. The plan row (built as on Express) shows the last runs; the Installed helpers row lists the procedure.
+8. Remove leaves nothing in master: no procedure, tables, certificate, login, or SYSTEM user kakapo made.
 
-The fix is offered only on Express in this phase. Until it runs on a real Express server, the Express-only
-parts are untested: no compression, and `xp_delete_file` on Express.
+All passed on both instances on 2026-11-10, so Express's backups without compression and `xp_delete_file` on
+Express are proven. Still unproven: Ola Hallengren's branches (not installed on either instance), the
+physical-only check from 200 GB, a real Windows Task Scheduler task (the calls were made with `EXECUTE AS
+LOGIN`, which is how SYSTEM's rights were tested), and kakapo's own screens against Express, which it reaches
+only over TCP (the live test reaches a TCP-less Express through the driver's shared-memory package).

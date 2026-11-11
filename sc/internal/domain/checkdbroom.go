@@ -183,7 +183,7 @@ func (d CardDetail) MarshalJSON() ([]byte, error) {
 		d.Blocking, d.Trend = nil, nil
 	}
 	if d.Card.ID != CardDesign {
-		d.ForeignKeys = nil // the Design card's fold only (docs/phase5n-contract.md)
+		d.ForeignKeys, d.NoKeyTables = nil, nil // the Design card's folds only (docs/phase5n-contract.md, phase5s)
 	}
 	if d.Card.ID == CardSetup || d.Card.ID == CardUpkeep {
 		// The cards with fixes always say which are available, [] when none.

@@ -169,6 +169,10 @@ type CardDetail struct {
 	// cost work if rows were deleted, and the window; nil (left out) for every other card and when the
 	// foreign keys could not be read.
 	ForeignKeys *DesignForeignKeys `json:"foreignKeys,omitempty"`
+	// NoKeyTables is the Design card's fold of the smaller tables without a primary key
+	// (docs/phase5s-contract.md, decision 2); nil (left out) for every other card and when they could not
+	// be read.
+	NoKeyTables *DesignNoKeyTables `json:"noKeyTables,omitempty"`
 }
 
 // Check is one check the app implements: which card it belongs to, its title, the question it
@@ -370,6 +374,9 @@ var Checks = []Check{
 	// Phase 5o (docs/phase5o-contract.md, section 2): duplicate indexes, the triage's IDX04 (Checks.csv 60).
 	{"IDX04", CardDesign, "Duplicate indexes", "Which indexes copy another one?", OwnerUs,
 		"Re-run: IDX04 gone for that table; the keeper's reads went up by what the copy had."},
+	// Phase 5s (docs/phase5s-contract.md, section 2): tables without a primary key, kakapo's own check.
+	{"DES01", CardDesign, "Tables without a primary key", "Which tables have no primary key?", OwnerVendor,
+		"Re-run: DES01 gone for that table."},
 
 	// Phase 5m (docs/phase5m-contract.md): the decisions for a database. A decision is not a finding and no
 	// card lists it; its catalogue entry keeps its rule, sources and fix the one way.

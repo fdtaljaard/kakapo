@@ -112,7 +112,7 @@ func (s *Service) designDetail(ctx context.Context, db *sql.DB, serverID int64, 
 		return domain.CardDetail{}, err
 	}
 	return domain.CardDetail{Card: card, Findings: findings, Checks: checks, Fixes: domain.AvailableDesignFixes(facts, findings),
-		ForeignKeys: domain.BuildDesignForeignKeys(facts)}, nil
+		ForeignKeys: domain.BuildDesignForeignKeys(facts), NoKeyTables: domain.BuildDesignNoKeyTables(facts)}, nil
 }
 
 // readDesignFacts reads what the Design card needs, with the last restore into the database from the

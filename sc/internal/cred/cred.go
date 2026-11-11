@@ -11,7 +11,8 @@ type Store interface {
 }
 
 // target names the credential: the install id keeps two data files on one machine apart,
-// so a test copy editing "server 1" never touches the real install's "server 1".
+// so a test copy editing "server 1" never touches the real install's "server 1". The prefix keeps
+// the app's old name, SQLMonitor: renaming it would lose every saved SQL login password.
 func target(installID string, serverID int64) string {
 	return fmt.Sprintf("SQLMonitor:%s:server:%d", installID, serverID)
 }

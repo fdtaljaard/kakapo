@@ -1,4 +1,4 @@
-# Builds sqlmonitor.exe: frontend first, then the Go binary with the frontend embedded.
+# Builds kakapo.exe: frontend first, then the Go binary with the frontend embedded.
 # Needs: Go, Node, and a MinGW gcc (MSYS2 ucrt64) for the DuckDB driver.
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -23,7 +23,7 @@ try {
     # The version stamp (build time, plus the git commit when there is one) shows on Home and in the log.
     $stamp = Get-Date -Format 'yyyy-MM-dd.HHmm'
     $commit = (cmd /c "git rev-parse --short HEAD 2>nul"); if ($LASTEXITCODE -eq 0 -and $commit) { $stamp = "$stamp.$commit" }
-    go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o sqlmonitor.exe ./cmd/sqlmonitor
+    go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o kakapo.exe ./cmd/sqlmonitor
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
-    Write-Host "built $root\sqlmonitor.exe"
+    Write-Host "built $root\kakapo.exe"
 } finally { Pop-Location }

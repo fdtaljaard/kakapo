@@ -103,7 +103,7 @@ func TestSchemaChangeRead(t *testing.T) {
 	}
 	for _, want := range []string{
 		"x.EventClass IN (46, 47, 164) AND x.EventSubClass = 1 AND x.DatabaseID > 4",
-		"ISNULL(x.ApplicationName, N'') <> N'SQLMonitor'",
+		"ISNULL(x.ApplicationName, N'') NOT IN (N'kakapo', N'SQLMonitor')",
 		"NOT (x.EventClass = 164 AND x.ObjectType = 22601)",
 		"(x.ObjectType <> 16964 OR x.EventClass = 164)",
 		"MIN(t.StartTime) OVER () AS Oldest, MAX(t.StartTime) OVER () AS Newest",
@@ -125,8 +125,8 @@ func TestSchemaChangeRead(t *testing.T) {
 	if strings.Contains(schemaObjectTypeList, strconv.Itoa(domain.ObjTypeStatistics)) {
 		t.Error("statistics are left out")
 	}
-	if cs := ConnString(domain.ServerInput{Host: "h", Auth: domain.AuthWindows}); !strings.Contains(cs, "app name="+domain.KakapoProgram+";") ||
-		!strings.Contains(upkeepInstanceQuery, "N'"+domain.KakapoProgram+"'") {
+	if cs := ConnString(domain.ServerInput{Host: "h", Auth: domain.AuthWindows}); !strings.Contains(cs, "app name="+domain.BlockingAppName+";") ||
+		!strings.Contains(upkeepInstanceQuery, "N'"+domain.BlockingAppName+"'") {
 		t.Errorf("kakapo's own connections are left out by their app name: %s", cs)
 	}
 	suReadOnly(t, "default trace", Tag(defaultTraceQuery))

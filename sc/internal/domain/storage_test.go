@@ -1471,7 +1471,7 @@ func TestStorageIDX06(t *testing.T) {
 	f := sfacts()
 	f.Heaps = []TableSize{
 		{Name: "[dbo].[ImportRows]", DataMB: 1434, Rows: 13000000},
-		{Name: "[dbo].[Audit]", DataMB: 40, IndexMB: 12, IndexCount: 2, Rows: 1200000},
+		{Name: "[dbo].[Audit]", DataMB: 40, IndexMB: 12, IndexCount: 2, Rows: 1200000, HasPrimaryKey: true},
 		{Name: "[dbo].[Small]", DataMB: 99, Rows: 999999},
 	}
 	_, fs, checks := sbuild(f)
@@ -1482,11 +1482,11 @@ func TestStorageIDX06(t *testing.T) {
 	x := got[0]
 	if x.Object != "[dbo].[ImportRows]" || x.Severity != SeverityMedium || x.When != WhenWindow || x.Effort != EffortModerate || x.Owner != OwnerUs ||
 		x.Finding != "[dbo].[ImportRows] has no index at all (a heap with no nonclustered index): 1.4 GB, 13,000,000 rows." ||
-		x.Why != idx06Why+idx06WhyNone || x.DoThis != idx06Do || x.Evidence != "Data 1,434 MB, 13,000,000 rows, no nonclustered index." ||
+		x.Why != idx06Why+idx06WhyNone || x.DoThis != idx06Do+IDX06NoKeyHint || x.Evidence != "Data 1,434 MB, 13,000,000 rows, no nonclustered index." ||
 		x.ThenCheck != "Re-run after adding the clustered index: IDX06 gone." {
 		t.Errorf("no index: %+v", x)
 	}
-	if y := got[1]; y.Finding != "[dbo].[Audit] has no clustered index (it is a heap): 40 MB, 1,200,000 rows." || y.Why != idx06Why ||
+	if y := got[1]; y.Finding != "[dbo].[Audit] has no clustered index (it is a heap): 40 MB, 1,200,000 rows." || y.Why != idx06Why || y.DoThis != idx06Do ||
 		y.Evidence != "Data 40 MB, 1,200,000 rows, 2 nonclustered indexes, 12 MB." {
 		t.Errorf("heap with indexes: %+v", y)
 	}

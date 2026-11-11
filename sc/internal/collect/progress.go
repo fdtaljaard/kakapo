@@ -111,6 +111,6 @@ func progressRow(p Progress, database, waitType, program string, started sql.Nul
 	if p.RemainingSeconds < 0 {
 		p.RemainingSeconds = 0
 	}
-	p.Mine = program == domain.BlockingAppName
+	p.Mine = domain.IsKakapoProgram(program)
 	return p
 }

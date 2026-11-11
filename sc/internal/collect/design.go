@@ -111,6 +111,12 @@ func ReadDesignFacts(ctx context.Context, db *sql.DB, database string) (domain.D
 	} else {
 		f.IndexTables, f.IndexesError, f.UsageError = tables, head.IndexesError, head.UsageError
 	}
+	// DES01 (docs/phase5s-contract.md, section 1): the tables without a primary key.
+	if tables, err := ReadNoKeyTables(ctx, db, database); err != nil {
+		f.NoKeyError = err.Error()
+	} else {
+		f.NoKeyTables = tables
+	}
 
 	rows, err := db.QueryContext(ctx, Tag(safeSession+"SET QUOTED_IDENTIFIER ON; EXEC "+domain.QuoteName(database)+".sys.sp_executesql @stmt, N'@objects nvarchar(max)', @objects = @objects;"),
 		sql.Named("stmt", designQuery), sql.Named("objects", objectsXML(f.ForeignKeys)))

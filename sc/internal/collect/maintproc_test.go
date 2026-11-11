@@ -21,13 +21,16 @@ func TestMaintProcReads(t *testing.T) {
 			t.Errorf("%s query: %d dynamic batches, %d tagged", name, n, tagged)
 		}
 	}
-	if n := strings.Count(maintProcQuery, "BEGIN TRY"); n != 3 {
-		t.Errorf("%d TRY blocks in the read: the objects, the backup folder, the tables", n)
+	if n := strings.Count(maintProcQuery, "BEGIN TRY"); n != 4 {
+		t.Errorf("%d TRY blocks in the read: the objects, the signature, the backup folder, the tables", n)
 	}
 	for _, want := range []string{"OBJECT_ID(N'master.dbo.kakapo_Maintenance', N'P')", "CHARINDEX(N'kakapo maintenance procedure, version ', m.definition)",
 		"IF @settingsExists = 1 AND @logExists = 1", "CONVERT(char(5), s.FullTime, 108)", "o.Outcome = ''OK''", "o.Outcome = ''Failed''",
 		"WHERE l.ID = (SELECT MAX(x.ID)", "WHERE l.Outcome = ''Failed'' ORDER BY l.ID DESC", "master.dbo.IndexOptimize", "master.dbo.DatabaseIntegrityCheck",
-		"master.dbo.DatabaseBackup", "xp_instance_regread"} {
+		"master.dbo.DatabaseBackup", "xp_instance_regread",
+		"FROM master.sys.certificates AS c WHERE c.name = N'kakapo_MaintenanceCert'", "c.pvt_key_encryption_type = 'NA'", "master.sys.crypt_properties AS cp",
+		"p.name = N'kakapo_MaintenanceLogin' AND p.type = 'C'", "sys.server_role_members AS rm", "r.name = N'sysadmin'", "dp.sid = SUSER_SID(N'NT AUTHORITY\\SYSTEM')",
+		"pe.type = 'EX' AND pe.state IN ('G', 'W')"} {
 		if !strings.Contains(maintProcQuery, want) {
 			t.Errorf("the read lacks %q", want)
 		}

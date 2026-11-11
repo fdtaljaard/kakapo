@@ -67,6 +67,8 @@ type TableSize struct {
 	IndexMB    float64
 	IndexCount int
 	Rows       int64
+	// HasPrimaryKey is read for the heaps only (IDX06 points a heap without one to DES01, phase 5s).
+	HasPrimaryKey bool
 }
 
 // TempdbSession is a session holding tempdb pages now.
@@ -1837,7 +1839,11 @@ func (b *storageBuild) idx06() {
 			finding = t.Name + " has no index at all (a heap with no nonclustered index): " + size + "."
 			why += idx06WhyNone
 		}
-		b.add("IDX06", 3, "Offline", EffortModerate, t.Name, finding, why, idx06Do,
+		do := idx06Do
+		if !t.HasPrimaryKey {
+			do += IDX06NoKeyHint
+		}
+		b.add("IDX06", 3, "Offline", EffortModerate, t.Name, finding, why, do,
 			fmt.Sprintf("Data %s MB, %s rows, %s.", n0(t.DataMB), n0int(t.Rows), indexes))
 	}
 }

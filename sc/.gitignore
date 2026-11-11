@@ -5,10 +5,13 @@ External References/
 reports/
 
 # run-time files beside the exe
+/kakapo.log
 /sqlmonitor.log
 /*.zip
 
 # build output
+/kakapo.exe
+/kakapo.exe~
 /sqlmonitor.exe
 /sqlmonitor.exe~
 /dist/

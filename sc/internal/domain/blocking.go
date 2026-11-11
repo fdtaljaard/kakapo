@@ -16,7 +16,17 @@ import (
 
 // BlockingAppName is the program name kakapo's own connections carry (collect.ConnString's "app
 // name"); the kill-session fix refuses them.
-const BlockingAppName = "SQLMonitor"
+const BlockingAppName = "kakapo"
+
+// legacyAppName is the program name kakapo connected with before it was renamed (2026-11-11):
+// the default trace and running sessions of an older exe still carry it.
+const legacyAppName = "SQLMonitor"
+
+// IsKakapoProgram says whether a session's program name is kakapo's own, under either name.
+func IsKakapoProgram(program string) bool {
+	p := strings.TrimSpace(program)
+	return strings.EqualFold(p, BlockingAppName) || strings.EqualFold(p, legacyAppName)
+}
 
 // blkLongRunningSec is how long a head blocker's statement has run before it counts as long-running.
 const blkLongRunningSec = 30
@@ -149,7 +159,7 @@ func KillRefusal(s BlockingSession, ownSession int) string {
 	switch {
 	case s.Session <= 50 || !s.IsUser:
 		return fmt.Sprintf("Session %d is a SQL Server system session: SQL Server needs it, so kakapo does not kill it.", s.Session)
-	case s.Session == ownSession || s.Program == BlockingAppName:
+	case s.Session == ownSession || IsKakapoProgram(s.Program):
 		return fmt.Sprintf("Session %d is kakapo's own connection: closing kakapo ends it.", s.Session)
 	}
 	return ""

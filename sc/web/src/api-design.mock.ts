@@ -56,6 +56,7 @@ export function designDetail(database: string): CardDetail {
           { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
           { label: "Costing work now", value: "0", tone: "normal" },
           { label: "Duplicate indexes", value: "none", tone: "normal" },
+          { label: "No primary key", value: "none", tone: "normal" },
           { label: "Counted since", value: "the restore on 5 Nov", tone: "normal" },
           { label: "Tables", value: "95", tone: "normal" },
         ],
@@ -64,6 +65,7 @@ export function designDetail(database: string): CardDetail {
       checks: [
         { checkId: "IDX14", title: "Foreign keys without an index", status: "passed", note: "" },
         { checkId: "IDX04", title: "Duplicate indexes", status: "passed", note: "" },
+        { checkId: "DES01", title: "Tables without a primary key", status: "passed", note: "" },
       ],
       foreignKeys: { heading: "Too early to tell", tooEarly: true, window: "the restore on 5 Nov", keys },
     }
@@ -109,26 +111,29 @@ export function designDetail(database: string): CardDetail {
   return {
     card: designCard({
       status: "amber",
-      statusText: "3 things to do",
+      statusText: "5 things to do",
       verdict:
-        "1 foreign key makes deletes read a whole table: Lines (1.4 million rows). 2 indexes copy another one: 1.3 GB and 4.3 million writes since 1 Oct for nothing. 2 indexes have the same keys as another but hold different columns: merging them is a job for someone experienced with indexes.",
+        "1 foreign key makes deletes read a whole table: Lines (1.4 million rows). 2 indexes copy another one: 1.3 GB and 4.3 million writes since 1 Oct for nothing. 2 indexes have the same keys as another but hold different columns: merging them is a job for someone experienced with indexes. 2 tables have no primary key, the biggest StockMoves (1.7 million rows).",
       facts: [
         { label: "Foreign keys", value: "39, 5 without an index", tone: "normal" },
         { label: "Costing work now", value: "1", tone: "bad" },
         { label: "Duplicate indexes", value: "2, 1.3 GB", tone: "bad" },
+        { label: "No primary key", value: "3 tables (2 large)", tone: "bad" },
         { label: "Counted since", value: "the restart on 1 Oct", tone: "normal" },
         { label: "Tables", value: "95", tone: "normal" },
       ],
-      toDo: 3,
-      fixable: 2,
+      toDo: 5,
+      fixable: 4,
     }),
-    findings: [finding, ...duplicateFindings],
+    findings: [finding, ...duplicateFindings, ...noKeyFindings],
     checks: [
       { checkId: "IDX14", title: "Foreign keys without an index", status: "finding", note: "" },
       { checkId: "IDX04", title: "Duplicate indexes", status: "finding", note: "" },
+      { checkId: "DES01", title: "Tables without a primary key", status: "finding", note: "" },
     ],
-    fixes: [fix, disableFix("IX_B", "IX_A", "1.2 GB"), disableFix("IX_E", "IX_A", "85 MB")],
+    fixes: [fix, disableFix("IX_B", "IX_A", "1.2 GB"), disableFix("IX_E", "IX_A", "85 MB"), keyFix("StockMoves"), keyFix("Notes_Import")],
     foreignKeys: { heading: "Missing indexes on foreign keys, not needed yet", tooEarly: false, window: "the restart on 1 Oct", keys: foldKeys },
+    noKeyTables: { heading: "Smaller tables without a primary key", tables: [{ table: "Codes", rows: 2410, text: "Codes (2,410 rows, heap)" }] },
   }
 }
 
@@ -251,7 +256,182 @@ function foreignKeyPreview(database: string, options: Record<string, string>): F
   }
 }
 
+// Phase 5s (docs/phase5s-contract.md): DES01 on WarehouseLive. StockMoves is a heap with an identity column
+// (Apply on it); Notes_Import has nothing to key on, so its key is a new column, held back until the user
+// ticks the confirm, then held by dbo.ImportNotes (it inserts without a column list). Set localStorage
+// "mock.noInsertProc" to "1" to see the confirmed preview apply.
+const DES01_WHY =
+  "A primary key makes SQL Server refuse a second row with the same key, and replication, change tracking and many tools need one (Microsoft Learn, 'Primary and foreign key constraints')."
+
+const noKeyFindings: Finding[] = [
+  {
+    checkId: "DES01",
+    title: "Tables without a primary key",
+    severity: "Medium",
+    owner: "Vendor",
+    when: "Window",
+    effort: "Moderate",
+    object: "[dbo].[StockMoves]",
+    finding:
+      "StockMoves has no primary key: nothing stops two identical rows among its 1,732,636 rows, and no key names a row. It is a heap too (no clustered index).",
+    why: DES01_WHY,
+    doThis:
+      "Add a primary key on its identity column MoveId, clustered, which also ends the heap. Tell the vendor first: their next upgrade must expect it.",
+    thenCheck: "Re-run: DES01 gone for that table.",
+    evidence:
+      "Table [dbo].[StockMoves]: 1,732,636 rows, 204 MB, heap; no unique index on NOT NULL columns; identity column [MoveId]; 5 nonclustered indexes (rebuilt with a clustered key).",
+    fixId: "add-primary-key",
+  },
+  {
+    checkId: "DES01",
+    title: "Tables without a primary key",
+    severity: "Low",
+    owner: "Vendor",
+    when: "Window",
+    effort: "Moderate",
+    object: "[dbo].[Notes_Import]",
+    finding: "Notes_Import has no primary key: nothing stops two identical rows among its 48,200 rows, and no key names a row. It is a heap too (no clustered index).",
+    why: DES01_WHY,
+    doThis:
+      "Add a primary key on a new bigint identity column, clustered, which also ends the heap. This writes every row and adds a column, so check with the vendor first that the application names its columns when it inserts into Notes_Import.",
+    thenCheck: "Re-run: DES01 gone for that table.",
+    evidence: "Table [dbo].[Notes_Import]: 48,200 rows, 6.1 MB, heap; no unique index on NOT NULL columns; no identity column.",
+    fixId: "add-primary-key",
+  },
+]
+
+function keyFix(table: string): Fix {
+  return {
+    id: "add-primary-key",
+    title: "Add a primary key",
+    scope: "database",
+    checkId: "DES01",
+    setting: "Primary key",
+    current: "none",
+    target: `primary key on ${table}`,
+    needsRestart: false,
+    options: { table: `[dbo].[${table}]`, object: `[dbo].[${table}]` },
+  }
+}
+
+// The add-primary-key preview on Express: StockMoves on its identity column, Notes_Import on a new column.
+function keyPreview(database: string, options: Record<string, string>): FixPreview {
+  const notes = (options.table ?? "").includes("Notes_Import")
+  const table = notes ? "Notes_Import" : "StockMoves"
+  const choices = notes ? ["New column (bigint identity)"] : ["Identity column MoveId", "New column (bigint identity)"]
+  const key = options.key && choices.includes(options.key) ? options.key : choices[0]
+  const newColumn = key.startsWith("New column")
+  const column = options.column || "kakapo_id"
+  const name = options.name || `PK_${table}`
+  const clustered = options.clustered === "nonclustered" ? "nonclustered" : "clustered"
+  const confirmed = options.confirm === "true"
+  const cols = newColumn ? column : "MoveId"
+  const three = `[${database}].[dbo].[${table}]`
+  const kind = clustered.toUpperCase()
+  const size = notes ? "6.1 MB" : "204 MB"
+  const statement = newColumn
+    ? `ALTER TABLE ${three} ADD [${column}] bigint IDENTITY(1, 1) NOT NULL CONSTRAINT [${name}] PRIMARY KEY ${kind};`
+    : `ALTER TABLE ${three} ADD CONSTRAINT [${name}] PRIMARY KEY ${kind} ([${cols}]) WITH (ONLINE = OFF, SORT_IN_TEMPDB = ON);`
+  const rollback = newColumn
+    ? `ALTER TABLE ${three} DROP CONSTRAINT [${name}]; ALTER TABLE ${three} DROP COLUMN [${column}];`
+    : `ALTER TABLE ${three} DROP CONSTRAINT [${name}];`
+  const target = `${name} on dbo.${table} (${cols}${newColumn ? ", a new bigint identity column" : ""}), ${clustered}`
+  const confirmLabel = `The application names its columns when it inserts into ${table}`
+  const held = !newColumn
+    ? undefined
+    : localStorage.getItem("mock.noInsertProc") !== "1" && confirmed
+      ? `dbo.ImportNotes inserts into ${table} without a column list (or with SELECT *): a new column makes it fail (error 213). Change the code first, or ask the vendor.`
+      : !confirmed
+        ? `Tick "${confirmLabel}" first: a new column makes an INSERT without a column list fail.`
+        : undefined
+  const rewrite =
+    clustered === "clustered"
+      ? `${newColumn ? "It writes every row to fill the new column. " : ""}This rewrites the whole of ${table} (${size}) as a clustered index${notes ? "" : " and rebuilds its 5 nonclustered indexes, which then carry the key instead of the row's address"}.`
+      : `${newColumn ? "It writes every row to fill the new column. " : ""}This builds one new index of about ${notes ? "1.2 MB" : "41 MB"}.`
+  const warnings = [
+    rewrite,
+    `${newColumn ? "Adding a column is always offline" : "On Express edition it runs offline"}: ${table} can be neither read nor written until it finishes, and users who touch it wait. Apply it in a quiet moment.`,
+    "If the table is busy, kakapo gives up after 10 seconds of waiting for its lock rather than queue in front of users; then try again in a quieter moment.",
+    "On Express a database holds at most 50 GB of data: the table's new copy counts towards it while it is built.",
+    ...(notes ? [] : ["Test on the sandbox first when the table is large: the build time and the effect on the queries show there."]),
+    ...(newColumn
+      ? [
+          `A new column changes the table's shape: an INSERT into ${table} without a column list, or one that copies its rows with SELECT *, fails afterwards (error 213).`,
+          "The existing rows get numbers in no particular order; new rows get the next ones.",
+          "kakapo searched the database's code and the queries Query Store saw in the last 30 days for such inserts; code outside SQL Server (the application's own) cannot be searched.",
+        ]
+      : ["SQL Server refuses the key if two rows share a value of MoveId (an identity can repeat after a reseed or IDENTITY_INSERT), and then nothing changes."]),
+    `Undoing it (the rollback) drops the key${clustered === "clustered" ? ": the table becomes a heap again and is rewritten once more" : ""}${newColumn ? "; the dropped column's 8 bytes a row stay until the table is rebuilt" : ""}.`,
+    "A foreign key created later that points at the key stops the rollback until it is dropped.",
+    `Tell the vendor: their next upgrade must expect this key${newColumn ? " and column" : ""}.`,
+    `Needs the ALTER permission on dbo.${table} (db_ddladmin or db_owner in the database).`,
+  ]
+  const inputs: FixPreview["inputs"] = [
+    {
+      name: "key",
+      label: "Key",
+      kind: "select",
+      options: choices,
+      value: key,
+      help: "kakapo picks a unique index first, then the identity column; a new column is the last resort, because it changes the table's shape.",
+    },
+    ...(newColumn
+      ? [{ name: "column", label: "New column", kind: "text" as const, value: column, help: "kakapo's name, so nobody mistakes it for the application's own column." }]
+      : []),
+    { name: "name", label: "Key name", kind: "text", value: name, help: "The primary key's name; it must be new in schema dbo." },
+    {
+      name: "clustered",
+      label: "Clustered",
+      kind: "select",
+      options: ["clustered", "nonclustered"],
+      value: clustered,
+      advanced: true,
+      help: "Clustered turns the heap into a clustered table, which also ends IDX06. A nonclustered key leaves the heap as it is.",
+    },
+    ...(newColumn
+      ? [
+          {
+            name: "confirm",
+            label: confirmLabel,
+            kind: "bool" as const,
+            value: String(confirmed),
+            help: "Ask the vendor if you are not sure: an INSERT without a column list fails once the table has a new column.",
+          },
+        ]
+      : []),
+  ]
+  return {
+    database,
+    engineVersion: "17.0.1000.7",
+    lead: `${table} gets a primary key on ${cols}: SQL Server will refuse a second row with the same key.`,
+    held,
+    changes: [{ setting: "Primary key", current: "none", target }],
+    statement,
+    rollback,
+    warnings,
+    inputs,
+    options: { ...options, key, name, clustered, ...(newColumn ? { column, confirm: String(confirmed) } : {}) },
+  }
+}
+
 export const mockDesign: FeatureMock = async (method, path, init) => {
+  const addKey = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/add-primary-key\/(preview|apply)$/)
+  if (addKey && method === "POST") {
+    const body = init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }) : {}
+    const preview = keyPreview(decodeURIComponent(addKey[2]), body.options ?? {})
+    if (addKey[3] === "preview") return preview
+    if (preview.held) throw new ApiError(preview.held, 409)
+    await delay(1500)
+    const target = preview.changes[0].target
+    return {
+      preview,
+      before: "none",
+      after: target.replace(/\(([^,)]+)(, a new bigint identity column)?\)/, "($1)") + (target.includes("Notes_Import") ? ", 6.5 MB" : ", 218 MB"),
+      verified: true,
+      changeId: 950 + Math.floor(Math.random() * 49),
+      appliedAt: now(),
+    } satisfies FixResult
+  }
   const disable = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/disable-index\/(preview|apply)$/)
   if (disable && method === "POST") {
     const body = init?.body ? (JSON.parse(String(init.body)) as { options?: Record<string, string> }) : {}

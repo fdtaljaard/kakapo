@@ -84,7 +84,7 @@ export const mockProgress: FeatureMock = async (method, path) => {
     remainingSeconds: noPercent ? 0 : (5 - calls) * 75,
     startedAt: new Date(Date.now() - elapsedSeconds * 1000).toISOString(),
     waitType: noPercent ? "" : "CXPACKET",
-    program: "SQLMonitor",
+    program: "kakapo",
     mine: true,
   }
   return [row]

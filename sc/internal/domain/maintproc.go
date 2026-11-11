@@ -112,7 +112,59 @@ type MaintProcFacts struct {
 	Settings         []MaintSettings
 	Tasks            []MaintTaskLog
 	LastFailure      *MaintRun
+	Signing          MaintSigning
 	Error            string
+}
+
+// MaintSigning is how the procedure is signed (maintproc_sql.go): the certificate, whether it signs the
+// procedure (sys.crypt_properties) and still has its private key, its login and whether that is sysadmin;
+// and the scheduled task's account, SYSTEM: its login, its master user (kakapo's or not), its EXECUTE.
+type MaintSigning struct {
+	CertExists        bool `json:"certExists"`
+	CertPrivateKey    bool `json:"certPrivateKey"`
+	Signed            bool `json:"signed"`
+	CertLogin         bool `json:"certLogin"`
+	CertSysadmin      bool `json:"certSysadmin"`
+	SchedulerLogin    bool `json:"schedulerLogin"`
+	SchedulerUser     bool `json:"schedulerUser"`
+	SchedulerUserOurs bool `json:"schedulerUserOurs"`
+	SchedulerExecute  bool `json:"schedulerExecute"`
+}
+
+// Ready says the signature lets the scheduled task run: signed, the private key gone, the login
+// sysadmin, and SYSTEM may execute the procedure (when SYSTEM has a login at all).
+func (s MaintSigning) Ready() bool {
+	return s.Signed && !s.CertPrivateKey && s.CertLogin && s.CertSysadmin && (s.SchedulerExecute || !s.SchedulerLogin)
+}
+
+// Words says where the signature stands in a line.
+func (s MaintSigning) Words() string {
+	parts := []string{}
+	switch {
+	case s.Signed && !s.CertPrivateKey:
+		parts = append(parts, "signed by the certificate "+MaintCertName+" (its private key removed)")
+	case s.Signed:
+		parts = append(parts, "signed by the certificate "+MaintCertName+", which still has its private key")
+	default:
+		parts = append(parts, "not signed")
+	}
+	switch {
+	case s.CertLogin && s.CertSysadmin:
+		parts = append(parts, "its login "+MaintCertLogin+" is sysadmin")
+	case s.CertLogin:
+		parts = append(parts, "its login "+MaintCertLogin+" is not sysadmin")
+	default:
+		parts = append(parts, "no certificate login")
+	}
+	switch {
+	case !s.SchedulerLogin:
+		parts = append(parts, MaintSchedulerLogin+" has no login on this server")
+	case s.SchedulerExecute:
+		parts = append(parts, MaintSchedulerLogin+" may EXECUTE it")
+	default:
+		parts = append(parts, MaintSchedulerLogin+" may not execute it")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Installed says kakapo's procedure is there with its tables.
@@ -453,7 +505,11 @@ func maintHelperLine(f *MaintProcFacts, edition int) (InstalledHelper, bool) {
 			h.Details = append(h.Details, fmt.Sprintf("%s: backups to %s, kept %d days; full %s; log every %d min; check %s %s; statistics %s",
 				s.Database, s.Folder, s.KeepBackupDays, s.FullTime, s.LogMinutes, s.CheckDay, s.CheckTime, s.StatsTime))
 		}
+		h.Details = append(h.Details, "Signature: "+f.Signing.Words())
 		h.Details = append(h.Details, "Called by a scheduled task kakapo cannot see: "+MaintSchtasks(f.ServerName))
+		if !f.Signing.Ready() {
+			h.Sentence += " It is not ready for the scheduled task (" + f.Signing.Words() + "): a call as SYSTEM fails until it is installed again, which signs it anew."
+		}
 	}
 	if f.Error != "" && h.State == HelperInstalled {
 		h.Details = append(h.Details, "Not everything could be read: "+f.Error)
@@ -660,7 +716,11 @@ func BuildInstallMaintenanceProcFix(f MaintInstallFacts, options map[string]stri
 	}
 	p.Warnings = append(p.Warnings,
 		"Nothing runs until something calls the procedure. Create the scheduled task on the server, in an administrator command prompt: "+MaintSchtasks(f.ServerName)+
-			" The account that runs it (SYSTEM here) must be sysadmin, or db_owner of each database it serves, to back up, check and update statistics.")
+			" It runs as "+MaintSchedulerLogin+", which may EXECUTE this one procedure and nothing else: kakapo grants SYSTEM nothing more.")
+	if !f.Signing.SchedulerLogin {
+		p.Warnings = append(p.Warnings, MaintSchedulerLogin+" has no login on "+orQ(f.ServerName)+
+			", so a task running as SYSTEM cannot connect: create the login (CREATE LOGIN [NT AUTHORITY\\SYSTEM] FROM WINDOWS) and apply again, or run the task as an account that may EXECUTE the procedure.")
+	}
 	if fullOrBulk(f.RecoveryModel) {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%s is in %s recovery: call the procedure every 15 minutes, or the log is backed up less often and a failure can lose more work.", db, f.RecoveryModel))
 	}
@@ -676,6 +736,11 @@ func BuildInstallMaintenanceProcFix(f MaintInstallFacts, options map[string]stri
 	if runNow {
 		p.Warnings = append(p.Warnings, "Run now waits while the first full backup (and anything else due) runs: on a large database that takes minutes.")
 	}
+	p.Warnings = append(p.Warnings,
+		"The procedure is signed with a certificate, "+MaintCertName+", whose login "+MaintCertLogin+" is sysadmin: while it runs, the procedure (and only the procedure) has sysadmin's rights, because every task reaches other databases, msdb and xp_delete_file. "+
+			"The certificate's private key is removed after signing, so nothing else can ever be signed with it. "+
+			"Pattern: Erland Sommarskog, \"Packaging Permissions in Stored Procedures\"; Microsoft Learn, \"Module signing\".",
+		"Changing the procedure by hand removes its signature, and the scheduled task then fails: apply this fix again to sign it anew (a new certificate each time).")
 	p.Warnings = append(p.Warnings, "Needs sysadmin on "+orQ(f.ServerName)+" to create the procedure and its tables in master.")
 	p.Needs = BackupScheduleNeeds(BackupSchedule{Folder: s.Folder, Full: true, Log: fullOrBulk(f.RecoveryModel), KeepDays: s.KeepBackupDays,
 		Compress: f.CanCompress()}, f.Sizes)
@@ -713,6 +778,30 @@ func BuildInstallMaintenanceProcFix(f MaintInstallFacts, options map[string]stri
 		}
 		p.Changes = append(p.Changes, Drift{Setting: planPieceDefFor(task).Title, Target: target})
 	}
+	signCur := "none"
+	if f.Signing.CertExists {
+		signCur = f.Signing.Words()
+	}
+	schedCur := "no master user"
+	switch {
+	case !f.Signing.SchedulerLogin:
+		schedCur = "no login"
+	case f.Signing.SchedulerExecute:
+		schedCur = "may EXECUTE it"
+	case f.Signing.SchedulerUser:
+		schedCur = "master user, no EXECUTE"
+	}
+	schedTarget := "EXECUTE on dbo.kakapo_Maintenance only"
+	if !f.Signing.SchedulerUser {
+		schedTarget = "a master user (kakapo's), with EXECUTE on dbo.kakapo_Maintenance only"
+	}
+	if !f.Signing.SchedulerLogin {
+		schedTarget = "nothing: there is no login to grant to"
+	}
+	p.Changes = append(p.Changes,
+		Drift{Setting: "Signature", Current: signCur,
+			Target: "signed by a new certificate " + MaintCertName + " (throwaway password, private key removed); its login " + MaintCertLogin + " in sysadmin"},
+		Drift{Setting: MaintSchedulerLogin + " in master", Current: schedCur, Target: schedTarget})
 	if runNow {
 		p.Changes = append(p.Changes, Drift{Setting: "Run now", Target: "the procedure is called once for " + db + " after the install"})
 	}
@@ -756,7 +845,7 @@ func MaintInstallDescription(server string, p FixPreview, f MaintProcFacts) stri
 // at this version with both tables, and the database's row matches. runs are the log rows of Run now.
 func MaintInstallReadBack(after MaintProcFacts, want MaintSettings, runNow bool, runErr string, runs []MaintRun) (string, bool) {
 	parts := []string{}
-	ok := after.Installed() && after.ProcVersion == MaintProcVersion
+	ok := after.Installed() && after.ProcVersion == MaintProcVersion && after.Signing.Ready()
 	switch {
 	case after.Installed():
 		parts = append(parts, fmt.Sprintf("procedure version %d and both tables in master", after.ProcVersion))
@@ -773,6 +862,9 @@ func MaintInstallReadBack(after MaintProcFacts, want MaintSettings, runNow bool,
 		parts, ok = append(parts, "settings for "+want.Database+": "+maintRowWords(got)), false
 	default:
 		parts = append(parts, "settings for "+want.Database+" as previewed")
+	}
+	if after.ProcExists {
+		parts = append(parts, after.Signing.Words())
 	}
 	if runNow {
 		r := []string{}
@@ -865,7 +957,13 @@ func BuildRemoveMaintenanceProcFix(f MaintProcFacts, options map[string]string) 
 		p.Changes = append(p.Changes,
 			Drift{Setting: "Procedure master.dbo.kakapo_Maintenance", Current: fmt.Sprintf("version %d", f.ProcVersion), Target: "dropped"},
 			Drift{Setting: "Table master.dbo." + MaintSettingsName, Current: orNone(dbs), Target: "dropped"},
-			Drift{Setting: "Table master.dbo." + MaintLogName, Current: "exists", Target: "dropped, with what it recorded"})
+			Drift{Setting: "Table master.dbo." + MaintLogName, Current: "exists", Target: "dropped, with what it recorded"},
+			Drift{Setting: "Signature", Current: f.Signing.Words(), Target: "the certificate " + MaintCertName + " and its login " + MaintCertLogin + " dropped"})
+		if f.Signing.SchedulerUserOurs {
+			p.Changes = append(p.Changes, Drift{Setting: MaintSchedulerLogin + " in master", Current: "kakapo's master user, EXECUTE on the procedure", Target: "dropped"})
+		} else if f.Signing.SchedulerExecute {
+			p.Changes = append(p.Changes, Drift{Setting: MaintSchedulerLogin + " in master", Current: "EXECUTE on the procedure", Target: "gone with the procedure; its master user was not kakapo's and stays"})
+		}
 		p.Statement = MaintDropStatement()
 		p.Rollback = MaintInstallStatement(f.CanCompress(), f.Settings...)
 		return p, fix, nil
@@ -898,6 +996,15 @@ func MaintRemoveReadBack(after MaintProcFacts, what string) (string, bool) {
 		}
 		if after.LogExists {
 			left = append(left, MaintLogName)
+		}
+		if after.Signing.CertExists {
+			left = append(left, "the certificate "+MaintCertName)
+		}
+		if after.Signing.CertLogin {
+			left = append(left, "the login "+MaintCertLogin)
+		}
+		if after.Signing.SchedulerUserOurs {
+			left = append(left, "kakapo's master user for "+MaintSchedulerLogin)
 		}
 		if len(left) == 0 {
 			return "nothing of kakapo's maintenance procedure left in master", true

@@ -478,6 +478,7 @@ export interface CardDetail {
   maintenancePlan?: MaintenancePlan // upkeep only (phase 5b): the Maintenance plan row; omitted otherwise
   drives?: StorageDrives // storage only (phase 5l): the answer first, one bar per drive; omitted otherwise
   foreignKeys?: DesignForeignKeys // design only (phase 5n): the keys that would cost work if rows were deleted; omitted otherwise
+  noKeyTables?: DesignNoKeyTables // design only (phase 5s): the tables under 10,000 rows without a primary key; omitted otherwise
 }
 
 // Phase 5n: the Design card's fold (docs/phase5n-contract.md, section 3): foreign keys without an index on
@@ -487,6 +488,13 @@ export interface DesignForeignKeys {
   tooEarly: boolean
   window: string // "the restart on 1 Oct"; "" when not read
   keys: { name: string; table: string; rows: number; parent: string; columns: string[]; text: string }[]
+}
+
+// Phase 5s: the Design card's fold of the smaller tables without a primary key (docs/phase5s-contract.md,
+// decision 2): tables with rows but under 10,000, largest first, one line each, no button.
+export interface DesignNoKeyTables {
+  heading: string // "Smaller tables without a primary key"
+  tables: { table: string; rows: number; text: string }[] // text: "Codes (2,410 rows, heap)"
 }
 
 // Phase 5l: the Storage card's answer, "Will it run out of room?" (docs/phase5l-contract.md part 5).

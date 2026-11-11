@@ -1,4 +1,4 @@
-// sqlmonitor is a portable SQL Server monitor: one exe, one DuckDB file beside it.
+// kakapo is a portable SQL Server monitor: one exe, one DuckDB file beside it.
 package main
 
 import (
@@ -35,7 +35,7 @@ func main() {
 	}
 
 	port := flag.Int("port", 7331, "port to listen on (127.0.0.1 only)")
-	dataDir := flag.String("data", exeDir, "folder for sqlmonitor.duckdb")
+	dataDir := flag.String("data", exeDir, "folder for kakapo.duckdb")
 	noBrowser := flag.Bool("no-browser", false, "do not open a window; just serve")
 	flag.Parse()
 
@@ -50,7 +50,7 @@ func run(port int, dataDir string, openWindow bool) (err error) {
 
 	// Log to a file beside the data as well as the console, so a double-clicked exe that
 	// stops can still be understood afterwards.
-	if f, err := os.OpenFile(filepath.Join(dataDir, "sqlmonitor.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+	if f, err := os.OpenFile(filepath.Join(dataDir, "kakapo.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 		defer f.Close()
 		log.SetOutput(io.MultiWriter(os.Stderr, f))
 	}
@@ -64,7 +64,7 @@ func run(port int, dataDir string, openWindow bool) (err error) {
 	api.Version = version
 	log.Printf("kakapo %s starting (pid %d)", version, os.Getpid())
 
-	dbPath := filepath.Join(dataDir, "sqlmonitor.duckdb")
+	dbPath := dataFile(dataDir)
 	st, err := store.Open(ctx, dbPath)
 	if err != nil {
 		return err
@@ -86,7 +86,7 @@ func run(port int, dataDir string, openWindow bool) (err error) {
 	if err != nil {
 		if alreadyRunning(url) {
 			// A second double-click should bring up the app, not die quietly.
-			log.Printf("SQLMonitor is already running on %s; opening its window", url)
+			log.Printf("kakapo is already running on %s; opening its window", url)
 			if openWindow {
 				openAppWindow(url) // the running instance owns the lifetime; leave the profile to it
 			}
@@ -134,7 +134,37 @@ func run(port int, dataDir string, openWindow bool) (err error) {
 	return srv.Shutdown(shutdownCtx)
 }
 
-// alreadyRunning says whether the thing on our port is another SQLMonitor.
+// dataFile is kakapo.duckdb in dir. The app was called SQLMonitor until 2026-11-11: an old
+// sqlmonitor.duckdb (and its .wal) beside the exe is renamed once, so the servers, history and
+// fixes carry over. When the rename fails (an old exe still has it open), the old file is used.
+func dataFile(dir string) string {
+	newPath, oldPath := filepath.Join(dir, "kakapo.duckdb"), filepath.Join(dir, "sqlmonitor.duckdb")
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		return newPath
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		log.Printf("could not rename %s to kakapo.duckdb (%v): using it as it is", oldPath, err)
+		return oldPath
+	}
+	if _, err := os.Stat(oldPath + ".wal"); err == nil {
+		if err := os.Rename(oldPath+".wal", newPath+".wal"); err != nil {
+			// The data file and its write-ahead log must stay together: put the data file back.
+			log.Printf("could not rename %s.wal (%v): using sqlmonitor.duckdb as it is", oldPath, err)
+			if err := os.Rename(newPath, oldPath); err != nil {
+				log.Printf("could not put back %s: %v", oldPath, err)
+				return newPath
+			}
+			return oldPath
+		}
+	}
+	log.Printf("renamed sqlmonitor.duckdb to kakapo.duckdb")
+	return newPath
+}
+
+// alreadyRunning says whether the thing on our port is another kakapo.
 func alreadyRunning(url string) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(url + "/api/health")
@@ -163,7 +193,14 @@ func openAppWindow(url string) (cleanup func()) {
 			if err != nil {
 				base = os.TempDir()
 			}
-			profile := filepath.Join(base, "SQLMonitor", "edge-profile")
+			profile := filepath.Join(base, "kakapo", "edge-profile")
+			// The folder was SQLMonitor before the rename: move it once, keeping the window's size.
+			if _, err := os.Stat(profile); err != nil {
+				if _, err := os.Stat(filepath.Join(base, "SQLMonitor", "edge-profile")); err == nil {
+					_ = os.MkdirAll(filepath.Join(base, "kakapo"), 0o755)
+					_ = os.Rename(filepath.Join(base, "SQLMonitor", "edge-profile"), profile)
+				}
+			}
 			if err := os.MkdirAll(profile, 0o755); err != nil {
 				log.Printf("edge profile folder: %v", err)
 				break

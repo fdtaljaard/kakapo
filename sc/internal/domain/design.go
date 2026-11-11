@@ -48,6 +48,11 @@ type DesignFacts struct {
 	IndexTables  []IndexFacts
 	IndexesError string
 	UsageError   string
+
+	// NoKeyTables are the user tables without a primary key (collect.ReadNoKeyTables, docs/phase5s-contract.md
+	// section 1), for DES01; NoKeyError says they could not be read.
+	NoKeyTables []NoKeyTableFact
+	NoKeyError  string
 }
 
 // UsageWindowFacts are the moments the use and operational counters of a database start from: SQL
@@ -213,7 +218,7 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 	findings := []Finding{}
 	grey := func(note string) (Card, []Finding, []CheckStatus) {
 		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", note
-		return c, findings, designChecks(findings, note, note)
+		return c, findings, designChecks(findings, note, note, note)
 	}
 	switch {
 	case f.Error != "":
@@ -255,13 +260,28 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 		groups = firingGroups(f.IndexTables)
 	}
 	idx04 := idx04Findings(groups, window, f.ServerNow)
-	findings = append(append(findings, idx14...), idx04...)
-	checks := designChecks(findings, fkSkipped, dupSkipped)
+	keySkipped := ""
+	if f.NoKeyError != "" {
+		keySkipped = des01Skipped + f.NoKeyError
+	}
+	des01 := []Finding{}
+	if keySkipped == "" {
+		des01 = des01Findings(f.NoKeyTables)
+	}
+	findings = append(append(append(findings, idx14...), idx04...), des01...)
+	checks := designChecks(findings, fkSkipped, dupSkipped, keySkipped)
 	c.Facts = designFacts(f, w, windowOK, idx14, groups, fkSkipped, dupSkipped)
 	asOf := f.ServerNow
 	c.AsOf = &asOf
 
-	if n := len(findings); n > 0 {
+	// DES01's Info findings (a unique clustered index, a key in all but name) are listed, not to do.
+	actionable := 0
+	for _, x := range findings {
+		if x.Severity.Actionable() {
+			actionable++
+		}
+	}
+	if n := actionable; n > 0 {
 		c.Status, c.StatusText = StatusAmber, "1 thing to do"
 		if n > 1 {
 			c.StatusText = fmt.Sprintf("%d things to do", n)
@@ -273,10 +293,13 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 		if len(idx04) > 0 {
 			clauses = append(clauses, idx04Verdict(groups, window, f.ServerNow))
 		}
+		if s := des01Verdict(f.NoKeyTables, des01); s != "" {
+			clauses = append(clauses, s)
+		}
 		c.Verdict = strings.Join(clauses, " ")
 		c.ToDo = n
 		for _, x := range findings {
-			if x.FixID != "" {
+			if x.FixID != "" && x.Severity.Actionable() {
 				c.Fixable++
 			}
 		}
@@ -289,6 +312,9 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 		return c, findings, checks
 	case dupSkipped != "":
 		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", dupSkipped
+		return c, findings, checks
+	case keySkipped != "":
+		c.Status, c.StatusText, c.Note = StatusGrey, "Could not be read", keySkipped
 		return c, findings, checks
 	}
 
@@ -381,13 +407,16 @@ func idx14Findings(f DesignFacts, w DesignWindow) []Finding {
 }
 
 // designChecks says what became of IDX14 and IDX04: skipped with its note, a finding, or passed.
-func designChecks(findings []Finding, fkSkipped, dupSkipped string) []CheckStatus {
+func designChecks(findings []Finding, fkSkipped, dupSkipped, keySkipped string) []CheckStatus {
 	out := []CheckStatus{}
 	for _, c := range ChecksFor(CardDesign) {
 		st := CheckStatus{CheckID: c.ID, Title: c.Title, Status: CheckPassed}
 		skipped := fkSkipped
-		if c.ID == "IDX04" {
+		switch c.ID {
+		case "IDX04":
 			skipped = dupSkipped
+		case "DES01":
+			skipped = keySkipped
 		}
 		switch {
 		case skipped != "":
@@ -441,7 +470,7 @@ func designFacts(f DesignFacts, w DesignWindow, windowOK bool, idx14 []Finding, 
 	if f.CountsError == "" {
 		tables.Value = n0int(int64(f.UserTables))
 	}
-	return []Fact{keys, costing, dups, since, tables}
+	return []Fact{keys, costing, dups, des01Fact(f), since, tables}
 }
 
 // IDX04, duplicate indexes (docs/phase5o-contract.md, section 2; PerformanceTriage.sql 426-458 and
@@ -999,7 +1028,19 @@ func AvailableDesignFixes(f DesignFacts, findings []Finding) []Fix {
 	out := []Fix{}
 	def, _ := FindFixDef(FixCreateIndex)
 	disable, _ := FindFixDef(FixDisableIndex)
+	addKey, _ := FindFixDef(FixAddPrimaryKey)
 	for _, x := range findings {
+		if x.CheckID == "DES01" && x.FixID == FixAddPrimaryKey {
+			// Phase 5s (docs/phase5s-contract.md, section 2): one add-primary-key per table.
+			for _, t := range f.NoKeyTables {
+				if t.Object() == x.Object {
+					out = append(out, Fix{ID: addKey.ID, Title: addKey.Title, Scope: addKey.Scope, CheckID: x.CheckID, Setting: addKey.Setting,
+						Current: "none", Target: "primary key on " + designName(t.Schema, t.Table), Options: PrimaryKeyOptions(t)})
+					break
+				}
+			}
+			continue
+		}
 		if x.CheckID == "IDX04" && x.FixID == FixDisableIndex {
 			for _, t := range f.IndexTables {
 				if QuoteName(t.Schema)+"."+QuoteName(t.Table) != x.Object {

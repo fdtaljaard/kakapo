@@ -84,7 +84,7 @@ func TestMaintInstallStatementBatches(t *testing.T) {
 	s := maintRow()
 	stmt := MaintInstallStatement(false, s)
 	b := SplitBatches(stmt)
-	if len(b) != 6 || b[0] != "USE master;" || !strings.HasPrefix(b[4], "/* kakapo */\nALTER PROCEDURE dbo.kakapo_Maintenance") {
+	if len(b) != 8 || b[0] != "USE master;" || !strings.HasPrefix(b[4], "/* kakapo */\nALTER PROCEDURE dbo.kakapo_Maintenance") {
 		t.Fatalf("%d batches: %q", len(b), b)
 	}
 	for i, x := range b[1:] {
@@ -100,7 +100,40 @@ func TestMaintInstallStatementBatches(t *testing.T) {
 	if !strings.Contains(b[3], "EXEC (N'CREATE PROCEDURE dbo.kakapo_Maintenance AS RETURN 0;')") {
 		t.Errorf("stub %q", b[3])
 	}
-	up := b[5]
+	// The signature (module signing, after the ALTER that drops any old one) and SYSTEM's EXECUTE.
+	sign, sched := b[5], b[6]
+	for _, want := range []string{"SET XACT_ABORT ON;", "BEGIN TRANSACTION;", "DROP SIGNATURE FROM dbo.kakapo_Maintenance BY CERTIFICATE [kakapo_MaintenanceCert];",
+		"IF SUSER_ID(N'kakapo_MaintenanceLogin') IS NOT NULL DROP LOGIN [kakapo_MaintenanceLogin];", "IF CERT_ID(N'kakapo_MaintenanceCert') IS NOT NULL DROP CERTIFICATE [kakapo_MaintenanceCert];",
+		"CONVERT(nvarchar(36), NEWID()) + LOWER(CONVERT(nvarchar(36), NEWID()))", "EXPIRY_DATE = ''99991231''",
+		"CREATE LOGIN [kakapo_MaintenanceLogin] FROM CERTIFICATE [kakapo_MaintenanceCert];", "ALTER SERVER ROLE [sysadmin] ADD MEMBER [kakapo_MaintenanceLogin];",
+		"N'ADD SIGNATURE TO dbo.kakapo_Maintenance BY CERTIFICATE [kakapo_MaintenanceCert] WITH PASSWORD = '''", "ALTER CERTIFICATE [kakapo_MaintenanceCert] REMOVE PRIVATE KEY;\nCOMMIT;",
+		"Erland Sommarskog", "Module signing"} {
+		if !strings.Contains(sign, want) {
+			t.Errorf("signing batch lacks %q", want)
+		}
+	}
+	if strings.Index(sign, "ADD SIGNATURE") > strings.Index(sign, "REMOVE PRIVATE KEY") {
+		t.Error("the private key is removed before signing")
+	}
+	for _, want := range []string{"WHERE dp.sid = SUSER_SID(N'NT AUTHORITY\\SYSTEM')", "CREATE USER [NT AUTHORITY\\SYSTEM] FOR LOGIN [NT AUTHORITY\\SYSTEM];",
+		"sys.sp_addextendedproperty @name = N'kakapo'", "SET @sql = N'GRANT EXECUTE ON dbo.kakapo_Maintenance TO ' + QUOTENAME(@user) + N';';\n    EXEC (@sql);"} {
+		if !strings.Contains(sched, want) {
+			t.Errorf("SYSTEM batch lacks %q", want)
+		}
+	}
+	if strings.Contains(strings.ToUpper(sched), "SYSADMIN") || strings.Contains(sched, "ALTER SERVER ROLE") {
+		t.Error("SYSTEM is given more than EXECUTE")
+	}
+	// EXEC (...) takes literals and variables only, never a function call: every one is EXEC (@sql) or one literal.
+	for _, script := range []string{stmt, MaintDropStatement()} {
+		for _, part := range strings.Split(script, "EXEC (")[1:] {
+			arg := part[:strings.Index(part, ")")]
+			if arg != "@sql" && (strings.Contains(arg, "+") || strings.Contains(arg, "QUOTENAME")) {
+				t.Errorf("EXEC (%s): build the string in a variable first", arg)
+			}
+		}
+	}
+	up := b[7]
 	for _, want := range []string{"WHERE DatabaseName = N'WarehouseLive';", "IF @@ROWCOUNT = 0", "BackupFolder = N'D:\\Backup', KeepBackupDays = 7, FullTime = '22:00', LogMinutes = 15, CheckDay = 1",
 		"VALUES (N'WarehouseLive', N'D:\\Backup', 7, '22:00', 15, 1, '01:00', '01:00', 0, '03:00', 1, '05:00', 30, 1)"} {
 		if !strings.Contains(up, want) {
@@ -115,7 +148,9 @@ func TestMaintInstallStatementBatches(t *testing.T) {
 		t.Errorf("split %q", got)
 	}
 	drop := SplitBatches(MaintDropStatement())
-	if len(drop) != 2 || !strings.Contains(drop[1], "DROP PROCEDURE dbo.kakapo_Maintenance") || !strings.Contains(drop[1], "DROP TABLE dbo.kakapo_MaintenanceLog") {
+	if len(drop) != 2 || !strings.Contains(drop[1], "DROP PROCEDURE dbo.kakapo_Maintenance") || !strings.Contains(drop[1], "DROP TABLE dbo.kakapo_MaintenanceLog") ||
+		!strings.Contains(drop[1], "DROP LOGIN [kakapo_MaintenanceLogin]") || !strings.Contains(drop[1], "DROP CERTIFICATE [kakapo_MaintenanceCert]") ||
+		!strings.Contains(drop[1], "ep.name = N'kakapo'") || strings.Index(drop[1], "DROP CERTIFICATE") < strings.Index(drop[1], "DROP PROCEDURE") {
 		t.Errorf("drop %q", drop)
 	}
 	if got := MaintRunNowStatement("Ware'house"); got != "EXEC master.dbo.kakapo_Maintenance @Database = N'Ware''house';" {
@@ -181,14 +216,15 @@ func TestMaintDue(t *testing.T) {
 
 func maintInstallFacts() MaintInstallFacts {
 	return MaintInstallFacts{MaintProcFacts: MaintProcFacts{ServerName: `SQL1\EXPRESS`, ProductVersion: "16.0.4135.4", EngineEdition: 4, Edition: "Express Edition (64-bit)",
-		ServerNow: mnov(10, 14, 0), Database: "WarehouseLive", RecoveryModel: "FULL", DefaultBackupDir: `D:\Backup\`, Settings: []MaintSettings{}},
+		ServerNow: mnov(10, 14, 0), Database: "WarehouseLive", RecoveryModel: "FULL", DefaultBackupDir: `D:\Backup\`, Settings: []MaintSettings{},
+		Signing: MaintSigning{SchedulerLogin: true}},
 		FolderChecked: true, FolderExists: true}
 }
 
 func TestBuildInstallMaintenanceProcFix(t *testing.T) {
 	f := maintInstallFacts()
 	p, fix, err := BuildInstallMaintenanceProcFix(f, nil)
-	if err != nil || fix.ID != FixInstallMaintenanceProc || len(p.Changes) != 10 {
+	if err != nil || fix.ID != FixInstallMaintenanceProc || len(p.Changes) != 12 {
 		t.Fatalf("%v %+v %d changes %+v", err, fix, len(p.Changes), p.Changes)
 	}
 	if p.Changes[0].Target != "created" || p.Changes[3].Setting != "Settings for WarehouseLive" || p.Changes[3].Current != "none" ||
@@ -201,14 +237,28 @@ func TestBuildInstallMaintenanceProcFix(t *testing.T) {
 	}
 	// The warnings, in the contract's order.
 	w := p.Warnings
-	if len(w) != 5 || !strings.HasPrefix(w[0], "Nothing runs until something calls the procedure.") ||
+	if len(w) != 7 || !strings.HasPrefix(w[0], "Nothing runs until something calls the procedure.") ||
 		!strings.Contains(w[0], `schtasks /Create /TN "kakapo maintenance" /SC MINUTE /MO 15 /RU SYSTEM /TR "sqlcmd -S SQL1\EXPRESS -E -b -Q \"EXEC master.dbo.kakapo_Maintenance\""`) ||
-		!strings.Contains(w[0], "sysadmin, or db_owner of each database") || !strings.Contains(w[1], "FULL recovery: call the procedure every 15 minutes") ||
-		!strings.Contains(w[2], "service account") || !strings.Contains(w[3], "Express cannot compress") || !strings.HasPrefix(w[4], "Needs sysadmin") {
+		!strings.Contains(w[0], "It runs as NT AUTHORITY\\SYSTEM, which may EXECUTE this one procedure and nothing else") || !strings.Contains(w[1], "FULL recovery: call the procedure every 15 minutes") ||
+		!strings.Contains(w[2], "service account") || !strings.Contains(w[3], "Express cannot compress") ||
+		!strings.Contains(w[4], "whose login kakapo_MaintenanceLogin is sysadmin") || !strings.Contains(w[4], "private key is removed") ||
+		!strings.Contains(w[5], "removes its signature") || !strings.HasPrefix(w[6], "Needs sysadmin") {
 		t.Errorf("warnings %q", w)
 	}
 	if strings.Contains(p.Statement, "COMPRESSION") || !strings.Contains(p.Statement, "USE master;\nGO\n") || p.Rollback != MaintDropStatement() {
 		t.Errorf("statement or rollback\n%s", p.Rollback)
+	}
+	if c := p.Changes[10]; c.Setting != "Signature" || c.Current != "none" || !strings.Contains(c.Target, "private key removed") {
+		t.Errorf("signature row %+v", c)
+	}
+	if c := p.Changes[11]; c.Setting != `NT AUTHORITY\SYSTEM in master` || c.Current != "no master user" ||
+		c.Target != "a master user (kakapo's), with EXECUTE on dbo.kakapo_Maintenance only" {
+		t.Errorf("SYSTEM row %+v", c)
+	}
+	nologin := f
+	nologin.Signing.SchedulerLogin = false
+	if p, _, _ := BuildInstallMaintenanceProcFix(nologin, nil); !strings.Contains(p.Warnings[1], "has no login on") || p.Changes[11].Target != "nothing: there is no login to grant to" {
+		t.Errorf("no SYSTEM login %q", p.Warnings[1])
 	}
 	if len(p.Needs) != 2 || p.Needs[0].Path != `D:\Backup` {
 		t.Errorf("room %+v", p.Needs)
@@ -295,10 +345,10 @@ func TestBuildRemoveMaintenanceProcFix(t *testing.T) {
 	f.ProcExists, f.ProcOurs, f.ProcVersion, f.SettingsExists, f.LogExists = true, true, 1, true, true
 	f.Settings = []MaintSettings{maintRow(), maintDefaults("Payroll", `D:\Backup`)}
 	p, fix, err := BuildRemoveMaintenanceProcFix(f, nil)
-	if err != nil || len(p.Changes) != 3 || p.Statement != MaintDropStatement() || fix.Target != "none" {
+	if err != nil || len(p.Changes) != 4 || p.Statement != MaintDropStatement() || fix.Target != "none" || p.Changes[3].Setting != "Signature" {
 		t.Fatalf("%v %+v", err, p.Changes)
 	}
-	if b := SplitBatches(p.Rollback); len(b) != 7 || !strings.Contains(b[5], "N'WarehouseLive'") || !strings.Contains(b[6], "N'Payroll'") {
+	if b := SplitBatches(p.Rollback); len(b) != 9 || !strings.Contains(b[5], "ADD SIGNATURE") || !strings.Contains(b[7], "N'WarehouseLive'") || !strings.Contains(b[8], "N'Payroll'") {
 		t.Errorf("rollback recreates both rows: %d batches", len(b))
 	}
 	joined := strings.Join(p.Warnings, " ")
@@ -329,12 +379,13 @@ func TestBuildRemoveMaintenanceProcFix(t *testing.T) {
 func TestMaintInstallReadBack(t *testing.T) {
 	f := maintInstallFacts().MaintProcFacts
 	f.ProcExists, f.ProcOurs, f.ProcVersion, f.SettingsExists, f.LogExists = true, true, 1, true, true
+	f.Signing = maintSigned()
 	want := maintRow()
 	f.Settings = []MaintSettings{want}
 	runs := []MaintRun{{Task: PieceFullBackup, Outcome: MaintOK, File: `D:\Backup\WarehouseLive\WarehouseLive_FULL_20261110_140000.bak`},
 		{Task: PieceStatistics, Outcome: MaintSkipped}}
 	text, ok := MaintInstallReadBack(f, want, true, "", runs)
-	if !ok || !strings.Contains(text, "procedure version 1 and both tables in master; settings for WarehouseLive as previewed; run now: full-backup ok (D:") {
+	if !ok || !strings.Contains(text, `procedure version 1 and both tables in master; settings for WarehouseLive as previewed; signed by the certificate kakapo_MaintenanceCert (its private key removed); its login kakapo_MaintenanceLogin is sysadmin; NT AUTHORITY\SYSTEM may EXECUTE it; run now: full-backup ok (D:`) {
 		t.Errorf("%v %s", ok, text)
 	}
 	changed := want
@@ -348,7 +399,49 @@ func maintInstalled(created time.Time, rows ...MaintTaskLog) MaintProcFacts {
 	s := maintRow()
 	s.CreatedAt = &created
 	return MaintProcFacts{ServerName: "SQL1", EngineEdition: 4, Database: "WarehouseLive", RecoveryModel: "FULL",
-		ProcExists: true, ProcOurs: true, ProcVersion: 1, SettingsExists: true, LogExists: true, Settings: []MaintSettings{s}, Tasks: rows}
+		ProcExists: true, ProcOurs: true, ProcVersion: 1, SettingsExists: true, LogExists: true, Settings: []MaintSettings{s}, Tasks: rows,
+		Signing: maintSigned()}
+}
+
+// maintSigned is a signature ready for the scheduled task.
+func maintSigned() MaintSigning {
+	return MaintSigning{CertExists: true, Signed: true, CertLogin: true, CertSysadmin: true, SchedulerLogin: true, SchedulerUser: true,
+		SchedulerUserOurs: true, SchedulerExecute: true}
+}
+
+func TestMaintSigning(t *testing.T) {
+	s := maintSigned()
+	if !s.Ready() || s.Words() != `signed by the certificate kakapo_MaintenanceCert (its private key removed); its login kakapo_MaintenanceLogin is sysadmin; NT AUTHORITY\SYSTEM may EXECUTE it` {
+		t.Errorf("ready %v %s", s.Ready(), s.Words())
+	}
+	for name, change := range map[string]func(*MaintSigning){
+		"unsigned (altered by hand)": func(x *MaintSigning) { x.Signed = false },
+		"private key still there":    func(x *MaintSigning) { x.CertPrivateKey = true },
+		"login not sysadmin":         func(x *MaintSigning) { x.CertSysadmin = false },
+		"SYSTEM cannot execute":      func(x *MaintSigning) { x.SchedulerExecute = false },
+	} {
+		x := maintSigned()
+		change(&x)
+		if x.Ready() {
+			t.Errorf("%s: ready", name)
+		}
+	}
+	// Remove takes kakapo's SYSTEM user with it, and says so.
+	f := maintInstalled(mnov(10, 14, 0))
+	p, _, _ := BuildRemoveMaintenanceProcFix(f, nil)
+	if len(p.Changes) != 5 || p.Changes[4].Target != "dropped" {
+		t.Errorf("remove with kakapo's SYSTEM user %+v", p.Changes)
+	}
+	left := f
+	left.ProcExists, left.SettingsExists, left.LogExists = false, false, false
+	if text, ok := MaintRemoveReadBack(left, MaintRemoveAll); ok || !strings.Contains(text, "the certificate kakapo_MaintenanceCert") || !strings.Contains(text, "the login kakapo_MaintenanceLogin") {
+		t.Errorf("remove read-back with the signature left: %s", text)
+	}
+	// The helper row says when a call as SYSTEM would fail.
+	f.Signing.Signed = false
+	if h, _ := maintHelperLine(&f, 4); !strings.Contains(h.Sentence, "not ready for the scheduled task") {
+		t.Error(h.Sentence)
+	}
 }
 
 // The plan row's words from the log rows.
