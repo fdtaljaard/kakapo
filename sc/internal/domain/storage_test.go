@@ -506,11 +506,12 @@ func TestStorageSTO09(t *testing.T) {
 	x := one(t, fs, "STO09")
 	for _, want := range []string{
 		"Send this to the infrastructure/storage team.",
-		`Most of the waiting on D:\ comes from WarehouseTest, not this database: 84% since the restart (441.0 GB written, 120.0 GB read).`,
+		`WarehouseTest accounts for 84% of the time spent waiting on D:\ since the restart (441.0 GB written, 120.0 GB read), not this database.`,
 		`1. This server is a virtual machine: check the storage under D:\ on the host`,
-		`2. Keep SQL Server's files out of antivirus scanning: exclude D:\Data\ (the .mdf`,
+		`2. Antivirus is one possible cause. With the security team's approval, keep SQL Server's files out of real-time scanning: exclude D:\Data\ (the .mdf`,
 		`3. Measure on the SQL Server machine for 15 minutes during business hours, in a command prompt:` + "\n" +
 			`typeperf "\LogicalDisk(D:)\Avg. Disk sec/Read" "\LogicalDisk(D:)\Avg. Disk sec/Write" -si 15 -sc 60`,
+		"Readings that stay above 0.020 (20 ms) point to a storage problem to investigate.",
 		"Also check memory (INS02/INS03)",
 	} {
 		if !strings.Contains(x.DoThis, want) {
@@ -520,16 +521,25 @@ func TestStorageSTO09(t *testing.T) {
 	if !x.OnServerMachine() || x.Evidence != `Reads: 2,000 (avg 30 ms). Waiting on D:\ since the restart: WarehouseTest 84%, WarehouseLive 16%.` {
 		t.Errorf("STO09 evidence %q", x.Evidence)
 	}
+	// TempDB the busy one: what makes it busy, not only what fills it.
+	f.VolumeLoads[3].Volume = `D:\`
+	_, fs, _ = sbuild(f)
+	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "tempdb accounts for 84% of the time spent waiting on D:\\") ||
+		!strings.Contains(x.DoThis, "spill sorts and hashes to disk") || !strings.Contains(x.DoThis, "A bigger TempDB does not fix this.") {
+		t.Errorf("STO09 tempdb busy:\n%s", x.DoThis)
+	}
+	f.VolumeLoads[3].Volume = `T:\`
+
 	// This database the busy one, a physical server: no busy line, the physical check.
 	f.VolumeLoads[0].StallMs, f.VirtualMachine = 10, "NONE"
 	_, fs, _ = sbuild(f)
-	if x := one(t, fs, "STO09"); strings.Contains(x.DoThis, "Most of the waiting") || !strings.Contains(x.DoThis, "1. This server is physical") {
+	if x := one(t, fs, "STO09"); strings.Contains(x.DoThis, "accounts for") || !strings.Contains(x.DoThis, "1. This server is physical") {
 		t.Errorf("STO09 mine, physical:\n%s", x.DoThis)
 	}
 	// Loads and VM not read: the request still names the folders and the measurement.
 	f.VolumeLoads, f.VirtualMachine = nil, ""
 	_, fs, _ = sbuild(f)
-	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "1. Keep SQL Server's files out") || x.Evidence != "Reads: 2,000 (avg 30 ms)." {
+	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "1. Antivirus is one possible cause.") || x.Evidence != "Reads: 2,000 (avg 30 ms)." {
 		t.Errorf("STO09 unread:\n%s / %q", x.DoThis, x.Evidence)
 	}
 

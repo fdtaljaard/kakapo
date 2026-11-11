@@ -1073,10 +1073,13 @@ func (b *storageBuild) sto09Do(volume string, slow []StorageFile) string {
 	}
 	if shares := f.volumeShares(volume); len(shares) > 0 && shares[0].Pct >= 50 && !strings.EqualFold(shares[0].Database, f.Database) {
 		top := shares[0]
-		busy := fmt.Sprintf("Most of the waiting on %s comes from %s, not this database: %d%% since the restart (%s written, %s read).",
-			where, top.Database, top.Pct, sizeText(float64(top.Written)/1048576), sizeText(float64(top.Read)/1048576))
+		// The share of the time spent waiting, which points where to look; it does not prove the cause.
+		busy := fmt.Sprintf("%s accounts for %d%% of the time spent waiting on %s since the restart (%s written, %s read), not this database.",
+			top.Database, top.Pct, where, sizeText(float64(top.Written)/1048576), sizeText(float64(top.Read)/1048576))
 		if strings.EqualFold(top.Database, "tempdb") {
-			busy += " Find what fills TempDB (TMP03) before buying faster storage."
+			busy += " Look at what makes TempDB this busy before buying faster storage: queries that spill sorts and hashes to disk," +
+				" temporary tables, and the row versions snapshot isolation keeps (the version store). TMP03 shows which of these holds" +
+				" TempDB, and QRY01 each slow query's spills and TempDB use. A bigger TempDB does not fix this."
 		} else {
 			busy += " If it is a test or reporting database, moving it off this server, or off " + where + ", is the quickest relief."
 		}
@@ -1094,13 +1097,15 @@ func (b *storageBuild) sto09Do(volume string, slow []StorageFile) string {
 		step("This server is physical: check the disk controller (its cache and battery), the RAID set and the drives under " + where + ".")
 	}
 	if folders := f.sqlFolders(volume, slow); len(folders) > 0 {
-		step("Keep SQL Server's files out of antivirus scanning: exclude " + strings.Join(folders, ", ") + " (the .mdf, .ndf and .ldf files).")
+		step("Antivirus is one possible cause. With the security team's approval, keep SQL Server's files out of real-time scanning: exclude " +
+			strings.Join(folders, ", ") + " (the .mdf, .ndf and .ldf files).")
 	}
 	if len(volume) >= 2 && volume[1] == ':' {
 		disk := strings.TrimRight(volume, `\`)
 		step(fmt.Sprintf("Measure on the SQL Server machine for 15 minutes during business hours, in a command prompt:\n"+
 			`typeperf "\LogicalDisk(%s)\Avg. Disk sec/Read" "\LogicalDisk(%s)\Avg. Disk sec/Write" -si 15 -sc 60`+
-			"\nAbove 0.020 (20 ms) means the disk itself is slow.", disk, disk))
+			"\nReadings that stay above 0.020 (20 ms) point to a storage problem to investigate. Windows measures the whole path"+
+			" to the disk, not the drive alone.", disk, disk))
 	}
 	lines = append(lines, sto09Also)
 	return strings.Join(lines, "\n")
