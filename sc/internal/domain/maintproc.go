@@ -554,7 +554,7 @@ const (
 	maintKeepBackupHelp  = "Backup files older than this are deleted after each verified backup: 1 to 60 days."
 	maintKeepHistoryHelp = "msdb's backup and job history and the procedure's own log older than this are deleted weekly: 7 to 365 days."
 	maintRunNowHelp      = "Call the procedure once for this database as soon as it is installed, so the first full backup is taken now. kakapo waits while it runs."
-	maintIndexHelp       = "Weekly on the maintenance day: reorganise from 50% fragmentation; from 80%, rebuild online where the edition can and reorganise elsewhere, never offline; tables of 1,000 pages or more (Ola Hallengren's IndexOptimize, Brent Ozar's thresholds). Off by default: statistics matter more."
+	maintIndexHelp       = "Weekly on the maintenance day: reorganise from 50% fragmentation; from 80%, rebuild online where the edition can and reorganise elsewhere, never offline; tables of 1,000 pages or more; no new step after the 6-hour window, each step logged in Ola's CommandLog (Ola Hallengren's IndexOptimize, Brent Ozar's thresholds). Off by default: statistics matter more."
 	maintDayHelp         = "The integrity check, index work and the history cleanup run on this day; statistics on the other nights."
 )
 

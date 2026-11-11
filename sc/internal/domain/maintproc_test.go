@@ -33,7 +33,7 @@ func TestMaintProcSQL(t *testing.T) {
 	}
 	for _, want := range []string{
 		// the marker and the parameter
-		"/* kakapo maintenance procedure, version 1.", "ALTER PROCEDURE dbo.kakapo_Maintenance\n    @Database sysname = NULL",
+		"/* kakapo maintenance procedure, version 2.", "ALTER PROCEDURE dbo.kakapo_Maintenance\n    @Database sysname = NULL",
 		// the due rules
 		"DATEDIFF(DAY, '19000107', @now) % 7 + 1", "Outcome IN ('OK', 'Failed')", "AND Outcome = 'OK')", "DATEADD(HOUR, 6, @checkDue)",
 		"@logMinutes * 60 - 60", "WHERE Task = 'history-cleanup' AND StartTime >= @cleanupDue AND Outcome = 'OK'",
@@ -49,6 +49,9 @@ func TestMaintProcSQL(t *testing.T) {
 		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE''", "@FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000",
 		"EXECUTE master.dbo.DatabaseBackup @Databases = N'''", "@BackupType = ''FULL'', @Verify = ''Y'', @CheckSum = ''Y''", "@BackupType = ''LOG''",
 		"Skipped: index work needs Ola Hallengren''s IndexOptimize",
+		"CASE WHEN OBJECT_ID(N'master.dbo.CommandLog', N'U') IS NOT NULL THEN N', @LogToTable = ''Y''' ELSE N'' END + N';'",
+		"SET @left = DATEDIFF(SECOND, GETDATE(), DATEADD(HOUR, 6, @due));", "closed before index work could start",
+		"SET @cmd = LEFT(@cmd, LEN(@cmd) - 1) + N', @TimeLimit = ' + CONVERT(nvarchar(12), @left) + N';';",
 		// the locks, the failures, the tag
 		"sys.sp_getapplock @Resource = @lockRes, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0",
 		"N'kakapo_Maintenance ' + @lockKind", "sys.sp_releaseapplock @Resource = @lockRes, @LockOwner = 'Session'",
@@ -324,7 +327,7 @@ func TestBuildInstallMaintenanceProcFix(t *testing.T) {
 	row.KeepBackupDays, row.Folder = 14, `E:\Bak`
 	inst.Settings = []MaintSettings{row}
 	p, _, _ = BuildInstallMaintenanceProcFix(inst, nil)
-	if p.Changes[0].Target != "updated in place (version 1 to 1)" || p.Changes[1].Target != "kept as it is" || !strings.Contains(p.Statement, "KeepBackupDays = 14") ||
+	if p.Changes[0].Target != "updated in place (version 1 to 2)" || p.Changes[1].Target != "kept as it is" || !strings.Contains(p.Statement, "KeepBackupDays = 14") ||
 		!strings.Contains(p.Statement, `N'E:\Bak'`) || !strings.Contains(p.Rollback, "UPDATE dbo.kakapo_MaintenanceSettings") || strings.Contains(p.Rollback, "DROP") {
 		t.Errorf("update %+v\n%s", p.Changes[:2], p.Rollback)
 	}
@@ -378,14 +381,14 @@ func TestBuildRemoveMaintenanceProcFix(t *testing.T) {
 
 func TestMaintInstallReadBack(t *testing.T) {
 	f := maintInstallFacts().MaintProcFacts
-	f.ProcExists, f.ProcOurs, f.ProcVersion, f.SettingsExists, f.LogExists = true, true, 1, true, true
+	f.ProcExists, f.ProcOurs, f.ProcVersion, f.SettingsExists, f.LogExists = true, true, MaintProcVersion, true, true
 	f.Signing = maintSigned()
 	want := maintRow()
 	f.Settings = []MaintSettings{want}
 	runs := []MaintRun{{Task: PieceFullBackup, Outcome: MaintOK, File: `D:\Backup\WarehouseLive\WarehouseLive_FULL_20261110_140000.bak`},
 		{Task: PieceStatistics, Outcome: MaintSkipped}}
 	text, ok := MaintInstallReadBack(f, want, true, "", runs)
-	if !ok || !strings.Contains(text, `procedure version 1 and both tables in master; settings for WarehouseLive as previewed; signed by the certificate kakapo_MaintenanceCert (its private key removed); its login kakapo_MaintenanceLogin is sysadmin; NT AUTHORITY\SYSTEM may EXECUTE it; run now: full-backup ok (D:`) {
+	if !ok || !strings.Contains(text, `procedure version 2 and both tables in master; settings for WarehouseLive as previewed; signed by the certificate kakapo_MaintenanceCert (its private key removed); its login kakapo_MaintenanceLogin is sysadmin; NT AUTHORITY\SYSTEM may EXECUTE it; run now: full-backup ok (D:`) {
 		t.Errorf("%v %s", ok, text)
 	}
 	changed := want
@@ -399,7 +402,7 @@ func maintInstalled(created time.Time, rows ...MaintTaskLog) MaintProcFacts {
 	s := maintRow()
 	s.CreatedAt = &created
 	return MaintProcFacts{ServerName: "SQL1", EngineEdition: 4, Database: "WarehouseLive", RecoveryModel: "FULL",
-		ProcExists: true, ProcOurs: true, ProcVersion: 1, SettingsExists: true, LogExists: true, Settings: []MaintSettings{s}, Tasks: rows,
+		ProcExists: true, ProcOurs: true, ProcVersion: MaintProcVersion, SettingsExists: true, LogExists: true, Settings: []MaintSettings{s}, Tasks: rows,
 		Signing: maintSigned()}
 }
 

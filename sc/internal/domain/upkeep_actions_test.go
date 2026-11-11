@@ -263,6 +263,9 @@ func TestMaintenanceJobWithOla(t *testing.T) {
 		"@freq_type = 8, @freq_interval = 1, @freq_recurrence_factor = 1, @active_start_time = 23000;",
 		"@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE'', @FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000",
 		"N'kakapo: indexes (WarehouseLive), Sunday 02:30'",
+		// Ola's CommandLog when it is there, and no new command after 6 hours.
+		"DECLARE @log char(1) = CASE WHEN OBJECT_ID(N''master.dbo.CommandLog'', N''U'') IS NULL THEN ''N'' ELSE ''Y'' END; EXECUTE master.dbo.IndexOptimize",
+		"@StatisticsModificationLevel = 5, @LogToTable = @log, @TimeLimit = 21600;'",
 	} {
 		if !strings.Contains(p.Statement, want) {
 			t.Errorf("index job lacks %q:\n%s", want, p.Statement)

@@ -17,7 +17,7 @@ const (
 	MaintSettingsName = "kakapo_MaintenanceSettings"
 	MaintLogName      = "kakapo_MaintenanceLog"
 	// MaintProcVersion is written into the procedure's header; a newer kakapo replaces an older one.
-	MaintProcVersion = 1
+	MaintProcVersion = 2
 	// maintMarker is the header line that makes a kakapo_Maintenance kakapo's.
 	maintMarker = "kakapo maintenance procedure, version "
 )
@@ -128,7 +128,7 @@ BEGIN
     DECLARE @tasks TABLE (ord int NOT NULL PRIMARY KEY, task varchar(20) NOT NULL, lockKind nvarchar(10) NOT NULL, due datetime NOT NULL,
             cmd nvarchar(max) NULL, backupFile nvarchar(800) NULL, skip nvarchar(400) NULL);
     DECLARE @t int, @task varchar(20), @lockKind nvarchar(10), @due datetime, @cmd nvarchar(max), @skip nvarchar(400), @lockRes nvarchar(255),
-            @held nvarchar(100), @id int, @rc int, @started datetime, @tookFull bit;
+            @held nvarchar(100), @id int, @rc int, @started datetime, @tookFull bit, @left int;
 
     IF @Database IS NOT NULL AND @n = 0
         SET @failed = @Database + N' has no enabled row in dbo.kakapo_MaintenanceSettings';
@@ -219,7 +219,10 @@ BEGIN
                    N'/* kakapo */ EXECUTE master.dbo.IndexOptimize @Databases = N''' + @qdb + N''', @FragmentationLow = NULL, '
                    + N'@FragmentationMedium = ''INDEX_REORGANIZE'', @FragmentationHigh = ''INDEX_REBUILD_ONLINE,INDEX_REORGANIZE'', '
                    + N'@FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000, @UpdateStatistics = ''ALL'', '
-                   + N'@OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5;',
+                   + N'@OnlyModifiedStatistics = ''Y'', @StatisticsModificationLevel = 5'
+                   /* Ola's CommandLog records each command, when it is there (IndexOptimize stops otherwise);
+                      @TimeLimit is added when the task starts: what is left of the window. */
+                   + CASE WHEN OBJECT_ID(N'master.dbo.CommandLog', N'U') IS NOT NULL THEN N', @LogToTable = ''Y''' ELSE N'' END + N';',
                    CASE WHEN OBJECT_ID(N'master.dbo.IndexOptimize', N'P') IS NULL OR OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NULL OR @olaName = 0
                         THEN N'Skipped: index work needs Ola Hallengren''s IndexOptimize in master (and a database name it can read).'
                         WHEN @now >= DATEADD(HOUR, {{WINDOW}}, @indexDue)
@@ -297,6 +300,18 @@ BEGIN
                AND (@tookFull = 1 /* this call's full backup is the fresh point: the next call backs up the log */
                     OR NOT EXISTS (SELECT 1 FROM sys.database_recovery_status WHERE database_id = DB_ID(@db) AND last_log_backup_lsn IS NOT NULL))
                 CONTINUE; /* no full backup yet: SQL Server cannot back up the log */
+
+            /* Index work starts no new command after the window closes (Ola's @TimeLimit, in seconds): the
+               integrity check may have used part of it. */
+            IF @task = 'indexes' AND @skip IS NULL
+            BEGIN
+                SET @left = DATEDIFF(SECOND, GETDATE(), DATEADD(HOUR, {{WINDOW}}, @due));
+                IF @left < 60
+                    SET @skip = N'Skipped: the window (' + CONVERT(nvarchar(16), @due, 120) + N' to '
+                              + CONVERT(nvarchar(16), DATEADD(HOUR, {{WINDOW}}, @due), 120) + N') closed before index work could start; it waits for the next one.';
+                ELSE
+                    SET @cmd = LEFT(@cmd, LEN(@cmd) - 1) + N', @TimeLimit = ' + CONVERT(nvarchar(12), @left) + N';';
+            END;
 
             IF @skip IS NOT NULL
             BEGIN

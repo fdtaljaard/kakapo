@@ -284,3 +284,14 @@ runs on Developer, where it is skipped); "the job disabled: MNT09 silent" (unit-
    - after more runs, the verdict compares before and after the change.
 4. **The fingerprint floor.** The page size at which the default sample stops reading every row is
    measured and written into this contract.
+
+## Later: two more of Ola's options (2026-11-11)
+
+The weekly index work now also passes two IndexOptimize options from Ola Hallengren's page:
+
+- `@LogToTable = 'Y'`, when `master.dbo.CommandLog` exists (IndexOptimize stops with an error without
+  it). Each index and statistics command is recorded with its times; kakapo's history cleanup already
+  prunes CommandLog.
+- `@TimeLimit`: no new command starts after the window. The procedure (version 2) passes what is left
+  of its 6-hour window when the task starts, and skips the task when under a minute is left. The Agent
+  job passes 6 hours.

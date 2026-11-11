@@ -615,9 +615,13 @@ func olaStatisticsCommand(db string) string {
 // Ozar's thresholds (FragmentationLevel1 50, FragmentationLevel2 80; "How to Configure Ola
 // Hallengren's IndexOptimize Maintenance Script"), Ola's 1,000-page floor, and never an offline
 // rebuild: Ola tries the listed operations in order, so Enterprise rebuilds online and every other
-// edition reorganises.
+// edition reorganises. Ola's @LogToTable records each command in master.dbo.CommandLog, when that
+// table is there (IndexOptimize stops with an error otherwise; kakapo's history cleanup prunes it), and
+// @TimeLimit starts no new command after maintWindowHours, so a long run does not reach working hours.
 func olaIndexCommand(db string) string {
-	return "EXECUTE master.dbo.IndexOptimize @Databases = " + nstr(db) + ", @FragmentationLow = NULL, @FragmentationMedium = 'INDEX_REORGANIZE', @FragmentationHigh = 'INDEX_REBUILD_ONLINE,INDEX_REORGANIZE', @FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000, @UpdateStatistics = 'ALL', @OnlyModifiedStatistics = 'Y', @StatisticsModificationLevel = 5;"
+	return "DECLARE @log char(1) = CASE WHEN OBJECT_ID(N'master.dbo.CommandLog', N'U') IS NULL THEN 'N' ELSE 'Y' END; " +
+		"EXECUTE master.dbo.IndexOptimize @Databases = " + nstr(db) + ", @FragmentationLow = NULL, @FragmentationMedium = 'INDEX_REORGANIZE', @FragmentationHigh = 'INDEX_REBUILD_ONLINE,INDEX_REORGANIZE', @FragmentationLevel1 = 50, @FragmentationLevel2 = 80, @MinNumberOfPages = 1000, @UpdateStatistics = 'ALL', @OnlyModifiedStatistics = 'Y', @StatisticsModificationLevel = 5, " +
+		fmt.Sprintf("@LogToTable = @log, @TimeLimit = %d;", maintWindowHours*3600)
 }
 
 func updateStatsCommand(db string) string { return "EXEC " + QuoteName(db) + ".sys.sp_updatestats;" }
