@@ -88,8 +88,8 @@
       "name": "Amber Notice",
       "kind": "custom",
       "refersTo": "notice",
-      "description": "Something to know before acting: SQL Server Express, Apply held back, One more step.",
-      "html": "<div class=\"ds-notice\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/></svg><span><strong>This is SQL Server Express, the free edition</strong><br/>It has no SQL Server Agent, so backups are scheduled by Windows Task Scheduler.</span></div>",
+      "description": "Something to do before or after acting: Apply held back, One more step.",
+      "html": "<div class=\"ds-notice\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/></svg><span><strong>Apply is held back</strong><br/>Set up log backups first, then come back here.</span></div>",
       "css": ".ds-notice { display: flex; gap: 6px; align-items: flex-start; max-width: 560px; padding: 8px 12px; border: 1px solid oklch(0.828 0.189 84.429); border-radius: 8px; background: oklch(0.769 0.188 70.08 / 10%); color: oklch(0.473 0.137 46.201); font: 400 0.875rem/1.43 'Geist Variable', sans-serif; } .ds-notice svg { flex-shrink: 0; margin-top: 2px; }"
     },
     {
@@ -124,7 +124,9 @@
       "Do set hosts, build stamps, paths, SQL and commands in monospace, with a Copy button on statement blocks.",
       "Do separate surfaces with the 10% ring, hairlines and the Quiet Surface tint.",
       "Do support light and dark through the existing tokens, following the operating system's theme.",
-      "Do fold expert detail (plans, per-file tables, raw counters) under the answer instead of removing it."
+      "Do fold expert detail (plans, per-file tables, raw counters) under the answer instead of removing it.",
+      "Do lead a verdict with what it means and put SQL Server's own name in brackets after it, and put raw settings on a quieter line under a plain one.",
+      "Do say \"Nothing to act on today\" in grey when there are no red flags: never a green tick above cards that still have things to do."
     ],
     "donts": [
       "Don't make it look like a DBA console: no grid or DMV columns as the first thing on a screen.",

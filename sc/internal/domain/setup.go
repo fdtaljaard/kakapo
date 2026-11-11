@@ -707,7 +707,7 @@ func (b *setupBuild) ins08() {
 
 func (b *setupBuild) ins09() {
 	if b.f.PriorityBoost == 1 {
-		b.ins("INS09", 2, "Offline", EffortQuickWin, "Priority boost is on.", ins09Why, ins09Do, "priority boost = 1", "")
+		b.ins("INS09", 2, "Offline", EffortQuickWin, "SQL Server runs at a raised Windows priority (priority boost is on).", ins09Why, ins09Do, "priority boost = 1", "")
 	}
 }
 
@@ -742,7 +742,7 @@ func (b *setupBuild) ins12() {
 	if lowNow {
 		finding = fmt.Sprintf("Windows is low on physical memory right now (%s MB free).", n0int(f.AvailableMB))
 	} else {
-		finding = fmt.Sprintf("Windows signalled low physical memory %d time(s) in the last 7 days", f.Low7)
+		finding = fmt.Sprintf("Windows signalled low physical memory %s in the last 7 days", timesText(int64(f.Low7)))
 		if f.Low24 > 0 {
 			finding += fmt.Sprintf(", %d of them in the last 24 hours", f.Low24)
 		}
@@ -1097,11 +1097,11 @@ func (b *setupBuild) databaseChecks() {
 	f := b.f
 	db := QuoteName(f.Database)
 	if f.AutoClose {
-		b.dbc("DBC02", 2, "Online", EffortQuickWin, "AUTO_CLOSE is on.", dbc02Why,
+		b.dbc("DBC02", 2, "Online", EffortQuickWin, "The database shuts itself down when nobody is connected (AUTO_CLOSE is on).", dbc02Why,
 			"ALTER DATABASE "+db+" SET AUTO_CLOSE OFF;", "", "auto-close")
 	}
 	if f.AutoShrink {
-		b.dbc("DBC03", 2, "Online", EffortQuickWin, "AUTO_SHRINK is on.", dbc03Why,
+		b.dbc("DBC03", 2, "Online", EffortQuickWin, "The database shrinks its own files by itself (AUTO_SHRINK is on).", dbc03Why,
 			"ALTER DATABASE "+db+" SET AUTO_SHRINK OFF;", "", "auto-shrink")
 	}
 	if f.PageVerify != "CHECKSUM" {
@@ -1153,7 +1153,7 @@ func (b *setupBuild) databaseChecks() {
 	}
 	b.dbc10()
 	if f.Trustworthy {
-		b.dbc("DBC11", 4, "Planned", EffortModerate, "TRUSTWORTHY is on.", dbc11Why,
+		b.dbc("DBC11", 4, "Planned", EffortModerate, "Code inside this database can act with server-wide rights (TRUSTWORTHY is on).", dbc11Why,
 			"Find out why it is on. If CLR code needs it, the safer alternative is signing the assembly with a certificate. Test before: ALTER DATABASE "+db+" SET TRUSTWORTHY OFF;",
 			"", "")
 	}

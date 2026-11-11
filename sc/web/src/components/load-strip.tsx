@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Wrench } from "lucide-react"
+import { RotateCw, Wrench } from "lucide-react"
 
 import type { RedFlags } from "@/api"
 import { loadDayChoices, withLive, type Load, type LoadDays, type LoadHour, type LoadMeasure } from "@/api-load"
@@ -50,6 +50,8 @@ export function LoadStrip({
   error,
   stale,
   overviewFlags,
+  flagsUnread = false,
+  onRetry,
   onApplied,
 }: {
   serverId: number
@@ -61,6 +63,10 @@ export function LoadStrip({
   error: string | null
   stale: boolean
   overviewFlags: RedFlags | null
+  // The overview could not be read at all, so there are no red flags to wait for.
+  flagsUnread?: boolean
+  // Read the load again after a failure.
+  onRetry: () => void
   onApplied: () => void
 }) {
   const [fixing, setFixing] = useState<QueryAction | null>(null)
@@ -68,7 +74,7 @@ export function LoadStrip({
   const flags = overviewFlags && load && !load.liveError ? withLive(overviewFlags, load.liveFlags) : overviewFlags
 
   return (
-    <Card size="sm" className="grid gap-2.5 px-4 py-3" aria-label="Load and red flags">
+    <Card size="sm" className="grid gap-2.5 px-4 py-3" role="region" aria-label="Load and red flags">
       <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 text-sm">
         <span className="font-semibold">Load now</span>
         {load && !load.message ? (
@@ -87,7 +93,13 @@ export function LoadStrip({
         ) : load?.message ? (
           <span className="text-muted-foreground">{load.message}</span>
         ) : error ? (
-          <span className="text-muted-foreground break-words">Could not read the load: {error}</span>
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
+            <span title={error}>Could not read the load just now.</span>
+            <Button variant="outline" size="sm" className="h-7" onClick={onRetry}>
+              <RotateCw />
+              Try again
+            </Button>
+          </span>
         ) : (
           loading && <Skeleton className="h-5 w-72" />
         )}
@@ -104,7 +116,7 @@ export function LoadStrip({
               <>not refreshed since {serverClock(load.serverNow)}</>
             ) : (
               <>
-                <span className="size-[7px] rounded-full bg-[#0ca30c] motion-safe:animate-pulse" aria-hidden />
+                <span className="size-[7px] rounded-full bg-muted-foreground/60 motion-safe:animate-pulse" aria-hidden />
                 {load.now.showSince && load.now.since ? `since ${serverClock(load.now.since)}, ` : ""}
                 {serverClock(load.serverNow)} · every minute
               </>
@@ -117,9 +129,11 @@ export function LoadStrip({
               key={d}
               type="button"
               aria-pressed={d === days}
+              // Nothing to compare while the load could not be read.
+              disabled={!load}
               onClick={() => onDays(d)}
               className={cn(
-                "px-2.5 py-0.5 text-xs",
+                "min-h-6 px-2.5 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50",
                 d === days ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted",
               )}
             >
@@ -133,7 +147,7 @@ export function LoadStrip({
       {load && load.notes.length > 0 && <p className="text-xs text-muted-foreground break-words">{load.notes.join(" ")}</p>}
 
       <div className="border-t pt-2.5">
-        <RedFlagList flags={flags} serverId={serverId} database={database} />
+        <RedFlagList flags={flags} serverId={serverId} database={database} unread={flagsUnread} />
       </div>
 
       {fixing && (
@@ -212,9 +226,27 @@ function TodayChart({ load }: { load: Load }) {
         <Key className="bg-[#2a78d6] dark:bg-[#3987e5]" text="today, above the usual range" />
         {band ? <Key className="bg-[#ecebe6] dark:bg-[#2a2a28]" text={load.key} /> : <li>{load.key}</li>}
       </ul>
-      <p className="sr-only">
-        Cores busy by this database's queries, hour by hour today, against the {kind} compared.
-      </p>
+      <table className="sr-only">
+        <caption>Cores busy by this database's queries, hour by hour today, against the {kind} compared.</caption>
+        <thead>
+          <tr>
+            <th scope="col">Hour</th>
+            <th scope="col">Today</th>
+            <th scope="col">Usual</th>
+          </tr>
+        </thead>
+        <tbody>
+          {hours
+            .filter((h) => !h.future)
+            .map((h) => (
+              <tr key={h.hour}>
+                <th scope="row">{`${String(h.hour).padStart(2, "0")}:00`}</th>
+                <td>{h.cores.value === null ? "nothing recorded" : `${decimal(h.cores.value)} cores${h.inProgress ? " so far" : ""}`}</td>
+                <td>{h.cores.low !== null && h.cores.high !== null ? `${decimal(h.cores.low)} to ${decimal(h.cores.high)}` : "not known"}</td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
     </div>
   )
 }

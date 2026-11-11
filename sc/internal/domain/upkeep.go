@@ -461,7 +461,7 @@ func (b *upkeepBuild) mnt02() {
 			evidence += "Step \"" + j.Step + "\": " + j.Message
 		}
 		b.ins("MNT02", rank, "Online", EffortModerate,
-			fmt.Sprintf("Agent job \"%s\" failed %d time(s) in the last 7 days.", j.Name, j.Fails), mnt02Why, mnt02Do,
+			fmt.Sprintf("Agent job \"%s\" failed %s in the last 7 days.", j.Name, timesText(int64(j.Fails))), mnt02Why, mnt02Do,
 			strings.TrimSpace(left(evidence, 4000)))
 	}
 }
@@ -592,12 +592,12 @@ func (b *upkeepBuild) mnt05() {
 			finding, why, do := "", mnt05CacheWhy, mnt05CacheDo
 			switch x.Kind {
 			case TraceShrink:
-				finding = fmt.Sprintf("A database or file was shrunk %d time(s) in the last 7 days.", x.Count)
+				finding = fmt.Sprintf("A database or file was shrunk %s in the last 7 days.", timesText(int64(x.Count)))
 				why, do = mnt05ShrinkWhy, mnt05ShrinkDo
 			case TraceEvict:
 				// Informational, as DarlingData sp_PerfCheck.sql 1984 ranks a plan-handle FREEPROCCACHE.
 				rank, changeType, effort = 5, "None", EffortNone
-				finding = fmt.Sprintf("One plan was evicted from the cache %d time(s) in the last 7 days.", x.Count)
+				finding = fmt.Sprintf("One plan was evicted from the cache %s in the last 7 days.", timesText(int64(x.Count)))
 				why, do = mnt05EvictWhy, mnt05EvictDo
 			case TraceAutoShrink:
 				finding = fmt.Sprintf("AUTO_SHRINK ran %d times in the last 7 days on %s.", x.Count, b.on(x.Database))
@@ -606,7 +606,7 @@ func (b *upkeepBuild) mnt05() {
 					fix = FixAutoShrink
 				}
 			default:
-				finding = fmt.Sprintf("The plan cache or buffer pool was cleared %d time(s) in the last 7 days.", x.Count)
+				finding = fmt.Sprintf("The plan cache or buffer pool was cleared %s in the last 7 days.", timesText(int64(x.Count)))
 			}
 			evidence := "Last: " + sqlTime(x.LastAt) + " by " + orQ(x.Login) + " from " + orQ(x.App) + "."
 			if x.Sample != "" {

@@ -203,7 +203,7 @@ func TestPerformanceWRK01(t *testing.T) {
 		_, fs, _ := runPerf(f)
 		var got *Finding
 		for i, x := range findingsOf(fs, "WRK01") {
-			if strings.Contains(x.Finding, " "+c.wait+" ") {
+			if strings.Contains(x.Finding, "("+c.wait+",") || strings.Contains(x.Finding, " "+c.wait+" ") {
 				got = &findingsOf(fs, "WRK01")[i]
 			}
 		}
@@ -216,7 +216,7 @@ func TestPerformanceWRK01(t *testing.T) {
 	f = goodPerf()
 	f.Waits = []WaitStat{{"CXPACKET", 600000000, 0, 10, 1}, {"WRITELOG", 400000000, 0, 10, 1}}
 	c, _, _ := runPerf(f)
-	if c.Status != StatusAmber || !strings.HasPrefix(c.Verdict, "Wait #1: CXPACKET (") || c.Facts[0].Tone != ToneBad ||
+	if c.Status != StatusAmber || c.Verdict != "Queries split across several CPUs wait for each other: 60.0% of all waiting since the restart (CXPACKET, the #1 wait)." || c.Facts[0].Tone != ToneBad ||
 		c.Facts[0].Value != "CXPACKET 60% (parallelism)" || c.StatusText != "2 things to do" {
 		t.Errorf("medium wait: %+v", c)
 	}
@@ -243,7 +243,7 @@ func TestPerformanceWRK01Floor(t *testing.T) {
 	f.Waits = []WaitStat{{"LCK_M_S", 4 * 3600000, 0, 40, 9000}, {"WRITELOG", 7753846, 0, 900, 10}}
 	c, fs, _ = runPerf(f)
 	x = findingsOf(fs, "WRK01")[0]
-	if x.Finding != "Wait #1: LCK_M_S (65.0% of all waiting)." || x.Severity != SeverityMedium || x.When != WhenDecideFirst {
+	if x.Finding != "Queries wait for locks other sessions hold: 65.0% of all waiting since the restart (LCK_M_S, the #1 wait)." || x.Severity != SeverityMedium || x.When != WhenDecideFirst {
 		t.Errorf("four hours %+v", x)
 	}
 	if c.Status != StatusAmber || c.Facts[0].Tone != ToneBad {

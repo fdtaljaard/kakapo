@@ -321,7 +321,8 @@ func BuildDesignCard(f DesignFacts, def CardDef) (Card, []Finding, []CheckStatus
 	since := designDay(w.Since, f.ServerNow)
 	switch {
 	case large > 0 && w.TooEarly:
-		c.Status, c.StatusText = StatusGreen, "Too early to tell"
+		// Not judged yet: grey, not green (DESIGN.md, The One Meaning Rule); the verdict and the link stay.
+		c.Status, c.StatusText = StatusGrey, "Too early to tell"
 		keys := fmt.Sprintf("%d foreign keys on large tables have", large)
 		if large == 1 {
 			keys = "1 foreign key on a large table has"

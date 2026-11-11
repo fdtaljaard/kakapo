@@ -83,8 +83,10 @@ export function FactList({ facts }: { facts: Fact[] }) {
 }
 
 // One of the six cards on the database page, laid out as the card anatomy in docs/landing-page.md:
-// title and question, status, verdict, facts, then counts, freshness and the Open link. A grey card
-// shows its note where the verdict would be and has no link.
+// title and question, status, verdict, facts, then counts, freshness and the Open link. A grey card that
+// could not be read shows its note where the verdict would be and has no link; a grey card with a verdict
+// (Design's "Too early to tell") keeps both. The title is a heading, so a screen reader can move from card
+// to card.
 export function InstanceCard({
   card,
   serverId,
@@ -96,11 +98,13 @@ export function InstanceCard({
   database: string
   checking?: boolean
 }) {
-  const grey = card.status === "grey"
+  const grey = card.status === "grey" && !card.verdict
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>{card.title}</CardTitle>
+        <CardTitle role="heading" aria-level={2}>
+          {card.title}
+        </CardTitle>
         <CardDescription>{card.question}</CardDescription>
         <CardAction>
           <CardStatusLine status={card.status} text={card.statusText} checking={checking} />
@@ -126,7 +130,8 @@ export function InstanceCard({
             {card.asOf && <span>as of {formatWhen(card.asOf)}</span>}
             <Link
               to={cardPath(serverId, database, card.id)}
-              className="inline-flex items-center font-medium text-foreground hover:underline underline-offset-4"
+              aria-label={`Open ${card.title}`}
+              className="inline-flex min-h-6 items-center font-medium text-foreground hover:underline underline-offset-4"
             >
               Open
               <ChevronRight className="size-3.5" />

@@ -25,8 +25,8 @@ export function DatabaseHeader({
   onRefresh: () => void
 }) {
   return (
-    <header className="flex flex-wrap items-start justify-between gap-3">
-      <div className="grid gap-1 min-w-0">
+    <header className="flex items-start justify-between gap-3">
+      <div className="grid min-w-0 flex-1 gap-1">
         <h1 className="text-xl font-semibold break-all">{database}</h1>
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm text-muted-foreground">
           {host && <code className="font-mono text-xs break-all">{host}</code>}
@@ -58,7 +58,7 @@ export function DatabaseHeader({
         )}
         {isExpress(instance?.edition) && <ExpressNotice version={instance?.productVersion} />}
       </div>
-      <Button variant="outline" onClick={onRefresh} disabled={loading}>
+      <Button variant="outline" className="flex-none" onClick={onRefresh} disabled={loading}>
         {loading ? <Loader2 className="animate-spin" /> : <RotateCw />}
         Refresh
       </Button>
@@ -74,8 +74,11 @@ function ElsewhereNotice({ machine, here }: { machine: string; here: string }) {
       <Server className="size-4 shrink-0 translate-y-0.5 text-muted-foreground" />
       <span>
         kakapo runs on <span className="font-medium">{here || "this computer"}</span>, not on the SQL Server machine,{" "}
-        <span className="font-medium">{machine}</span>. Steps marked "Do this on the SQL Server machine" are done on{" "}
-        {machine}, for example over Remote Desktop.
+        <span className="font-medium">{machine}</span>.
+        <span className="hidden sm:inline">
+          {" "}
+          Steps marked "Do this on the SQL Server machine" are done on {machine}, for example over Remote Desktop.
+        </span>
       </span>
     </div>
   )

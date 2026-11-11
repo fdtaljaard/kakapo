@@ -175,12 +175,12 @@ func TestUpkeepMNT02(t *testing.T) {
 	}
 	b, o := got[0], got[1]
 	if b.Severity != SeverityHigh || b.Owner != OwnerUs || b.Effort != EffortModerate || b.When != WhenOnline || b.Object != `SQL01\WMS` ||
-		b.Finding != `Agent job "DatabaseBackup - USER_DATABASES - FULL" failed 3 time(s) in the last 7 days.` ||
+		b.Finding != `Agent job "DatabaseBackup - USER_DATABASES - FULL" failed 3 times in the last 7 days.` ||
 		b.Evidence != `Last failure: 2026-11-02. Step "Backup": Executed as user: NT SERVICE\SQLAgent. The disk is full.` ||
 		b.Why != mnt02Why || b.DoThis != mnt02Do || b.ThenCheck != "Re-run after 7 days: MNT02 gone." {
 		t.Errorf("backup job %+v", b)
 	}
-	if o.Severity != SeverityMedium || o.Finding != `Agent job "Nightly cleanup" failed 1 time(s) in the last 7 days.` || o.Evidence != "Last failure: 2026-10-30." {
+	if o.Severity != SeverityMedium || o.Finding != `Agent job "Nightly cleanup" failed once in the last 7 days.` || o.Evidence != "Last failure: 2026-10-30." {
 		t.Errorf("other job %+v", o)
 	}
 	if c.StatusText != "2 things to do" || c.Verdict != b.Finding || statusOf(cs, "MNT02").Status != CheckFinding {
@@ -290,12 +290,12 @@ func TestUpkeepMNT05(t *testing.T) {
 			t.Errorf("MNT05 %+v", x)
 		}
 	}
-	s := byFinding["A database or file was shrunk 4 time(s) in the last 7 days."]
+	s := byFinding["A database or file was shrunk 4 times in the last 7 days."]
 	if s.Object != "WarehouseLive" || s.Why != mnt05ShrinkWhy || s.DoThis != mnt05ShrinkDo ||
 		s.Evidence != `Last: 2026-11-02 22:05 by CORP\dba from SQLAgent - TSQL JobStep. Example: DBCC SHRINKFILE (2, 0)` {
 		t.Errorf("shrink %+v", s)
 	}
-	cc := byFinding["The plan cache or buffer pool was cleared 1 time(s) in the last 7 days."]
+	cc := byFinding["The plan cache or buffer pool was cleared once in the last 7 days."]
 	if cc.Object != `SQL01\WMS` || cc.Why != mnt05CacheWhy || cc.DoThis != mnt05CacheDo ||
 		cc.Evidence != "Last: 2026-11-02 22:05 by ? from ?. Example: DBCC FREEPROCCACHE" {
 		t.Errorf("cache %+v", cc)
@@ -630,7 +630,7 @@ func TestUpkeepMNT05Phase3f(t *testing.T) {
 	for _, x := range got {
 		by[x.Finding] = x
 	}
-	ev := by["One plan was evicted from the cache 3 time(s) in the last 7 days."]
+	ev := by["One plan was evicted from the cache 3 times in the last 7 days."]
 	if ev.Severity != SeverityInfo || ev.When != WhenNone || ev.Effort != EffortNone || ev.Why != mnt05EvictWhy ||
 		ev.DoThis != "No action." || ev.FixID != "" || ev.Object != "WarehouseLive" ||
 		ev.Evidence != `Last: 2026-11-02 22:05 by CORP\dba from SSMS. Example: DBCC FREEPROCCACHE (0x0600050012345678)` {

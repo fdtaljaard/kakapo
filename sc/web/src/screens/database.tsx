@@ -5,6 +5,7 @@ import { DatabaseHeader } from "@/components/database-header"
 import { DecisionsCard } from "@/components/decisions"
 import { InstanceCard, InstanceCardSkeleton } from "@/components/instance-card"
 import { LoadStrip } from "@/components/load-strip"
+import { cardsByStatus, PageAnswer } from "@/components/page-answer"
 import { PageCrumbs } from "@/components/page-crumbs"
 import { NotFound, PageShell } from "@/components/page-shell"
 import { RecentChanges } from "@/components/recent-changes"
@@ -17,8 +18,9 @@ import { useOverview } from "@/hooks/use-overview"
 import { useServers } from "@/hooks/use-servers"
 import { instancePath } from "@/lib/paths"
 
-// "/instances/:id/databases/:db": the header, the load strip with the red flags (phase 5i, ?days= 7, 14
-// or 30), the decisions (phase 5m), the six cards and Recent changes for one database.
+// "/instances/:id/databases/:db": the header and the page's answer, the load strip with the red flags
+// (phase 5i, ?days= 7, 14 or 30), the six cards (those that need something first), the decisions
+// (phase 5m) and Recent changes for one database.
 export function DatabaseScreen() {
   const params = useParams()
   const id = Number(params.id)
@@ -61,6 +63,8 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
           loading={loading}
           onRefresh={refresh}
         />
+        {/* The page's own answer: what to do, and which card to open first. */}
+        {overview && <PageAnswer cards={overview.cards} serverId={serverId} database={database} />}
       </div>
 
       <LoadStrip
@@ -73,6 +77,8 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
         error={strip.error}
         stale={strip.stale}
         overviewFlags={overview?.redFlags ?? null}
+        flagsUnread={!!error && !overview}
+        onRetry={strip.reload}
         onApplied={() => {
           strip.reload()
           refresh()
@@ -95,7 +101,13 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
 
       {overview ? (
         <>
-          {/* Phase 5m: the decisions for this database, between the load strip and the six cards. */}
+          {/* The cards that need something first (red, then amber); the usual order within each colour. */}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {cardsByStatus(overview.cards).map((card) => (
+              <InstanceCard key={card.id} card={card} serverId={serverId} database={database} checking={loading} />
+            ))}
+          </div>
+          {/* Phase 5m: the decisions for this database, under the six health cards: health first. */}
           <DecisionsCard
             decisions={overview.decisions ?? []}
             serverId={serverId}
@@ -104,11 +116,6 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
             checkedAt={overview.checkedAt}
             onChanged={refresh}
           />
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {overview.cards.map((card) => (
-              <InstanceCard key={card.id} card={card} serverId={serverId} database={database} checking={loading} />
-            ))}
-          </div>
           <RecentChanges changes={overview.recentChanges} window={overview.changeWindow} />
         </>
       ) : (

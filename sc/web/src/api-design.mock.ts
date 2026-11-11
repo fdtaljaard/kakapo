@@ -49,6 +49,8 @@ export function designDetail(database: string): CardDetail {
     ].map((k) => ({ ...k, text: `${k.table} (${k.rows.toLocaleString("en-US")} rows): no index on ${k.columns.join(", ")}, its key to ${k.parent}` }))
     return {
       card: designCard({
+        // Not judged yet: grey, as the backend says it (DESIGN.md, The One Meaning Rule).
+        status: "grey",
         statusText: "Too early to tell",
         verdict:
           "Too early to tell which foreign keys cost work: deletes counted for 3 days, since the restore on 5 Nov. 3 foreign keys on large tables have no index.",

@@ -373,7 +373,7 @@ func TestINS12AndINS13(t *testing.T) {
 	f = goodFacts()
 	f.Low7, f.LowLast = 3, ptr(time.Date(2026, 10, 30, 14, 5, 0, 0, time.UTC))
 	_, fs, _ = runSetup(f)
-	if x := one(t, fs, "INS12"); x.Severity != SeverityMedium || x.Finding != "Windows signalled low physical memory 3 time(s) in the last 7 days." ||
+	if x := one(t, fs, "INS12"); x.Severity != SeverityMedium || x.Finding != "Windows signalled low physical memory 3 times in the last 7 days." ||
 		!strings.HasSuffix(x.Evidence, "Last low-memory signal: 2026-10-30 14:05.") || x.When != WhenDecideFirst {
 		t.Errorf("INS12 week: %+v", x)
 	}
@@ -439,8 +439,8 @@ func TestDatabaseOptionChecks(t *testing.T) {
 	f.AutoClose, f.AutoShrink, f.PageVerify, f.AutoCreateStats, f.AutoUpdateStats = true, true, "TORN_PAGE_DETECTION", false, false
 	c, fs, _ := runSetup(f)
 	for id, want := range map[string]Finding{
-		"DBC02": {Severity: SeverityHigh, FixID: "auto-close", Finding: "AUTO_CLOSE is on.", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_CLOSE OFF;"},
-		"DBC03": {Severity: SeverityHigh, FixID: "auto-shrink", Finding: "AUTO_SHRINK is on.", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_SHRINK OFF;"},
+		"DBC02": {Severity: SeverityHigh, FixID: "auto-close", Finding: "The database shuts itself down when nobody is connected (AUTO_CLOSE is on).", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_CLOSE OFF;"},
+		"DBC03": {Severity: SeverityHigh, FixID: "auto-shrink", Finding: "The database shrinks its own files by itself (AUTO_SHRINK is on).", DoThis: "ALTER DATABASE [WarehouseLive] SET AUTO_SHRINK OFF;"},
 		"DBC04": {Severity: SeverityMedium, FixID: "page-verify", Finding: "Page verify is TORN_PAGE_DETECTION instead of CHECKSUM.",
 			DoThis: "ALTER DATABASE [WarehouseLive] SET PAGE_VERIFY CHECKSUM;  (Pages are protected as they are next written; an index rebuild protects them all.)"},
 		"DBC05": {Severity: SeverityHigh, FixID: "auto-statistics", Finding: "Automatic creation and updating of statistics are both off.",

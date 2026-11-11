@@ -345,7 +345,7 @@ function setupFindings(info: InstanceInfo, db: DatabaseStatus): Finding[] {
         severity: "High",
         when: "Online",
         effort: "Quick win",
-        finding: "AUTO_CLOSE is on.",
+        finding: "The database shuts itself down when nobody is connected (AUTO_CLOSE is on).",
         why: "The database shuts down when the last user disconnects and has to start up again on the next connection. This adds delays, empties memory caches and floods the error log.",
         doThis: `ALTER DATABASE ${quoteName(db.name)} SET AUTO_CLOSE OFF;`,
         evidence: "",
@@ -694,7 +694,7 @@ function upkeepFindings(info: InstanceInfo, db: DatabaseStatus): Finding[] {
         severity: /backup/i.test(job.name) ? "High" : "Medium",
         when: "Online",
         effort: "Moderate",
-        finding: `Agent job "${job.name}" failed ${job.fails} time(s) in the last 7 days.`,
+        finding: `Agent job "${job.name}" failed ${job.fails === 1 ? "once" : job.fails === 2 ? "twice" : `${job.fails} times`} in the last 7 days.`,
         why: "Failing jobs usually mean backups, maintenance or business processes are silently not happening.",
         doThis:
           "Open the job history in SSMS (SQL Server Agent > Jobs > right-click > View History), fix the cause, and set up failure notifications (Database Mail and an operator).",
@@ -1975,6 +1975,18 @@ const waitGroups = {
   },
 } as const
 
+// What a wait means in words, as the backend's wrk01Plain says it (the mock's waits only).
+const waitPlain: Record<string, string> = {
+  CXPACKET: "Queries split across several CPUs wait for each other",
+  CXCONSUMER: "Queries split across several CPUs wait for each other",
+  PAGEIOLATCH_SH: "Queries wait for data to be read from disk",
+  WRITELOG: "Commits wait for the transaction log to be written",
+  LCK_M_S: "Queries wait for locks other sessions hold",
+  LCK_M_U: "Queries wait for locks other sessions hold",
+  SOS_SCHEDULER_YIELD: "Queries wait for a free CPU",
+  RESOURCE_SEMAPHORE: "Queries wait for memory to run in",
+}
+
 function topWait(
   info: InstanceInfo,
   rank: number,
@@ -1991,7 +2003,8 @@ function topWait(
     severity,
     when: acts ? "Decide first" : "None",
     effort: acts ? "Moderate" : "None",
-    finding: `Wait #${rank}: ${waitType} (${pct.toFixed(1)}% of all waiting).`,
+    // The backend's wording (wrk01Plain): what the wait means first, its name after it.
+    finding: `${waitPlain[waitType] ?? `Wait #${rank}`}: ${pct.toFixed(1)}% of all waiting since the restart (${waitType}, the #${rank} wait).`,
     why: g.why,
     doThis: g.doThis,
     evidence: `Waited ${hours} hours over ${n0.format(waits)} waits since ${scanTime(new Date(info.startedAt))}.`,

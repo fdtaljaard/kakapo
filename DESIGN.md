@@ -243,9 +243,16 @@ Quiet and compact; the action is in the words, not the button's size.
 - **Error / Disabled:** a red stroke and ring; disabled at half opacity.
 
 ### Notices
-- **Style:** a bordered box with an 8px corner. Amber notices (Express, "One more step", Apply held back) use
-  an amber border and a 10 to 15% amber tint with amber text and a warning icon; neutral notices (kakapo runs
-  on another computer) use a hairline border, Body text and a grey icon.
+- **Style:** a bordered box with an 8px corner. Amber notices ("One more step", Apply held back) are for
+  something to do: an amber border and a 10 to 15% amber tint with amber text and a warning icon. Neutral
+  notices are information (SQL Server Express and its limits, kakapo runs on another computer): a hairline
+  border, a faint Quiet Surface tint, Body text and a grey icon.
+
+### Page Answer (signature)
+The database page's opening sentence, under its title: how many things there are to do, whether any is
+to act on today, and "Start with {card}" linking to the first card that needs something, with the first
+sentence of that card's verdict. When nothing is wrong it says "No problems found." The six cards follow
+it, the ones that need something first (red, then amber, then green, then grey).
 
 ### Finding Card (signature)
 The report itself. A severity badge, the check ID in Label type, the title, and the meta line (owner, when,
@@ -268,6 +275,10 @@ the One Meaning colours; a spinner replaces the dot while the card is read.
 - **Do** separate surfaces with the 10% ring, hairlines and the Quiet Surface tint.
 - **Do** support light and dark through the existing tokens, following the operating system's theme.
 - **Do** fold expert detail (plans, per-file tables, raw counters) under the answer instead of removing it.
+- **Do** lead a verdict with what it means and put SQL Server's own name in brackets after it ("Queries wait
+  for locks other sessions hold … (LCK_M_S)"), and put raw settings on a quieter line under a plain one.
+- **Do** say "Nothing to act on today" in grey when there are no red flags: never a green tick above cards
+  that still have things to do.
 
 ### Don't:
 - **Don't** make it look like a DBA console: no grid or DMV columns as the first thing on a screen.

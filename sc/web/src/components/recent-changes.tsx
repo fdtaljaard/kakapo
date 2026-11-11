@@ -38,7 +38,9 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
   return (
     <Card size="sm">
       <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-        <CardTitle>Recent changes</CardTitle>
+        <CardTitle role="heading" aria-level={2}>
+          Recent changes
+        </CardTitle>
         {canLink && !recording && (
           <Button variant="outline" size="sm" onClick={() => setRecording(true)}>
             <PenLine />
@@ -79,16 +81,16 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
                   <TableRow key={c.id} className="hover:bg-transparent">
                     <TableCell className="pl-0 align-top">{formatWhen(c.changedAt, "row")}</TableCell>
                     <TableCell className="align-top whitespace-normal wrap-anywhere min-w-48">
-                      <div>
-                        {c.description}
-                        {byHand && <span className="text-muted-foreground"> (by hand)</span>}
-                        {onServer && <span className="text-muted-foreground"> (on the server)</span>}
-                      </div>
+                      <ChangeText description={c.description} />
+                      {(byHand || onServer) && (
+                        <div className="text-xs text-muted-foreground">{byHand ? "Recorded by hand" : "Seen on the server"}</div>
+                      )}
                       {!noResult && <div className="md:hidden text-xs text-muted-foreground">{c.result}</div>}
                       <div className="flex flex-wrap items-center gap-3">
                         {canLink && (
                           <Link
                             to={tuningPath(serverId, database, c.id)}
+                            aria-label={`Did it help: ${changeLead(c.description)}`}
                             className="text-xs text-primary underline-offset-2 hover:underline"
                           >
                             Did it help?
@@ -129,5 +131,24 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
         {fallback && <CopyFallback text={fallback} onClose={dismiss} />}
       </CardContent>
     </Card>
+  )
+}
+
+// A change line in two parts when it names raw settings ("Query Store on Shop: OPERATION_MODE OFF ->
+// READ_WRITE"): what changed in words first, the settings underneath in small print, so a row never leads
+// with SQL Server's option names.
+function changeLead(description: string): string {
+  const at = description.indexOf(": ")
+  return at > 0 && description.slice(at + 2).includes(" -> ") ? description.slice(0, at) : description
+}
+
+function ChangeText({ description }: { description: string }) {
+  const lead = changeLead(description)
+  if (lead === description) return <div>{description}</div>
+  return (
+    <div className="grid gap-0.5">
+      <span>{lead}</span>
+      <span className="font-mono text-xs text-muted-foreground">{description.slice(lead.length + 2).replaceAll(" -> ", " → ")}</span>
+    </div>
   )
 }

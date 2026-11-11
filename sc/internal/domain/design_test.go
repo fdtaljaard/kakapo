@@ -171,7 +171,7 @@ func TestDesignVerdicts(t *testing.T) {
 	// A restart 3 days ago: too early to tell.
 	f.StartedAt = designNow.Add(-3*24*time.Hour - time.Hour)
 	c, _, _ = dbuild(f)
-	if c.Status != StatusGreen || c.StatusText != "Too early to tell" ||
+	if c.Status != StatusGrey || c.StatusText != "Too early to tell" ||
 		c.Verdict != "Too early to tell which foreign keys cost work: deletes counted for 3 days, since the restart on 5 Nov. 2 foreign keys on large tables have no index." {
 		t.Errorf("too early (restart) %+v", c)
 	}

@@ -21,10 +21,13 @@ import { cn } from "@/lib/utils"
 // the buttons (the verdict's action, Record a decision, Copy). A decision is not a finding: it is on no card
 // and in no count.
 
+// The One Meaning Rule (DESIGN.md): green no problem, amber something to do; "orange" (worth considering)
+// is something to do too, so it shares amber's tint rather than adding a fifth hue.
+const amberTag = "bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400"
 const toneTag: Record<Decision["tone"], string> = {
-  green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-  amber: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  orange: "bg-orange-200 text-orange-900 dark:bg-orange-950 dark:text-orange-300",
+  green: "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400",
+  amber: amberTag,
+  orange: amberTag,
   grey: "bg-muted text-muted-foreground",
 }
 
@@ -104,7 +107,6 @@ function DecisionRow({
         <button
           type="button"
           className="group flex w-full min-w-0 items-start gap-2 rounded-md py-1.5 text-left hover:bg-muted/40"
-          aria-label={`${decision.title}: ${decision.tag}`}
         >
           <ChevronRight className="mt-0.5 size-4 flex-none text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
           <span className="grid min-w-0 flex-1 gap-1">
@@ -116,7 +118,7 @@ function DecisionRow({
             {recordLine && (
               <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
                 {reviewDue && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-300">Review due</span>
+                  <span className={cn("rounded px-1.5 py-0.5", amberTag)}>Review due</span>
                 )}
                 <span className="break-words">{recordLine}</span>
               </span>

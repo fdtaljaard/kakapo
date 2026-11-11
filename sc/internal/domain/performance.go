@@ -363,6 +363,23 @@ var waitWords = map[string]string{
 }
 
 // WRK01's why and do this per group, verbatim from the scan.
+// wrk01Plain is what a group of waits means, in words a non-specialist reads first (DESIGN.md, The
+// Sentence-First Rule); the wait's own name follows in brackets. A group without one keeps "Wait #n".
+var wrk01Plain = map[string]string{
+	waitPAR:     "Queries split across several CPUs wait for each other",
+	waitIO:      "Queries wait for data to be read from disk",
+	waitLOG:     "Commits wait for the transaction log to be written",
+	waitLOCK:    "Queries wait for locks other sessions hold",
+	waitCPU:     "Queries wait for a free CPU",
+	waitMEM:     "Queries wait for memory to run in",
+	waitNET:     "SQL Server waits for the application to take its results",
+	waitPLATCH:  "Queries wait for busy pages in memory",
+	waitTHREAD:  "Queries wait for a free worker thread",
+	waitAG:      "Commits wait for the other replicas of the availability group",
+	waitOTHERIO: "Queries wait for other disk work (backups, file growth)",
+	waitLATCH:   "Queries wait for SQL Server's internal structures",
+}
+
 var wrk01Why = map[string]string{
 	waitPAR:     "Parallelism: queries split across several CPUs and wait for each other to finish.",
 	waitIO:      "Reading data from disk: the data a query needs is not in memory.",
@@ -647,6 +664,17 @@ func (b *perfBuild) checks(card CardID, last *DeadlockReport, blocking *Blocking
 		out = append(out, st)
 	}
 	return out
+}
+
+// timesText is how often, in words: "once", "twice", "3 times".
+func timesText(n int64) string {
+	switch n {
+	case 1:
+		return "once"
+	case 2:
+		return "twice"
+	}
+	return fmt.Sprintf("%d times", n)
 }
 
 func plural(n int64, one, many string) string {
@@ -1000,9 +1028,11 @@ func (b *perfBuild) wrk01() {
 		if pct >= 25 || g == waitTHREAD || g == waitMEM {
 			when, effort = WhenDecideFirst, EffortModerate
 		}
-		b.add("WRK01", sev, when, effort, ClockSinceRestart, f.ServerName,
-			fmt.Sprintf("Wait #%d: %s (%s%% of all waiting).", i+1, w.Type, pct1(pct)),
-			wrk01Why[g], wrk01Do[g], evidence)
+		finding := fmt.Sprintf("Wait #%d: %s (%s%% of all waiting).", i+1, w.Type, pct1(pct))
+		if plain := wrk01Plain[g]; plain != "" {
+			finding = fmt.Sprintf("%s: %s%% of all waiting since the restart (%s, the #%d wait).", plain, pct1(pct), w.Type, i+1)
+		}
+		b.add("WRK01", sev, when, effort, ClockSinceRestart, f.ServerName, finding, wrk01Why[g], wrk01Do[g], evidence)
 	}
 	if len(small) > 0 {
 		b.add("WRK01", SeverityInfo, WhenNone, EffortNone, ClockSinceRestart, f.ServerName,
