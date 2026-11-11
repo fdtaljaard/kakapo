@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-11T14:00:00+02:00",
+  "title": "Design System: kakapo",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "oklch(1 0 0)", "dark": "oklch(0.145 0 0)", "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.97 0 0)"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "oklch(0.145 0 0)", "dark": "oklch(0.985 0 0)", "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.27 0 0)", "oklch(0.39 0 0)", "oklch(0.51 0 0)", "oklch(0.63 0 0)", "oklch(0.75 0 0)", "oklch(0.87 0 0)", "oklch(0.97 0 0)"] },
+      "primary": { "role": "primary", "displayName": "Report Black", "canonical": "oklch(0.205 0 0)", "dark": "oklch(0.922 0 0)", "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.205 0 0)", "oklch(0.32 0 0)", "oklch(0.44 0 0)", "oklch(0.56 0 0)", "oklch(0.7 0 0)", "oklch(0.85 0 0)", "oklch(0.95 0 0)"] },
+      "primary-ink": { "role": "neutral", "displayName": "Primary Ink", "canonical": "oklch(0.985 0 0)", "dark": "oklch(0.205 0 0)" },
+      "quiet-surface": { "role": "neutral", "displayName": "Quiet Surface", "canonical": "oklch(0.97 0 0)", "dark": "oklch(0.269 0 0)" },
+      "quiet-ink": { "role": "neutral", "displayName": "Quiet Ink", "canonical": "oklch(0.556 0 0)", "dark": "oklch(0.708 0 0)" },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "oklch(0.922 0 0)", "dark": "oklch(1 0 0 / 10%)" },
+      "focus-ring": { "role": "neutral", "displayName": "Focus Ring", "canonical": "oklch(0.708 0 0)", "dark": "oklch(0.556 0 0)" },
+      "act-today-red": { "role": "status", "displayName": "Act-Today Red", "canonical": "oklch(0.577 0.245 27.325)", "dark": "oklch(0.704 0.191 22.216)", "tonalRamp": ["oklch(0.25 0.1 27)", "oklch(0.35 0.15 27)", "oklch(0.45 0.2 27)", "oklch(0.577 0.245 27.325)", "oklch(0.7 0.19 22)", "oklch(0.8 0.12 22)", "oklch(0.9 0.06 22)", "oklch(0.96 0.02 22)"] },
+      "to-do-amber": { "role": "status", "displayName": "To-Do Amber", "canonical": "oklch(0.666 0.179 58.318)", "dark": "oklch(0.828 0.189 84.429)", "tonalRamp": ["oklch(0.28 0.07 46)", "oklch(0.41 0.11 46)", "oklch(0.555 0.163 48.998)", "oklch(0.666 0.179 58.318)", "oklch(0.769 0.188 70.08)", "oklch(0.828 0.189 84.429)", "oklch(0.924 0.12 95.746)", "oklch(0.987 0.022 95.277)"] },
+      "to-do-amber-deep": { "role": "status", "displayName": "To-Do Amber, deep (text on a tint)", "canonical": "oklch(0.555 0.163 48.998)", "dark": "oklch(0.828 0.189 84.429)" },
+      "all-clear-green": { "role": "status", "displayName": "All-Clear Green", "canonical": "oklch(0.596 0.145 163.225)", "dark": "oklch(0.765 0.177 163.223)", "tonalRamp": ["oklch(0.262 0.051 172.552)", "oklch(0.378 0.077 168.94)", "oklch(0.508 0.118 165.612)", "oklch(0.596 0.145 163.225)", "oklch(0.696 0.17 162.48)", "oklch(0.765 0.177 163.223)", "oklch(0.905 0.093 164.15)", "oklch(0.979 0.021 166.113)"] }
+    },
+    "typographyMeta": {
+      "page-title": { "displayName": "Page Title", "purpose": "The database or page name; one per page." },
+      "section-title": { "displayName": "Section Title", "purpose": "Card titles, dialog titles, section headings." },
+      "body": { "displayName": "Body", "purpose": "Findings, verdicts, explanations, table cells; the product's default size." },
+      "label": { "displayName": "Label", "purpose": "Badges, section labels, meta lines, small buttons; often Quiet Ink." },
+      "literal": { "displayName": "Literal", "purpose": "Hosts, build stamps, paths, SQL and commands: what the user copies." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "state-change", "value": "all 150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Button and input hover, focus and press (Tailwind's default transition)." },
+      { "name": "press", "value": "translateY(1px)", "purpose": "A button pressed down by one pixel." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action of a dialog (Apply).",
+      "html": "<button class=\"ds-btn-primary\">Apply</button>",
+      "css": ".ds-btn-primary { background: oklch(0.205 0 0); color: oklch(0.985 0 0); height: 32px; padding: 0 10px; border: 1px solid transparent; border-radius: 10px; font: 500 0.875rem/1.43 'Geist Variable', sans-serif; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; } .ds-btn-primary:hover { background: oklch(0.205 0 0 / 80%); } .ds-btn-primary:focus-visible { outline: none; border-color: oklch(0.708 0 0); box-shadow: 0 0 0 3px oklch(0.708 0 0 / 50%); } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Actions on a finding (Apply, a second way out, Investigate) and Refresh.",
+      "html": "<button class=\"ds-btn-outline\">Apply</button>",
+      "css": ".ds-btn-outline { background: oklch(1 0 0); color: oklch(0.145 0 0); height: 28px; padding: 0 10px; border: 1px solid oklch(0.922 0 0); border-radius: 8px; font: 500 0.8rem/1.4 'Geist Variable', sans-serif; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; } .ds-btn-outline:hover { background: oklch(0.97 0 0); } .ds-btn-outline:focus-visible { outline: none; border-color: oklch(0.708 0 0); box-shadow: 0 0 0 3px oklch(0.708 0 0 / 50%); } .ds-btn-outline:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Copy and Copy for IT: no fill until hover.",
+      "html": "<button class=\"ds-btn-ghost\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg>Copy for IT</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; gap: 4px; background: transparent; color: oklch(0.145 0 0); height: 24px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; font: 500 0.75rem/1.33 'Geist Variable', sans-serif; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; } .ds-btn-ghost:hover { background: oklch(0.97 0 0); } .ds-btn-ghost:focus-visible { outline: none; border-color: oklch(0.708 0 0); box-shadow: 0 0 0 3px oklch(0.708 0 0 / 50%); }"
+    },
+    {
+      "name": "Severity Badge",
+      "kind": "chip",
+      "refersTo": "badge-severity-high",
+      "description": "A finding's severity: amber tint for High and Medium, red tint for Critical, grey for Low.",
+      "html": "<span class=\"ds-badge ds-badge-high\">High</span> <span class=\"ds-badge ds-badge-critical\">Critical</span> <span class=\"ds-badge ds-badge-low\">Low</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; height: 20px; padding: 2px 8px; border-radius: 26px; font: 500 0.75rem/1.33 'Geist Variable', sans-serif; } .ds-badge-high { background: oklch(0.769 0.188 70.08 / 15%); color: oklch(0.555 0.163 48.998); } .ds-badge-critical { background: oklch(0.577 0.245 27.325 / 10%); color: oklch(0.577 0.245 27.325); } .ds-badge-low { background: oklch(0.97 0 0); color: oklch(0.556 0 0); }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A fix option or a setup field.",
+      "html": "<input class=\"ds-input\" value=\"D:\\Backups\\\" />",
+      "css": ".ds-input { height: 32px; width: 240px; padding: 4px 10px; background: transparent; color: oklch(0.145 0 0); border: 1px solid oklch(0.922 0 0); border-radius: 10px; font: 400 0.875rem/1.43 'Geist Variable', sans-serif; transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-input:focus-visible { outline: none; border-color: oklch(0.708 0 0); box-shadow: 0 0 0 3px oklch(0.708 0 0 / 50%); }"
+    },
+    {
+      "name": "Finding Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The report itself: the verdict sentence, why, do this, then check, evidence.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-head\"><span class=\"ds-badge-amber\">Medium</span><span class=\"ds-id\">INS07</span><strong>Instant file initialization</strong></div><div class=\"ds-meta\">Client IT · Window · Quick win</div><p class=\"ds-verdict\">Instant file initialization is off.</p><div class=\"ds-label\">Why it matters</div><p>Every data file growth and every restore has to write zeros over the new space first.</p><div class=\"ds-label\">Do this on the SQL Server machine, SQL01</div><pre class=\"ds-statement\">Give the SQL Server service account the Windows right \"Perform volume maintenance tasks\", then restart SQL Server in a maintenance window.</pre><p class=\"ds-evidence\">instant_file_initialization_enabled = N</p></div>",
+      "css": ".ds-card { display: grid; gap: 12px; max-width: 560px; padding: 12px; background: oklch(1 0 0); color: oklch(0.145 0 0); border-radius: 14px; box-shadow: 0 0 0 1px oklch(0.145 0 0 / 10%); font: 400 0.875rem/1.43 'Geist Variable', sans-serif; } .ds-card p { margin: 0; } .ds-card-head { display: flex; align-items: center; gap: 8px; } .ds-badge-amber { height: 20px; padding: 2px 8px; border-radius: 26px; background: oklch(0.769 0.188 70.08 / 15%); color: oklch(0.555 0.163 48.998); font-size: 0.75rem; font-weight: 500; } .ds-id { font-size: 0.75rem; color: oklch(0.556 0 0); } .ds-meta { font-size: 0.75rem; color: oklch(0.556 0 0); } .ds-verdict { font-size: 1rem; font-weight: 500; } .ds-label { font-weight: 500; } .ds-statement { margin: 0; padding: 12px; background: oklch(0.97 0 0); border-radius: 10px; white-space: pre-wrap; font: 400 0.875rem/1.43 'Geist Variable', sans-serif; } .ds-evidence { font-size: 0.75rem; color: oklch(0.556 0 0); }"
+    },
+    {
+      "name": "Amber Notice",
+      "kind": "custom",
+      "refersTo": "notice",
+      "description": "Something to know before acting: SQL Server Express, Apply held back, One more step.",
+      "html": "<div class=\"ds-notice\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/></svg><span><strong>This is SQL Server Express, the free edition</strong><br/>It has no SQL Server Agent, so backups are scheduled by Windows Task Scheduler.</span></div>",
+      "css": ".ds-notice { display: flex; gap: 6px; align-items: flex-start; max-width: 560px; padding: 8px 12px; border: 1px solid oklch(0.828 0.189 84.429); border-radius: 8px; background: oklch(0.769 0.188 70.08 / 10%); color: oklch(0.473 0.137 46.201); font: 400 0.875rem/1.43 'Geist Variable', sans-serif; } .ds-notice svg { flex-shrink: 0; margin-top: 2px; }"
+    },
+    {
+      "name": "Status Line",
+      "kind": "custom",
+      "refersTo": "status-line",
+      "description": "A card's verdict under its title: a dot in the One Meaning colour and a short phrase.",
+      "html": "<div class=\"ds-status\"><span class=\"ds-dot ds-amber\"></span>3 things to do</div><div class=\"ds-status\"><span class=\"ds-dot ds-green\"></span>No problems found</div>",
+      "css": ".ds-status { display: flex; align-items: center; gap: 6px; font: 400 0.875rem/1.43 'Geist Variable', sans-serif; color: oklch(0.145 0 0); } .ds-dot { width: 8px; height: 8px; border-radius: 50%; } .ds-amber { background: oklch(0.666 0.179 58.318); } .ds-green { background: oklch(0.596 0.145 163.225); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Field Report",
+    "overview": "Every screen in kakapo reads like a short report from someone who has just checked the server: the verdict first, in one plain sentence, then why it matters, then what to do, then the evidence in small print. A consultant who is not a SQL specialist should get the answer from the first line, and be able to hand the whole report to IT as it stands. The interface is the paper the report is written on; it does not compete with what the report says.\n\nThe look is calm and friendly. It is a neutral, grey shadcn interface (Geist, small type, white or near-black surfaces that follow the operating system's theme) where colour is spent almost entirely on status. Calm means nothing shouts until it needs to: a healthy database is mostly grey text with a few green dots. Friendly means sentences, not codes, lead; numbers and identifiers follow in a quieter voice. Density is that of a well-set report, not a console: one column of cards and findings at most 72rem wide, with room between them.\n\nkakapo must never look like a DBA console (grids and DMV columns first, sentences never), a monitoring dashboard (gauges, big charts, walls of red and green tiles), or a marketing site (hero gradients, display type, illustrations, glossy cards).",
+    "keyCharacteristics": [
+      "A sentence leads every card, finding and dialog; the numbers come after it, smaller and greyer.",
+      "Neutral greys everywhere; red, amber and green carry status and nothing else.",
+      "Flat surfaces separated by hairlines and a faint ring, never by shadows.",
+      "Literal values (hosts, builds, paths, SQL) are set in monospace and can be copied.",
+      "Light and dark both, following the operating system."
+    ],
+    "rules": [
+      { "name": "The One Meaning Rule", "body": "Red is act today, amber is something to do, green is no problem found, grey is not checked. A colour never decorates, and never means two things.", "section": "colors" },
+      { "name": "The Grey Default Rule", "body": "A screen with nothing wrong is almost entirely grey and black. If a healthy page looks colourful, something is spending status colour on decoration.", "section": "colors" },
+      { "name": "The Sentence-First Rule", "body": "The first line of any card, finding or dialog is a sentence in Body or larger; the evidence under it is Label size in Quiet Ink. Never lead with a number or a code.", "section": "typography" },
+      { "name": "The Copyable Literal Rule", "body": "Anything set in monospace is something the user may copy, and statement blocks carry their own Copy button.", "section": "typography" },
+      { "name": "The No-Shadow Rule", "body": "Surfaces never cast shadows at rest or on hover. If something needs to stand apart, use a ring, a hairline or a tint.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do open every card, finding and dialog with a plain sentence, then put numbers and identifiers under it in Label type and Quiet Ink.",
+      "Do keep status colour to its one meaning: red act today, amber to do, green no problem, grey not checked.",
+      "Do set hosts, build stamps, paths, SQL and commands in monospace, with a Copy button on statement blocks.",
+      "Do separate surfaces with the 10% ring, hairlines and the Quiet Surface tint.",
+      "Do support light and dark through the existing tokens, following the operating system's theme.",
+      "Do fold expert detail (plans, per-file tables, raw counters) under the answer instead of removing it."
+    ],
+    "donts": [
+      "Don't make it look like a DBA console: no grid or DMV columns as the first thing on a screen.",
+      "Don't make it look like a monitoring dashboard: no gauges, no wall of red and green tiles, no auto-refreshing charts as the lead.",
+      "Don't make it look like a marketing site: no gradients, display type, illustrations or glossy cards.",
+      "Don't add shadows to cards, buttons or notices.",
+      "Don't use solid red or amber fills for whole blocks; status lives in text, dots, borders and light tints.",
+      "Don't introduce a second sans or a decorative typeface."
+    ]
+  }
+}
