@@ -47,22 +47,26 @@ const (
 const (
 	recoveryModelHelp = "FULL keeps every change in the log until a log backup, so a restore can go back to any minute; SIMPLE empties the log by itself and a restore goes back to the last full or differential backup only."
 	recoveryToFull    = "The log grows until it is backed up: create the log backup job (the Backup schedule row) right after this, or the disk fills."
-	recoveryChain     = "The log-backup chain starts at the next full backup: until then the log cannot be backed up and a restore still goes back to the last full backup only."
-	recoveryToSimple  = "Point-in-time restore is lost; agree the data-loss window with the business (BAK05)."
-	recoveryNoAlter   = "kakapo's login cannot ALTER the database %s, so Apply will be refused: connect with a sysadmin login."
-	checkdbDayHelp    = "The day of the week the check runs, server time."
-	checkdbTimeHelp   = "Server time, HH:MM. Pick a quiet hour that does not overlap the full backup."
-	physicalOnlyHelp  = "Checks the pages and their checksums only: far quicker and lighter on a large database, but not the logical consistency. Run a full check monthly (or on a restored copy) when you tick this."
-	checkdbTimeWarn   = "The time must be HH:MM, for example 01:00."
-	checkdbDayWarn    = "Pick a day from Sunday to Saturday."
-	physicalOnlyWarn  = "Physical only must be ticked or not (true or false)."
-	checkdbLoad       = "Runs online but loads the disk and tempdb; a quiet hour is better."
-	checkdbFirstRun   = "How long the check takes is unknown until it has run once: look at the job's history after the first run (MNT02)."
-	physicalOnlyNote  = "WITH PHYSICAL_ONLY checks pages and checksums only, not the logical consistency: run a full check monthly, or on a restored copy of the backup."
-	checkdbNoOperator = "No operator with an email exists (MNT07): nobody is told when the check fails or finds damage."
-	checkdbWait       = "kakapo waits up to 4 hours for the result; keep this page open while it runs."
-	suspectNoRollback = "There is no rollback: the records are history only, and the change log keeps them in its result."
-	suspectHistory    = "Clearing the records repairs nothing: it only stops BAK04 reporting damage that a clean check has shown is gone."
+	// On Express, kakapo's maintenance procedure takes the log backups (docs/sql-express-backups.md, gap 1).
+	recoveryToFullExpress = "The log grows until it is backed up, and SQL Server Express has no Agent to do it: install kakapo's maintenance procedure (the Upkeep card) right after this, or the disk fills."
+	recoveryToFullProc    = "The log grows until it is backed up: kakapo's maintenance procedure serves this database and takes a log backup every %d minutes from its next call, once a full backup exists."
+	recoveryToSimpleProc  = "kakapo's maintenance procedure stops the log backups by itself in SIMPLE recovery and keeps taking the full backup."
+	recoveryChain         = "The log-backup chain starts at the next full backup: until then the log cannot be backed up and a restore still goes back to the last full backup only."
+	recoveryToSimple      = "Point-in-time restore is lost; agree the data-loss window with the business (BAK05)."
+	recoveryNoAlter       = "kakapo's login cannot ALTER the database %s, so Apply will be refused: connect with a sysadmin login."
+	checkdbDayHelp        = "The day of the week the check runs, server time."
+	checkdbTimeHelp       = "Server time, HH:MM. Pick a quiet hour that does not overlap the full backup."
+	physicalOnlyHelp      = "Checks the pages and their checksums only: far quicker and lighter on a large database, but not the logical consistency. Run a full check monthly (or on a restored copy) when you tick this."
+	checkdbTimeWarn       = "The time must be HH:MM, for example 01:00."
+	checkdbDayWarn        = "Pick a day from Sunday to Saturday."
+	physicalOnlyWarn      = "Physical only must be ticked or not (true or false)."
+	checkdbLoad           = "Runs online but loads the disk and tempdb; a quiet hour is better."
+	checkdbFirstRun       = "How long the check takes is unknown until it has run once: look at the job's history after the first run (MNT02)."
+	physicalOnlyNote      = "WITH PHYSICAL_ONLY checks pages and checksums only, not the logical consistency: run a full check monthly, or on a restored copy of the backup."
+	checkdbNoOperator     = "No operator with an email exists (MNT07): nobody is told when the check fails or finds damage."
+	checkdbWait           = "kakapo waits up to 4 hours for the result; keep this page open while it runs."
+	suspectNoRollback     = "There is no rollback: the records are history only, and the change log keeps them in its result."
+	suspectHistory        = "Clearing the records repairs nothing: it only stops BAK04 reporting damage that a clean check has shown is gone."
 )
 
 // CheckdbRun is one DBCC CHECKDB run started from the app (checkdb-now), stored in checkdb_run and
@@ -302,17 +306,28 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 	}
 	switch target {
 	case "FULL":
-		p.Warnings = append(p.Warnings, recoveryToFull, recoveryChain)
+		toFull := recoveryToFull
 		logPart := RoomPart{Label: "the log", Unbounded: true, Basis: "it grows until log backups run; no job takes them yet"}
 		if j, ok := f.CoveringJob(JobLog); ok {
 			logPart = RoomPart{Label: "the log", Basis: "it grows between log backups; " + j.Name + " takes them"}
 		}
+		if !f.HasAgent {
+			toFull = recoveryToFullExpress
+			if row, ok := f.procRow(); ok {
+				toFull = fmt.Sprintf(recoveryToFullProc, row.LogMinutes)
+				logPart = RoomPart{Label: "the log", Basis: fmt.Sprintf("it grows between log backups; kakapo's maintenance procedure takes them every %d minutes", row.LogMinutes)}
+			}
+		}
+		p.Warnings = append(p.Warnings, toFull, recoveryChain)
 		p.Needs = append(p.Needs, RoomNeed{Path: RoleLog, Part: logPart})
 		if j, ok := f.CoveringJob(JobLog); ok {
 			p.Warnings = append(p.Warnings, "The job "+j.Name+" already takes log backups of this database: check it runs (MNT02).")
 		}
 	case "SIMPLE":
 		p.Warnings = append(p.Warnings, recoveryToSimple)
+		if _, ok := f.procRow(); ok {
+			p.Warnings = append(p.Warnings, recoveryToSimpleProc)
+		}
 		if j, ok := f.CoveringJob(JobLog); ok {
 			p.Warnings = append(p.Warnings, "The job "+j.Name+" takes log backups of this database: they fail in SIMPLE recovery, so disable or change it (kakapo's own: Remove on the Backup schedule row).")
 		} else if f.JobsError != "" {

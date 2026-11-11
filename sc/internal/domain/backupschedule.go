@@ -76,7 +76,6 @@ var LogMinuteChoices = []string{"5", "10", "15", "30", "60"}
 // Texts of the fix (docs/phase3g-contract.md, docs/phase4b-contract.md).
 const (
 	jobCoversDo = "The job %s should be doing this; check why it has not produced a backup (MNT02)."
-	expressDo   = "SQL Server Express has no Agent: kakapo cannot schedule the backup here; see the script in the preview."
 	// Why a finding has no Apply for the schedule, or why the one it has will be refused.
 	noScheduleJobs      = "kakapo cannot create the schedule: it could not read the Agent jobs in msdb (%s). Connect with a sysadmin login."
 	noScheduleSecondary = "This database is a secondary replica: schedule the backups on the primary."
@@ -98,7 +97,7 @@ const (
 // schedule fix when kakapo can create the missing job, and its Do this. A job that already covers
 // the kind should be producing the backups, so the Do this points at it and no fix is offered.
 // Facts without the jobs (or with an error reading them) and a secondary replica offer nothing.
-// On Express the fix is offered as a script to run by hand.
+// On Express the fix is kakapo's maintenance procedure (expressScheduleFix).
 func (f BackupFacts) scheduleFix(kind, doThis string) (string, string) {
 	if f.JobsError != "" {
 		// The usual cause is a login that is not sysadmin (and has no read access to msdb): say so, so the
@@ -117,7 +116,7 @@ func (f BackupFacts) scheduleFix(kind, doThis string) (string, string) {
 		return "", doThis + " " + noScheduleSecondary
 	}
 	if !f.HasAgent {
-		return FixBackupSchedule, doThis + " " + expressDo
+		return f.expressScheduleFix(kind, doThis)
 	}
 	if f.PermsRead && !f.IsSysadmin {
 		return FixBackupSchedule, doThis + " " + fmt.Sprintf(scheduleNotSysadmin, f.ServerName)
@@ -643,7 +642,8 @@ func hasFix(findings []Finding, fixID string) (string, bool) {
 // kakapo's own jobs do not exist yet, and a full or log job would be created (no enabled job covers
 // everything). The card offers it as a standing row; a finding carries it too when it fired.
 func OffersBackupSchedule(f BackupFacts) bool {
-	if !f.JobsRead || f.JobsError != "" || f.MsdbError != "" || f.IsSecondary || len(f.KakapoJobs) > 0 {
+	// On Express kakapo's maintenance procedure takes the backups instead (docs/sql-express-backups.md, gap 1).
+	if !f.HasAgent || !f.JobsRead || f.JobsError != "" || f.MsdbError != "" || f.IsSecondary || len(f.KakapoJobs) > 0 {
 		return false
 	}
 	s := NewBackupSchedule(f, nil)

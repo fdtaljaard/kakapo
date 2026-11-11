@@ -10,10 +10,12 @@ export function twoWaysChoices(
   return [f.fixId, f.altFixId].map((id) => ({ label: twoWaysLabel(id, fixes), fixId: id }))
 }
 
-// "Schedule log backups", "Switch to SIMPLE".
+// "Schedule log backups" (on Express "Install the maintenance procedure"), "Switch to SIMPLE".
 export function twoWaysLabel(fixId: string, fixes?: Pick<Fix, "id" | "title" | "target">[]): string {
   const fix = fixes?.find((x) => x.id === fixId)
   if (fixId === "recovery-model") return `Switch to ${fix?.target ?? "SIMPLE"}`
   if (fixId === "backup-schedule") return "Schedule log backups"
+  // On Express kakapo's maintenance procedure takes the log backups (docs/sql-express-backups.md, gap 1).
+  if (fixId === "install-maintenance-proc") return "Install the maintenance procedure"
   return fix?.title ?? "Apply"
 }

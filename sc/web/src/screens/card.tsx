@@ -114,7 +114,9 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
     // archive ("Archive or delete old rows"); the others by the finding.
     const ownTitle = cardId === "backups" || (f.checkId === "QRY01" && fixId === archiveTableFixId)
     const fix = ownTitle ? detail?.fixes?.find((x) => x.id === fixId) : undefined
-    setFixing({ fixId, title: fix?.title ?? f.title, options: options ?? fixOptionsFor(f, detail?.fixes, fixId) })
+    // On Express the Backups card's Apply installs kakapo's maintenance procedure (docs/sql-express-backups.md).
+    const title = fixId === "install-maintenance-proc" ? "Install the maintenance procedure" : (fix?.title ?? f.title)
+    setFixing({ fixId, title, options: options ?? fixOptionsFor(f, detail?.fixes, fixId) })
   }
   // Where a finding's next read lives (docs/phase4c-contract.md): a costly query opens its page, a
   // blocking or open-transaction finding opens the chain.

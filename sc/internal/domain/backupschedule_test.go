@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -303,14 +304,57 @@ func TestBackupScheduleWarningOrder(t *testing.T) {
 func TestBackupScheduleExpress(t *testing.T) {
 	f := scheduleFacts("FULL")
 	f.ServerName, f.Edition, f.HasAgent, f.AgentRunning, f.AgentStatus, f.CompressionOK = `SQL01\EXPRESS`, "Express Edition (64-bit)", false, false, "", false
+	// Express has no Agent: kakapo's maintenance procedure takes the backups (docs/sql-express-backups.md, gap 1).
 	_, fs, _ := build(f)
 	for _, id := range []string{"BAK01", "BAK02"} {
 		x := findingOf(t, fs, id)
-		if x.FixID != FixBackupSchedule || !strings.HasSuffix(x.DoThis, " SQL Server Express has no Agent: kakapo cannot schedule the backup here; see the script in the preview.") {
+		if x.FixID != FixInstallMaintenanceProc || !strings.HasSuffix(x.DoThis, " "+expressProcDo) {
 			t.Errorf("%s on Express: %+v", id, x)
 		}
 	}
-	p, _ := mustSchedule(t, f, nil, true, false)
+	if x := findingOf(t, fs, "BAK02"); x.AltFixID != FixRecoveryModel {
+		t.Errorf("BAK02 on Express keeps the switch to SIMPLE: %+v", x)
+	}
+	// Installed, but this database has no row (or a disabled one): the install adds it.
+	proc := &MaintProcFacts{ProcExists: true, ProcOurs: true, SettingsExists: true, LogExists: true,
+		Settings: []MaintSettings{{Database: "Other", Enabled: true, FullTime: "22:00", LogMinutes: 15},
+			{Database: "WarehouseLive", Enabled: false, FullTime: "23:00", LogMinutes: 30}}}
+	f.Proc = proc
+	_, fs, _ = build(f)
+	if x := findingOf(t, fs, "BAK02"); x.FixID != FixInstallMaintenanceProc {
+		t.Errorf("not served: %+v", x)
+	}
+	// Served: the backups are the procedure's to take, no Apply, and BAK02 offers no switch to SIMPLE.
+	proc.Settings[1].Enabled = true
+	_, fs, _ = build(f)
+	if x := findingOf(t, fs, "BAK01"); x.FixID != "" || x.DoThis != fmt.Sprintf(procCoversFullDo, "23:00") {
+		t.Errorf("BAK01 served: %+v", x)
+	}
+	if x := findingOf(t, fs, "BAK02"); x.FixID != "" || x.AltFixID != "" || x.DoThis != fmt.Sprintf(procCoversLogDo, 30) {
+		t.Errorf("BAK02 served: %+v", x)
+	}
+	// A procedure of that name that kakapo did not create: nothing to install.
+	f.Proc = &MaintProcFacts{ProcExists: true}
+	_, fs, _ = build(f)
+	if x := findingOf(t, fs, "BAK01"); x.FixID != "" || !strings.HasSuffix(x.DoThis, " "+procInTheWay) {
+		t.Errorf("in the way: %+v", x)
+	}
+	f.Proc = nil
+	// No finding offers the Agent schedule on Express, and the card lists it nowhere.
+	if OffersBackupSchedule(f) {
+		t.Error("Express offers the backup schedule")
+	}
+	_, fs, _ = build(f)
+	for _, x := range AvailableBackupFixes(f, fs) {
+		if x.ID == FixBackupSchedule {
+			t.Errorf("Express lists the backup schedule: %+v", x)
+		}
+	}
+	if _, _, err := BuildBackupScheduleFix(f, "", nil, true, false); err == nil {
+		t.Error("the backup schedule is built on Express")
+	}
+	// The script it used to give is still built below it (kept for the API).
+	p, _ := buildBackupSchedule(f, nil, true, false)
 	if !p.Express || len(p.Inputs) != 1 || p.Inputs[0].Name != OptionFolder || p.Rollback != "" || len(p.Changes) != 6 {
 		t.Errorf("Express preview %+v", p)
 	}

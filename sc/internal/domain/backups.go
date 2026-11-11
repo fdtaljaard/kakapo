@@ -84,6 +84,9 @@ type BackupFacts struct {
 	DefaultBackupDir string   // the instance's BackupDirectory from the registry; "" when refused
 	CompressionOK    bool     // the edition can compress backups (not Web, not Express, 2008 and later)
 	DataFiles        []string // physical names of this database's data (ROWS) files
+	// Proc is kakapo's maintenance procedure (phase 5p), read on Express only: there it, not an Agent
+	// job, takes the backups (docs/sql-express-backups.md, gap 1). nil when not read.
+	Proc *MaintProcFacts
 	// IsSecondary says this instance holds the database as an availability group secondary; the
 	// service fills it in from the database as listed. No fix is offered on a secondary.
 	IsSecondary bool
@@ -131,8 +134,13 @@ const (
 	bak05DoFull   = "Log backups every 15 minutes close this gap. If they are already scheduled, check that the job runs (MNT02)."
 	bak05Lost7    = "No backup of any kind in the last 7 days: everything since the last backup would be lost."
 	bak05DoApply  = "Apply creates a daily full backup job now (and log backups every 15 minutes in FULL recovery)."
-	dbc08Why      = "A restore can only go back to the last full or differential backup; everything since then is lost. Point-in-time restore is not possible."
-	dbc08Do       = "Confirm with the business how much data loss is acceptable (RPO). If it is less than the time between backups, switch to FULL recovery and schedule log backups."
+	// On Express (docs/sql-express-backups.md, gap 1): kakapo's maintenance procedure takes the backups.
+	expressProcDo    = "SQL Server Express has no SQL Server Agent: Install the maintenance procedure takes the full backup nightly and, in FULL recovery, the log backup every 15 minutes, called by Windows Task Scheduler."
+	procCoversFullDo = "kakapo's maintenance procedure serves this database and takes its full backup daily at %s: check the scheduled task calls it (the Upkeep card shows its last call and any failure)."
+	procCoversLogDo  = "kakapo's maintenance procedure serves this database and takes its log backup every %d minutes once a full backup exists: check the scheduled task calls it (the Upkeep card shows its last call and any failure)."
+	procInTheWay     = "A procedure named master.dbo.kakapo_Maintenance exists that kakapo did not create, so kakapo cannot install its maintenance procedure."
+	dbc08Why         = "A restore can only go back to the last full or differential backup; everything since then is lost. Point-in-time restore is not possible."
+	dbc08Do          = "Confirm with the business how much data loss is acceptable (RPO). If it is less than the time between backups, switch to FULL recovery and schedule log backups."
 
 	// BAK06 and DBC12, from docs/phase3f-contract.md items 4 and 5.
 	bak06Why = "A full backup written to NUL is thrown away, but SQL Server still counts it as the base for the next differential backups. Those differentials look fine in the backup history, yet a restore needs the full backup they were based on, and that file does not exist."
@@ -373,6 +381,33 @@ func (b *backupBuild) bak02() {
 	}
 }
 
+// procRow is the enabled row of kakapo's maintenance procedure for this database on Express: the
+// procedure takes this database's backups.
+func (f BackupFacts) procRow() (MaintSettings, bool) {
+	if f.HasAgent || f.Proc == nil || !f.Proc.Installed() {
+		return MaintSettings{}, false
+	}
+	row, ok := f.Proc.Row(f.Database)
+	return row, ok && row.Enabled
+}
+
+// expressScheduleFix is scheduleFix on Express, which has no Agent: kakapo's maintenance procedure
+// takes the backups. When it already serves this database, the backups are its to take, so the Do
+// this points at it and no fix is offered; otherwise the fix is its install (which also adds a
+// database to a procedure already installed).
+func (f BackupFacts) expressScheduleFix(kind, doThis string) (string, string) {
+	if row, ok := f.procRow(); ok {
+		if kind == JobLog {
+			return "", fmt.Sprintf(procCoversLogDo, row.LogMinutes)
+		}
+		return "", fmt.Sprintf(procCoversFullDo, row.FullTime)
+	}
+	if f.Proc != nil && f.Proc.ProcExists && !f.Proc.ProcOurs {
+		return "", doThis + " " + procInTheWay
+	}
+	return FixInstallMaintenanceProc, doThis + " " + expressProcDo
+}
+
 // offersSimpleSwitch says whether BAK02 can offer the switch to SIMPLE: the database can be changed
 // from this instance (not a secondary replica) and does not need FULL for an availability group, and
 // no enabled job is meant to take its log backups (that job is failing, and SIMPLE would not fix it).
@@ -381,6 +416,10 @@ func (f BackupFacts) offersSimpleSwitch() bool {
 		return false
 	}
 	if _, covered := f.CoveringJob(JobLog); covered && f.HasAgent {
+		return false
+	}
+	// On Express, the maintenance procedure is meant to take the log backups: the same as a job.
+	if _, covered := f.procRow(); covered {
 		return false
 	}
 	return true
@@ -424,7 +463,7 @@ func (b *backupBuild) bak05() {
 	fixID := ""
 	if w >= gap7Days {
 		fixID, doThis = f.scheduleFix(JobFull, doThis)
-		if fixID != "" {
+		if fixID == FixBackupSchedule {
 			doThis = bak05DoApply + " " + doThis
 		}
 	}

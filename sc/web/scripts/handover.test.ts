@@ -162,6 +162,11 @@ test("a finding with two fixes gets one named Apply for each", () => {
     { label: "Schedule log backups", fixId: "backup-schedule" },
     { label: "Switch to SIMPLE", fixId: "recovery-model" },
   ])
+  // On Express the log backups come from kakapo's maintenance procedure.
+  assert.deepEqual(twoWaysChoices({ fixId: "install-maintenance-proc", altFixId: "recovery-model" }, fixes), [
+    { label: "Install the maintenance procedure", fixId: "install-maintenance-proc" },
+    { label: "Switch to SIMPLE", fixId: "recovery-model" },
+  ])
   // One fix, or none: the ordinary single Apply.
   assert.equal(twoWaysChoices({ fixId: "backup-schedule" }, fixes), undefined)
   assert.equal(twoWaysChoices({ altFixId: "recovery-model" }, fixes), undefined)

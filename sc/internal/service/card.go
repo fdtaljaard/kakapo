@@ -149,6 +149,11 @@ func readBackupFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus) d
 		return domain.BackupFacts{Database: d.Name, State: d.State, Error: "could not read the backup history: " + err.Error()}
 	}
 	f.IsSecondary = d.IsSecondaryReplica
+	// On Express kakapo's maintenance procedure, not an Agent job, takes the backups: the findings
+	// say whether it serves this database (docs/sql-express-backups.md, gap 1).
+	if !f.HasAgent && f.JobsRead {
+		f.Proc = readMaintFor(readCtx, db, d.Name)
+	}
 	return f
 }
 

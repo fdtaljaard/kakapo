@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,21 @@ func TestRecoveryModelFix(t *testing.T) {
 	p, fix, err = BuildRecoveryModelFix(f, false, nil)
 	if err != nil || p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" || fix.CheckID != "BAK02" || p.Warnings[0] != recoveryToSimple {
 		t.Errorf("to SIMPLE: %v %+v %+v", err, p, fix)
+	}
+	// On Express the warnings name kakapo's maintenance procedure, not a job (docs/sql-express-backups.md, gap 1).
+	e := scheduleFacts("SIMPLE")
+	e.HasAgent = false
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != recoveryToFullExpress {
+		t.Errorf("Express to FULL: %q", p.Warnings)
+	}
+	e.Proc = &MaintProcFacts{ProcExists: true, ProcOurs: true, SettingsExists: true, LogExists: true,
+		Settings: []MaintSettings{{Database: "WarehouseLive", Enabled: true, LogMinutes: 15}}}
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != fmt.Sprintf(recoveryToFullProc, 15) {
+		t.Errorf("Express served to FULL: %q", p.Warnings)
+	}
+	e.RecoveryModel = "FULL"
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != recoveryToSimple || p.Warnings[1] != recoveryToSimpleProc {
+		t.Errorf("Express served to SIMPLE: %q", p.Warnings)
 	}
 	f.IsAgMember = true
 	if p, _, _ = BuildRecoveryModelFix(f, false, nil); len(p.Changes) != 0 || p.Warnings[0] != "WarehouseLive is in an availability group, which needs FULL recovery: it stays in FULL." {
