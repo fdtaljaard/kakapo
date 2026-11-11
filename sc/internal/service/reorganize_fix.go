@@ -95,8 +95,16 @@ func applyReorganizeIndex(ctx context.Context, s *Service, serverID int64, g *ge
 	if err != nil {
 		return domain.FixResult{}, err
 	}
+	return reorganizeAndLog(ctx, s, serverID, g, schema, table, index, before)
+}
+
+// reorganizeAndLog runs g's prepared ALTER INDEX ... REORGANIZE on an index measured as before, measures
+// it again and writes its change row. The batch (reorganize-indexes) calls it with the facts it just
+// measured, so an index is read twice rather than three times.
+func reorganizeAndLog(ctx context.Context, s *Service, serverID int64, g *genericFix, schema, table, index string, before domain.IndexShapeFacts) (domain.FixResult, error) {
+	name, p := g.database.Name, g.preview
 	applyCtx, cancel := context.WithTimeout(ctx, indexApplyTimeout)
-	err = collect.ExecFix(applyCtx, g.db, p.Statement)
+	err := collect.ExecFix(applyCtx, g.db, p.Statement)
 	cancel()
 	if err != nil {
 		return domain.FixResult{}, newError(KindUnreachable, "SQL Server did not reorganise the index %s on %s.%s: %v. Needs the ALTER permission on %s.%s.",

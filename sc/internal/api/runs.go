@@ -28,6 +28,22 @@ func runRoutes(mux *http.ServeMux, svc *service.Service) {
 		}
 		writeJSON(w, http.StatusOK, runJSON(run))
 	})
+	// Stop a pending run (docs/phase5t-contract.md): the statement in flight is cancelled, which keeps
+	// the work it did, and a batch marks what it had not started as stopped. Answers the run. 404 for
+	// an unknown run, 409 for one that has ended.
+	mux.HandleFunc("POST /api/servers/{id}/databases/{db}/fixes/runs/{runId}/stop", func(w http.ResponseWriter, r *http.Request) {
+		id, name, err := serverAndDatabase(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		run, err := svc.StopFixRun(r.Context(), id, name, r.PathValue("runId"))
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, runJSON(run))
+	})
 }
 
 // fixRunJSON is a run as the route answers it.
@@ -40,6 +56,9 @@ type fixRunJSON struct {
 	Pending   bool              `json:"pending"`
 	Result    *domain.FixResult `json:"result,omitempty"`
 	Error     *runErrorJSON     `json:"error,omitempty"`
+	// Items are the parts of a batch run, each with its state; Stopping says a stop was asked for.
+	Items    []domain.RunItem `json:"items,omitempty"`
+	Stopping bool             `json:"stopping,omitempty"`
 }
 
 // runErrorJSON is a run's error: the status code and message the apply would have answered.
@@ -50,7 +69,7 @@ type runErrorJSON struct {
 
 func runJSON(run service.FixRun) fixRunJSON {
 	out := fixRunJSON{RunID: run.RunID, FixID: run.FixID, Database: run.Database, StartedAt: run.StartedAt,
-		EndedAt: run.EndedAt, Pending: run.Pending, Result: run.Result}
+		EndedAt: run.EndedAt, Pending: run.Pending, Result: run.Result, Items: run.Items, Stopping: run.Stopping}
 	if run.Err != nil {
 		out.Error = &runErrorJSON{Status: statusFor(run.Err), Message: run.Err.Error()}
 	}

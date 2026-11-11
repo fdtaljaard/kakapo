@@ -699,7 +699,7 @@ async function applyFix(db: string, fixId: string, options: Record<string, strin
 }
 
 function shapeFor(db: string, schema: string, table: string, index: string): IndexShape {
-  const base = { schema, table, index, measured: true, sizeMB: 0, density: 0, fragmentation: 0, estimatedPages: 0, savedPct: 0 }
+  const base = { schema, table, index, measured: true, sizeMB: 0, density: 0, fragmentation: 0, estimatedPages: 0, savedPct: 0, gain: false }
   if (index !== "IX_StockUnit_Location") {
     return {
       ...base,
@@ -727,6 +727,7 @@ function shapeFor(db: string, schema: string, table: string, index: string): Ind
     fragmentation: 41,
     estimatedPages: 7_192,
     savedPct: 42,
+    gain: true,
     text: `The plan reads all of ${index} (12,400 pages, 97 MB). Its pages are 58% full and 41% out of order. Reorganising it would pack it into about 7,192 pages, so each scan would read about 42% fewer.`,
     action: action("reorganize-index", "Reorganise index", `Reorganise ${index}`, { table: `[${schema}].[${table}]`, index }),
   }

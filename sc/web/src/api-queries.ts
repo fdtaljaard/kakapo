@@ -201,6 +201,7 @@ export interface IndexShape {
   fragmentation: number
   estimatedPages: number
   savedPct: number
+  gain: boolean // phase 5t: a reorganise saves 5% of the pages or more, on 1,000 pages or more
   text: string
   action?: QueryAction
 }

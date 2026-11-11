@@ -30,6 +30,9 @@ type registeredFix struct {
 type longFix struct {
 	timeout   time.Duration
 	completed completionCheck
+	// timeoutFor, when set, gives a run its own bound from what was prepared (a batch: one bound per
+	// index), in place of timeout.
+	timeoutFor func(g *genericFix) time.Duration
 }
 
 var fixRegistry = map[string]registeredFix{}

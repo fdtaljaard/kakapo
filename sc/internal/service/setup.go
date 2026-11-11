@@ -67,6 +67,9 @@ type genericFix struct {
 	// plan is what the maintenance plan's prepare keeps for its apply (docs/phase5b-contract.md): the
 	// pieces prepared through their own fixes, in apply order.
 	plan *planRun
+	// runID is the background run this fix is being applied by, set when the run starts; a batch fix
+	// reports its parts to it (docs/phase5t-contract.md).
+	runID string
 }
 
 // prepareGenericFix connects, finds the database, reads the facts the fix's card needs (the setup

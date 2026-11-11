@@ -1,10 +1,12 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { queriesApi, type IndexShape, type QueryAction, type QueryDetail, type QueryHour, type QueryTable } from "@/api-queries"
 import { ActionButton } from "@/components/query/action-button"
 import { formatMs, formatRows, formatWhole, serverWhen, type ServerClock } from "@/components/query/format"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { indexesPath } from "@/lib/paths"
 import { cn } from "@/lib/utils"
 
 // The plain sentences first (domain.ExplainQuery): each one that names a fix carries its button.
@@ -193,6 +195,11 @@ function IndexMeasure({
       )}
       {state.error && <span className="text-destructive break-words">{state.error}</span>}
       {state.shape && <span className="break-words">{state.shape.text}</span>}
+      {state.shape?.measured && (
+        <Link className="text-sm underline underline-offset-2" to={indexesPath(serverId, database)}>
+          See every big index your slowest queries read in full
+        </Link>
+      )}
       {state.shape?.action && (
         <div>
           <ActionButton action={state.shape.action} onAction={onAction} />

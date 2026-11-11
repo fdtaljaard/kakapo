@@ -63,7 +63,7 @@ func indexJobExplains(steps []IndexJobStep) string {
 
 const (
 	mnt09Why = "A rebuild is offline unless it asks for ONLINE = ON, and on Standard and Express it always is: each table is locked while its indexes are rebuilt. Rebuilding or reorganising every index that crosses a small threshold costs log, I/O and time, and Microsoft advises against index maintenance on a fixed schedule. The speed-up people see afterwards usually comes from the statistics a rebuild refreshes, which a statistics update gives for much less."
-	mnt09Do  = "Stop it (the job, or the scheduled task that calls it), and use the maintenance plan's statistics job instead; on Express, the maintenance procedure. Leave index work off unless a query shows the need: its page then measures the index it reads in full and offers to reorganise it."
+	mnt09Do  = "Stop it (the job, or the scheduled task that calls it), and use the maintenance plan's statistics job instead; on Express, the maintenance procedure. Leave index work off unless a query shows the need: the Indexes page on this card lists the indexes your slowest queries read in full, measures them and reorganises the ones you tick."
 )
 
 // mnt09: one finding per procedure that is at work. Rank 3 when its rebuilds are offline (no ONLINE =

@@ -179,6 +179,17 @@ export interface FixRun {
   pending: boolean
   result?: FixResult
   error?: { status: number; message: string }
+  // Phase 5t: a batch run (reorganize-indexes) reports each index as it goes; stopping says a stop was asked for.
+  items?: RunItem[]
+  stopping?: boolean
+}
+
+// One index of a batch run.
+export interface RunItem {
+  label: string // schema.table · index
+  state: "waiting" | "running" | "done" | "differs" | "skipped" | "failed" | "stopped"
+  text: string
+  changeId?: number
 }
 
 // Phase 3c: a named change the app can make, derived from a finding (docs/phase3c-contract.md).
@@ -831,6 +842,9 @@ export const api = {
   // ago, or before the exe restarted).
   fixRun: (serverId: number, database: string, runId: string) =>
     request<FixRun>(`${databasePath(serverId, database)}/fixes/runs/${encodeURIComponent(runId)}`),
+  // Phase 5t: stop a pending run; the statement in flight is cancelled and keeps its progress. 409 when it has ended.
+  stopRun: (serverId: number, database: string, runId: string) =>
+    request<FixRun>(`${databasePath(serverId, database)}/fixes/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }),
   // Phase 5m: the records of the row versioning decision, newest first; Record a decision (keep, later). 400 for
   // keep without a reason, 404 for an unknown server.
   decisions: (serverId: number, database: string) => request<DecisionRecord[]>(`${databasePath(serverId, database)}/decisions`),

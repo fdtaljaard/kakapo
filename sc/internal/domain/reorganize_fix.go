@@ -84,18 +84,21 @@ func (f IndexShapeFacts) rowstore() bool { return f.Type == 1 || f.Type == 2 }
 // IndexShape is the measurement as the query page shows it: one sentence, the facts, and the
 // reorganize-index action when there is something to gain and the database can be changed.
 type IndexShape struct {
-	Schema         string       `json:"schema"`
-	Table          string       `json:"table"`
-	Index          string       `json:"index"`
-	Measured       bool         `json:"measured"` // false: Text says why there is nothing to show
-	Pages          int64        `json:"pages"`
-	SizeMB         float64      `json:"sizeMB"`
-	Density        float64      `json:"density"`
-	Fragmentation  float64      `json:"fragmentation"`
-	EstimatedPages int64        `json:"estimatedPages"`
-	SavedPct       float64      `json:"savedPct"`
-	Text           string       `json:"text"`
-	Action         *QueryAction `json:"action,omitempty"`
+	Schema         string  `json:"schema"`
+	Table          string  `json:"table"`
+	Index          string  `json:"index"`
+	Measured       bool    `json:"measured"` // false: Text says why there is nothing to show
+	Pages          int64   `json:"pages"`
+	SizeMB         float64 `json:"sizeMB"`
+	Density        float64 `json:"density"`
+	Fragmentation  float64 `json:"fragmentation"`
+	EstimatedPages int64   `json:"estimatedPages"`
+	SavedPct       float64 `json:"savedPct"`
+	// Gain says a reorganise would shrink the index by Ola's low level (5%) or more, on an index of
+	// 1,000 pages or more: the Indexes page pre-ticks such a row (docs/phase5t-contract.md).
+	Gain   bool         `json:"gain"`
+	Text   string       `json:"text"`
+	Action *QueryAction `json:"action,omitempty"`
 }
 
 // BuildIndexShape turns a measurement into the query page's lines (docs/phase5q-contract.md, section
@@ -124,6 +127,7 @@ func BuildIndexShape(f IndexShapeFacts, canChange bool) IndexShape {
 	x.Pages, x.SizeMB = f.Pages, roundHalfAway(f.SizeMB, 1)
 	x.Density, x.Fragmentation = roundHalfAway(f.Density, 1), roundHalfAway(f.Fragmentation, 1)
 	x.EstimatedPages, x.SavedPct = f.EstimatedPages(), roundHalfAway(f.SavedPct(), 1)
+	x.Gain = f.Pages >= reorgMinPages && f.SavedPct() >= reorgLowPct
 	reads := fmt.Sprintf("The plan reads all of %s (%s, %s).", f.Index, plural(f.Pages, "page", "pages"), sizeText(f.SizeMB))
 	shape := fmt.Sprintf("Its pages are %s%% full and %s%% out of order.", n0(f.Density), n0(f.Fragmentation))
 	switch {
@@ -144,6 +148,18 @@ func BuildIndexShape(f IndexShapeFacts, canChange bool) IndexShape {
 			Options: ReorganizeIndexOptions(f.Schema, f.Table, f.Index)}
 	}
 	return x
+}
+
+// ReorganizeSkip says why a measured index is not worth reorganising, "" when it is: under Ola's page
+// floor, or in order and as full as it can be (5q's "nothing to gain"). The batch skips such an index.
+func ReorganizeSkip(f IndexShapeFacts) string {
+	switch {
+	case f.Pages < reorgMinPages:
+		return fmt.Sprintf("%s is under 1,000 pages now: index work does not change how a query runs (Ola Hallengren's floor).", f.Index)
+	case f.Fragmentation < reorgLowPct && f.SavedPct() < reorgLowPct:
+		return f.Index + " is already full and in order."
+	}
+	return ""
 }
 
 // ReorganizeIndexOptions are the fix's options: the table and the index.

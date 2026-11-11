@@ -1,6 +1,7 @@
 import { mockBlocking } from "./api-blocking.mock"
 import { mockBlockingHistory, withBlockingHistory } from "./api-blocking-history.mock"
 import { mockMaintenance, withMaintenancePlan } from "./api-maintenance.mock"
+import { mockIndexes } from "./api-indexes.mock"
 import { mockQueries } from "./api-queries.mock"
 import { mockProgress, startMockRun } from "./api-progress.mock"
 import { mockSample } from "./api-sample.mock"
@@ -2519,6 +2520,7 @@ function updateServer(id: string, input: ServerInput): Server {
 /** A feature mock answers its own routes and returns undefined for the rest. */
 export type FeatureMock = (method: string, path: string, init?: RequestInit) => Promise<unknown | undefined>
 const featureMocks: FeatureMock[] = [
+  mockIndexes, // before mockQueries (its shapes) and mockProgress (its batch runs)
   mockQueries,
   mockBlocking,
   mockBlockingHistory,

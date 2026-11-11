@@ -6,6 +6,7 @@ const stillRunning: Record<string, string> = {
   "drop-index": "The index is still being dropped on {db}; the result appears in the recent changes",
   "update-statistics": "The statistics update is still running on {db}; the result appears on the Upkeep card",
   "update-statistics-table": "The statistics update is still running on {db}; the result appears in the recent changes",
+  "reorganize-indexes": "The indexes are still being reorganised on {db}; the result appears in the recent changes",
   "tempdb-files": "The TempDB files are still being set up; the result appears on the Storage card",
 }
 

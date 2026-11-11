@@ -18,6 +18,7 @@ const longFixCommands: Record<string, string[]> = {
   "update-statistics-table": ["UPDATE STATISTICS"],
   "backup-schedule": ["BACKUP DATABASE"],
   "tempdb-files": ["ALTER DATABASE"],
+  "reorganize-indexes": ["ALTER INDEX"],
 }
 
 function isLongFix(fixId: string, options?: Record<string, string>): boolean {

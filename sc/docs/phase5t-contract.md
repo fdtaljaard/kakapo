@@ -1,6 +1,6 @@
 # Phase 5t contract: one lens over the indexes worth reorganising
 
-Draft 2026-11-11, for agreement before building. Contract only: nothing built.
+Agreed with Francois on 2026-11-11 (the three open choices as recommended: the Upkeep card, the 100 queries and 50 rows, the 20 GB bound). Built the same day: see Built.
 
 5q put a **Measure** button and the `reorganize-index` fix on the query page, for the indexes that one
 query's plan reads in full. On a client it gave a large, measured speed-up. But finding those indexes is
@@ -49,7 +49,8 @@ SCOPE section 1a, rules 1, 2, 4 and 5. Index work is never offline.
    then reads "Measure the next 20"); each row also has its own Measure. A single SAMPLED read of a
    half-million-page index (about 4 GB) has been seen to answer fast enough to run on demand, which is why
    Measure all is feasible; the cap keeps one click's I/O bounded. Nothing is measured on page load. Measure all
-   is driven by the page, one request per index, and **Stop** cancels the request in flight. Measurements are not stored: they are shown for this visit (they age the moment anything changes).
+   is driven by the page, one request per index, and **Stop** ends it after the index in flight (as built: the
+   read is not cancelled, it is one short request). Measurements are not stored: they are shown for this visit (they age the moment anything changes).
 6. **Pre-ticked rows: measured, with a gain, statistics not stale.** A *gain* is 5q's: the estimated page
    saving is 5% or more (Ola's low level, used by 5q for the saving). A row whose index is only out of order
    (5% or more) but already about as full as it can be is listed, unticked, in 5q's words. Unmeasured rows are
@@ -290,3 +291,51 @@ kakapo is closed.
   4. **Off by default**, as 5b's index piece is, and offered only when the plan is installed.
   5. **MNT09's wording and the 5p procedure's index step** (today Ola's `IndexOptimize` with Brent Ozar's
      50% / 80%) are reconciled with this selection: one index rule, not two.
+
+## Built (2026-11-11)
+
+Everything in sections 1 to 4 and the decisions is built: `go test ./...` and the web build pass.
+
+**Where it is.** `domain/index_lens.go` (the candidate rule, the rows, the sentences), `domain/reorganize_batch.go`
+(the batch preview, the run's items), `collect/index_lens.go` (the two reads), `service/index_lens.go` and
+`service/reorganize_batch.go`, the run registry's items and stop (`service/runs.go`, `api/runs.go`),
+`screens/indexes.tsx`, `components/run-items.tsx`, and the mock in `api-indexes.mock.ts`.
+
+**Differences from the text above, all small:**
+- The page-size read uses the allocation units, not `sys.dm_db_partition_stats`: no `VIEW DATABASE STATE` is needed.
+- A query's text loses the parameter list SQL Server puts in front of a parameterised statement.
+- The pre-tick rule is the page's, from `IndexShape.Gain` (5% saving or more on 1,000 pages or more), the row's
+  `stale` and the batch cap; the numbers come from the server (`gainPct`, `capGB`, `measureBatch`).
+- A stop in the middle of an index writes that index a change row ("stopped part-way: 44,497 pages to 41,693"),
+  because its pages did move and the query page's verdict must split there too. An index not started has none.
+- The preview is **held** (not blocked) while a batch is already running in the database.
+- Each index in a batch is read twice (before and after) rather than three times: the batch passes the facts it
+  measured to 5q's apply (`reorganizeAndLog`).
+- A failure's text is 5q's ("SQL Server did not reorganise the index … Needs the ALTER permission …"), which reads
+  oddly for a session that was killed; left as it is.
+
+## Proven live (2026-11-11)
+
+`TestPhase5tLive` (`SQLMONITOR_TEST_HOST`, `SQLMONITOR_TEST_5T=1`) passed on `localhost\SQL2022` (Developer) and on
+`.\SQLEXPRESS` (SQL Server 2025 Express), in a throwaway database with Query Store on:
+- The page listed the four indexes (a fragmented 4,000-page table twice, a 6,800-page table with statistics 67%
+  out of date, and a 40,000-page table), not the 700-page table or the table only sought. The stale table carried
+  its note and the statistics action; the others had the action only.
+- Measure: 66% full and 99% out of order, about 34% fewer pages. Preview: four statements in the order chosen, the
+  old-statistics table named.
+- A batch with a session killed during its first index: that index failed, the next two were reorganised (4,058
+  pages to 2,735; 99% out of order to 1%), two INDEX change rows and none for the failed one. A second batch
+  started while the first ran was refused.
+- A batch stopped during a 44,000-page index: it stopped part-way (progress kept, a change row), the next index
+  "not started", the run's result "2 not done (stopped)".
+- The query page of a query that reads a reorganised index lists kakapo's change among its events.
+
+The browser check used the mock: Measure all, the ticks, the bar, the preview, the batch's progress and result, Query
+Store off, no candidate, the link on the Upkeep card, phone width (no horizontal scroll).
+
+**Not proven live:** a client-sized batch (hours), and the verdict's split at the change on the real server. The
+query page reads before and after by the hour, so the runs before the change must fall in an earlier hour than the
+change itself: a test that does everything within one hour sees no split (the change shows among the events, as
+proven). The test has the check for it: start it a few minutes before an hour with `SQLMONITOR_TEST_5T_HOUR=1` and
+it waits for the hour to turn before it applies the batch; it was not run that way, and the split stays covered by
+5q's unit tests.

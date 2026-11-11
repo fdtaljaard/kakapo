@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowRight, Check, ChevronRight, CircleAlert, CircleCheck, Copy, Loader2, TriangleAlert, XCircle } from "lucide-react"
 
-import { api, ApiError, type FixInput, type FixNext, type FixPreview, type FixRequirement, type FixResult, type FixRun } from "@/api"
+import { api, ApiError, type FixInput, type FixNext, type FixPreview, type FixRequirement, type FixResult, type FixRun, type RunItem } from "@/api"
+import { RunItems } from "@/components/run-items"
 import { FixProgress, FixTook } from "@/components/fix-progress"
 import { RoomLines } from "@/components/room-line"
 import { CopyFallback, StatementBlock } from "@/components/statement-block"
@@ -93,6 +94,8 @@ export function FixDialog({
 }) {
   const [step, setStep] = useState<Step>({ kind: "loading" })
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null)
+  // Phase 5t: a batch run's indexes, as the last poll read them, and whether a stop was asked for.
+  const [runItems, setRunItems] = useState<{ items: RunItem[]; stopping: boolean }>({ items: [], stopping: false })
   // Phase 5a (SCOPE rule 5): the "More options" fold, kept here so a rebuilt preview does not close it.
   const [moreOpen, setMoreOpen] = useState(false)
   // The page's callback, read when the run ends (callers pass a new function on every render).
@@ -127,6 +130,7 @@ export function FixDialog({
       try {
         const r = await loadRun(serverId, database, runId)
         if (cancelled) return
+        setRunItems({ items: r.items ?? [], stopping: r.stopping ?? false })
         if (!r.pending) {
           setPendingRun(null)
           if (r.result) {
@@ -295,8 +299,11 @@ export function FixDialog({
           />
         )}
 
+        {(pending || step.kind === "done") && runItems.items.length > 0 && <RunItems items={runItems.items} />}
+
         {step.kind === "done" && (
           <ResultBody
+            batch={runItems.items.length > 0}
             result={step.result}
             took={<FixTook fixId={fixId} options={step.options} seconds={step.tookSeconds} />}
           />
@@ -333,6 +340,18 @@ export function FixDialog({
               <Button variant="outline" onClick={close}>
                 Close
               </Button>
+              {runItems.items.length > 0 && (
+                <Button
+                  variant="outline"
+                  disabled={runItems.stopping}
+                  onClick={() => {
+                    setRunItems((x) => ({ ...x, stopping: true }))
+                    api.stopRun(serverId, database, pendingRun.runId).catch(() => setRunItems((x) => ({ ...x, stopping: false })))
+                  }}
+                >
+                  {runItems.stopping ? "Stopping…" : "Stop"}
+                </Button>
+              )}
               <Button disabled>
                 <Loader2 className="size-4 animate-spin" />
                 Applying…
@@ -650,10 +669,32 @@ function PreviewBody({ preview }: { preview: FixPreview }) {
 // What was read back after the statement ran. Not verified means the value read back is not the
 // target: the statement ran but the setting did not take (or something set it back). For the backup
 // jobs it means a job was not read back enabled.
-function ResultBody({ result, took }: { result: FixResult; took?: ReactNode }) {
+function ResultBody({ result, took, batch }: { result: FixResult; took?: ReactNode; batch?: boolean }) {
   // The backup jobs, and (phase 5a) the archive and remove-archive fixes' "Job" row.
   const jobs = result.preview.changes.some((c) => c.setting.endsWith("backup job") || c.setting === "Job")
   const target = result.preview.changes.map((c) => c.target).join(", ")
+  if (batch) {
+    // Phase 5t: a batch of indexes: the line says how it went, the list above says which.
+    return (
+      <div className="grid gap-2 min-w-0">
+        {result.verified ? (
+          <p className="flex items-start gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
+            <CircleCheck className="size-4 shrink-0 translate-y-0.5" />
+            <span className="break-words">Done: {result.after}</span>
+          </p>
+        ) : (
+          <p className="flex items-start gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+            <TriangleAlert className="size-4 shrink-0 translate-y-0.5" />
+            <span className="break-words">Not all done: {result.after}. The list says what happened to each index.</span>
+          </p>
+        )}
+        {took}
+        <p className="text-xs text-muted-foreground">
+          Each reorganised index has its own row in the change log; the last is change {result.changeId}.
+        </p>
+      </div>
+    )
+  }
   return (
     <div className="grid gap-2 min-w-0">
       {result.verified ? (

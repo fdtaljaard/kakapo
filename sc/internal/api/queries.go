@@ -28,6 +28,23 @@ func queriesRoutes(mux *http.ServeMux, svc *service.Service) {
 		}
 		writeJSON(w, http.StatusOK, d)
 	})
+	// The Indexes page (docs/phase5t-contract.md): the indexes that the slowest queries of the last 7 days
+	// read in full, from Query Store, with those queries as the evidence. Reads only; nothing is
+	// measured. 404 for an unknown server or database; 409 when the database is not online; 502 when the
+	// server cannot be read.
+	mux.HandleFunc("GET /api/servers/{id}/databases/{db}/indexes/candidates", func(w http.ResponseWriter, r *http.Request) {
+		id, name, err := serverAndDatabase(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		l, err := svc.IndexLens(r.Context(), id, name)
+		if err != nil {
+			writeError(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, l)
+	})
 	// Measure one index a plan reads in full (docs/phase5q-contract.md, section 4): its pages, how full
 	// and how out of order, and the reorganize-index action when there is something to gain. Reads
 	// only. 400 without schema, table and index; 404 for an unknown server or database; 409 when the

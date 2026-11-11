@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ChartColumn, Check, Copy, Loader2, RotateCw, XCircle } from "lucide-react"
+import { ChartColumn, Check, Copy, ListTree, Loader2, RotateCw, XCircle } from "lucide-react"
 
 import type { CardDetail, Card as CardData, CheckdbRoom, DeadlockReport, Finding, Fix, Overview, Owner } from "@/api"
 import { archiveTableFixId } from "@/api-tables"
@@ -34,7 +34,7 @@ import { formatUptime, formatWhen } from "@/lib/format"
 import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { twoWaysChoices } from "@/lib/two-ways"
-import { blockingPath, databasePagePath, instancePath, queryPath, tuningPath } from "@/lib/paths"
+import { blockingPath, databasePagePath, indexesPath, instancePath, queryPath, tuningPath } from "@/lib/paths"
 import { StorageDrivesBlock } from "@/components/room-line"
 import { ForeignKeysFold } from "@/components/foreign-keys-fold"
 import { NoKeyTablesFold } from "@/components/no-key-tables-fold"
@@ -148,6 +148,7 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
             onRefresh={refresh}
             copyAll={copyAll}
             tuningTo={cardId === "performance" ? tuningPath(serverId, database) : undefined}
+            indexesTo={cardId === "upkeep" ? indexesPath(serverId, database) : undefined}
           />
         ) : (
           loading && <FrameSkeleton />
@@ -337,6 +338,7 @@ function CardFrame({
   onRefresh,
   copyAll = [],
   tuningTo,
+  indexesTo,
 }: {
   card: CardData
   checking: boolean
@@ -344,6 +346,8 @@ function CardFrame({
   copyAll?: CopyAll[]
   // Phase 5c: the Performance card's "Tuning report" (docs/phase5c-contract.md).
   tuningTo?: string
+  // Phase 5t: the Upkeep card's "Indexes worth reorganising" (docs/phase5t-contract.md).
+  indexesTo?: string
 }) {
   const { status, fallback, copy, dismiss } = useCopy()
   const [copiedLabel, setCopiedLabel] = useState("")
@@ -371,6 +375,14 @@ function CardFrame({
               </Button>
             )
           })}
+          {indexesTo && (
+            <Button variant="outline" asChild>
+              <Link to={indexesTo}>
+                <ListTree />
+                Indexes worth reorganising
+              </Link>
+            </Button>
+          )}
           {tuningTo && (
             <Button variant="outline" asChild>
               <Link to={tuningTo}>

@@ -66,6 +66,10 @@ type FixRun struct {
 	Pending   bool
 	Result    *domain.FixResult
 	Err       error
+	// Items are the parts of a batch run (reorganize-indexes), each with its state, set by the fix as it
+	// goes; Stopping says a stop was asked for. Both are empty for a fix that is one statement.
+	Items    []domain.RunItem
+	Stopping bool
 }
 
 // completionCheck reads back, after the connection of a long fix's run was lost, whether its
@@ -89,6 +93,7 @@ type recovered struct {
 type fixRun struct {
 	FixRun
 	serverID int64
+	cancel   context.CancelFunc // stops the run (docs/phase5t-contract.md); set when the run starts
 }
 
 // runRegistry keeps the runs of this process. now, the poll and quiet periods and the progress read
@@ -175,7 +180,73 @@ func (r *runRegistry) get(serverID int64, database, id string) (FixRun, bool) {
 	if !ok || run.serverID != serverID || !strings.EqualFold(run.Database, database) {
 		return FixRun{}, false
 	}
-	return run.FixRun, true
+	out := run.FixRun
+	out.Items = append([]domain.RunItem(nil), run.Items...)
+	return out, true
+}
+
+// pendingFor says whether a run of this fix is pending on this server and database.
+func (r *runRegistry) pendingFor(serverID int64, fixID, database string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, x := range r.runs {
+		if x.Pending && x.serverID == serverID && x.FixID == fixID && strings.EqualFold(x.Database, database) {
+			return true
+		}
+	}
+	return false
+}
+
+// attach gives a run the function that stops it.
+func (r *runRegistry) attach(id string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if x, ok := r.runs[id]; ok {
+		x.cancel = cancel
+	}
+}
+
+// setItems replaces a run's items (a batch fix reports each part as it goes); no run, no effect.
+func (r *runRegistry) setItems(id string, items []domain.RunItem) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if x, ok := r.runs[id]; ok {
+		x.Items = append([]domain.RunItem(nil), items...)
+	}
+}
+
+// stopRequested says whether a stop was asked for.
+func (r *runRegistry) stopRequested(id string) bool {
+	if id == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	x, ok := r.runs[id]
+	return ok && x.Stopping
+}
+
+// stop asks a pending run to stop: its context is cancelled, which stops the statement in flight.
+func (r *runRegistry) stop(serverID int64, database, id string) (FixRun, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok := r.runs[id]
+	if !ok || run.serverID != serverID || !strings.EqualFold(run.Database, database) {
+		return FixRun{}, newError(KindNotFound, "there is no run %q of a fix on %s", id, database)
+	}
+	if !run.Pending {
+		return FixRun{}, newError(KindConflict, "this run has already ended")
+	}
+	run.Stopping = true
+	if run.cancel != nil {
+		run.cancel()
+	}
+	out := run.FixRun
+	out.Items = append([]domain.RunItem(nil), run.Items...)
+	return out, nil
 }
 
 // pruneLocked drops the runs that ended more than runKeep ago.
@@ -191,6 +262,13 @@ func newRunID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// StopFixRun asks a pending run to stop (POST .../fixes/runs/{runId}/stop): the statement in flight is
+// cancelled, which keeps the work it did, and a batch marks what it had not started as stopped.
+// KindNotFound for an unknown run, KindConflict for one that has ended.
+func (s *Service) StopFixRun(ctx context.Context, serverID int64, dbName, runID string) (FixRun, error) {
+	return s.runs.stop(serverID, dbName, runID)
 }
 
 // FixRunStatus returns one run of a long fix on this server and database. KindNotFound for an
@@ -222,7 +300,13 @@ func (s *Service) startRun(ctx context.Context, serverID int64, fixID string, g 
 		}
 		return domain.FixResult{}, err
 	}
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), long.timeout)
+	timeout := long.timeout
+	if long.timeoutFor != nil {
+		timeout = long.timeoutFor(g)
+	}
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	s.runs.attach(run.RunID, cancel)
+	g.runID = run.RunID
 	go s.runFix(runCtx, cancel, run.FixRun, serverID, g, apply, long)
 	started := run.StartedAt
 	return domain.FixResult{Preview: g.preview, Before: g.fix.Current, Pending: true, RunID: run.RunID, StartedAt: &started}, nil

@@ -16,6 +16,9 @@ export const cardPath = (serverId: number, database: string, card: string) =>
 export const queryPath = (serverId: number, database: string, hash: string) =>
   `${databasePagePath(serverId, database)}/queries/${encodeURIComponent(hash)}`
 
+// Phase 5t: the indexes the slowest queries read in full, to measure and reorganise.
+export const indexesPath = (serverId: number, database: string) => `${databasePagePath(serverId, database)}/indexes`
+
 export const blockingPath = (serverId: number, database: string) => `${databasePagePath(serverId, database)}/blocking`
 
 // Phase 5c: the tuning report, centred on a change when one is given.

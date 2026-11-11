@@ -83,6 +83,8 @@ var FixDefs = []FixDef{
 	{FixDisableIndex, "Disable a duplicate index", ScopeDatabase, "IDX04", "Index"},
 	// Phase 5q (docs/phase5q-contract.md, section 4): an index a query reads in full, reorganised.
 	{FixReorganizeIndex, "Reorganise an index", ScopeDatabase, "QRY01", "Index"},
+	// Phase 5t (docs/phase5t-contract.md, section 3): the Indexes page's batch, reorganize-index once per chosen index.
+	{FixReorganizeIndexes, "Reorganise the selected indexes", ScopeDatabase, "QRY01", "Index"},
 	{"kill-session", "Kill the blocking session", ScopeServer, "ACT01", "Session"},
 	// Phase 5m (docs/phase5m-contract.md, section 4): the row versioning decision's fix.
 	{"rcsi", "Turn on READ COMMITTED SNAPSHOT", ScopeDatabase, "DEC01", "READ_COMMITTED_SNAPSHOT"},
