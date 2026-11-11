@@ -305,6 +305,13 @@ func TestINS06ToINS11(t *testing.T) {
 	if x := one(t, fs, "INS07"); x.Severity != SeverityMedium || x.When != WhenWindow || x.Owner != OwnerClientIT || x.FixID != "" {
 		t.Errorf("INS07: %+v", x)
 	}
+	// The account the right goes to, named when read.
+	f.ServiceAccount = `NT Service\MSSQLSERVER`
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS07"); !strings.Contains(x.DoThis, `service account, NT Service\MSSQLSERVER, the Windows right`) ||
+		x.Evidence != `instant_file_initialization_enabled = N. Service account: NT Service\MSSQLSERVER.` {
+		t.Errorf("INS07 names the account: %q / %q", x.DoThis, x.Evidence)
+	}
 	f.IFI = nil
 	_, _, cs = runSetup(f)
 	if s := statusOf(cs, "INS07"); s.Status != CheckSkipped || s.Note != ins07Skipped {

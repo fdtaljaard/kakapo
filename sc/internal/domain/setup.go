@@ -71,8 +71,11 @@ type SetupFacts struct {
 	PlanCacheError string
 
 	// INS07 and INS08: nil when not visible on this version (before 2016 SP1) or not readable.
-	IFI         *string // instant_file_initialization_enabled: Y or N
-	MemoryModel *string // sql_memory_model_desc: CONVENTIONAL, LOCK_PAGES, LARGE_PAGES
+	IFI *string // instant_file_initialization_enabled: Y or N
+	// ServiceAccount is the account the SQL Server service runs as (sys.dm_server_services), which INS07
+	// names; empty when not read.
+	ServiceAccount string
+	MemoryModel    *string // sql_memory_model_desc: CONVENTIONAL, LOCK_PAGES, LARGE_PAGES
 
 	// INS12: sys.dm_os_sys_memory and the resource monitor ring buffer.
 	MemoryState string // system_memory_state_desc
@@ -681,8 +684,12 @@ func (b *setupBuild) ins07() {
 	case b.f.IFI == nil:
 		b.skip(ins07Skipped, "INS07")
 	case *b.f.IFI == "N":
-		b.ins("INS07", 3, "Offline", EffortQuickWin, "Instant file initialization is off.", ins07Why, ins07Do,
-			"instant_file_initialization_enabled = N", "")
+		doThis, evidence := ins07Do, "instant_file_initialization_enabled = N"
+		if a := b.f.ServiceAccount; a != "" {
+			doThis = strings.Replace(ins07Do, "the SQL Server service account", "the SQL Server service account, "+a+",", 1)
+			evidence += ". Service account: " + a + "."
+		}
+		b.ins("INS07", 3, "Offline", EffortQuickWin, "Instant file initialization is off.", ins07Why, doThis, evidence, "")
 	}
 }
 

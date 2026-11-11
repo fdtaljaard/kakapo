@@ -65,18 +65,18 @@ BEGIN CATCH
     SET @sysError = ERROR_MESSAGE();
 END CATCH;
 
-/* Instant file initialization (INS07): the column exists from 2016 SP1 */
-DECLARE @ifi nvarchar(1);
+/* Instant file initialization (INS07): the column exists from 2016 SP1; the account the right goes to with it */
+DECLARE @ifi nvarchar(1), @svcAccount nvarchar(256);
 IF @vss = 1
 BEGIN TRY
     IF EXISTS (SELECT 1 FROM sys.all_columns WHERE object_id = OBJECT_ID(N'sys.dm_server_services')
                                                AND name = N'instant_file_initialization_enabled')
         EXEC sys.sp_executesql
-            N'SELECT TOP (1) @ifi = instant_file_initialization_enabled FROM sys.dm_server_services WHERE servicename LIKE N''SQL Server (%'';',
-            N'@ifi nvarchar(1) OUTPUT', @ifi = @ifi OUTPUT;
+            N'SELECT TOP (1) @ifi = instant_file_initialization_enabled, @acct = service_account FROM sys.dm_server_services WHERE servicename LIKE N''SQL Server (%'';',
+            N'@ifi nvarchar(1) OUTPUT, @acct nvarchar(256) OUTPUT', @ifi = @ifi OUTPUT, @acct = @svcAccount OUTPUT;
 END TRY
 BEGIN CATCH
-    SET @ifi = NULL;
+    SELECT @ifi = NULL, @svcAccount = NULL;
 END CATCH;
 
 /* Server configuration, and the settings waiting for RECONFIGURE (INS14) */
@@ -201,7 +201,7 @@ SELECT CAST(CASE WHEN @dbid IS NULL THEN 0 ELSE 1 END AS bit),
        CAST(SERVERPROPERTY('Collation') AS nvarchar(128)),
        @state, @autoClose, @autoShrink, @pageVerify, @createStats, @updateStats, @compat, @ownerMissing, @trv, @trust, @dbColl,
        @userAccess,
-       @sysError, @cpu, @physMB, @start, @cores, @memModel, @ifi,
+       @sysError, @cpu, @physMB, @start, @cores, @memModel, @ifi, @svcAccount,
        @schedOnline, @schedOffline, @runnableNow, @affType, @vmType, @sockets, @coresPerSocket,
        @cfgError, @maxMem, @maxDop, @cost, @adhoc, @boost, @bkc, @ff, @clr, @clrStrict,
        @minMem, @lwp, @aff, @aff64, @affIO, @aff64IO,
@@ -346,6 +346,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 		minMem, aff, aff64, affIO, aff64IO                         sql.NullInt64
 		compat, trv                                                sql.NullInt32
 		sysErr, memModel, ifi, cfgErr, pcErr, memErr, memState     sql.NullString
+		svcAccount                                                 sql.NullString
 		power, powerErr, restoreErr, srcServer, srcDb, clrErr      sql.NullString
 		cpu, cores, maxDop, cost, adhoc, boost, bkc, ff, clr, low7 sql.NullInt32
 		clrStrict, low24, trusted                                  sql.NullInt32
@@ -358,7 +359,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 	if err := rows.Scan(&found, &f.ServerName, &f.ProductVersion, &f.ProductLevel, &update, &f.Edition, &f.EngineEdition, &f.Collation,
 		&state, &autoClose, &autoShrink, &pageVerify, &createStats, &updateStats, &compat, &ownerMiss, &trv, &trust, &dbColl,
 		&userAccess,
-		&sysErr, &cpu, &physMB, &start, &cores, &memModel, &ifi,
+		&sysErr, &cpu, &physMB, &start, &cores, &memModel, &ifi, &svcAccount,
 		&schedOnline, &schedOffline, &runnableNow, &affType, &vmType, &sockets, &coresPS,
 		&cfgErr, &maxMem, &maxDop, &cost, &adhoc, &boost, &bkc, &ff, &clr, &clrStrict,
 		&minMem, &lwp, &aff, &aff64, &affIO, &aff64IO,
@@ -404,6 +405,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 		v := strings.ToUpper(ifi.String)
 		f.IFI = &v
 	}
+	f.ServiceAccount = svcAccount.String
 
 	f.ConfigError = cfgErr.String
 	f.MaxServerMemoryMB, f.MaxDop, f.CostThreshold = maxMem.Int64, int(maxDop.Int32), int(cost.Int32)
