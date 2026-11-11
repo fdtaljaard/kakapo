@@ -63,7 +63,10 @@ Any new storage check would be STO13.
 ## 3. What to add, ranked by value to a non-SQL user
 
 Built (2026-11-11): 3 and 4, in STO09's evidence and "do this" (`sto09Do`, `waitShares` in
-`internal/domain/storage.go`; the per-volume read in `internal/collect/storage.go`). 1, 2 and 5 are open.
+`internal/domain/storage.go`; the per-volume read in `internal/collect/storage.go`). 2 built the same day:
+every file on the server is read, data-file writes are judged (from 50 ms; High from 200 ms), and a drive
+slow for more than one database (TempDB counts) is one server-wide finding, a drive where only TempDB is
+slow a TempDB one. The per-file table is in the evidence (eight files at most), not a fold. 1 and 5 are open.
 
 ### 1. "Is the disk slow now?" on STO09: latency since the last scan (medium)
 

@@ -436,7 +436,7 @@ func StorageFacts(ctx context.Context, db *sql.DB, database string) (domain.Stor
 	if err := readStorageInstance(ctx, db, database, &f); err != nil {
 		return f, err
 	}
-	readVolumeLoads(ctx, db, &f)
+	readServerFiles(ctx, db, &f)
 	if f.State == "ONLINE" {
 		if err := readStorageDatabase(ctx, db, database, &f); err != nil {
 			msg := "could not read inside the database: " + err.Error()
@@ -447,51 +447,52 @@ func StorageFacts(ctx context.Context, db *sql.DB, database string) (domain.Stor
 	return f, nil
 }
 
-// volumeLoadQuery is every database's disk work per volume since the restart (STO09: who makes the disk
-// busy). It reads the file statistics of every database, so it needs VIEW SERVER STATE. Only the files of
+// serverFilesQuery is every database's files with their I/O since the restart (STO09: whether a disk is
+// slow for the whole server, and who makes it busy). It needs VIEW SERVER STATE. Only the files of
 // sys.master_files, kept first: the file statistics also list SQL Server 2022's hidden model_msdb and
 // model_replicatedmaster (32761, 32762), and sys.dm_os_volume_stats on those never returns.
-const volumeLoadQuery = safeSession + `SET NOCOUNT ON;
-DECLARE @f TABLE (database_id int NOT NULL, file_id int NOT NULL, bytes_read bigint NOT NULL, bytes_written bigint NOT NULL, stall_ms bigint NOT NULL);
+const serverFilesQuery = safeSession + `SET NOCOUNT ON;
+DECLARE @f TABLE (database_id int NOT NULL, file_id int NOT NULL, type_desc nvarchar(60) NOT NULL, name nvarchar(128) NOT NULL,
+                  physical_name nvarchar(260) NOT NULL, reads bigint NOT NULL, writes bigint NOT NULL, stall_read_ms bigint NOT NULL,
+                  stall_write_ms bigint NOT NULL, bytes_read bigint NOT NULL, bytes_written bigint NOT NULL);
 INSERT @f
-SELECT v.database_id, v.file_id, v.num_of_bytes_read, v.num_of_bytes_written, v.io_stall_read_ms + v.io_stall_write_ms
+SELECT v.database_id, v.file_id, mf.type_desc, mf.name, mf.physical_name, v.num_of_reads, v.num_of_writes,
+       v.io_stall_read_ms, v.io_stall_write_ms, v.num_of_bytes_read, v.num_of_bytes_written
 FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS v
 JOIN sys.master_files AS mf ON mf.database_id = v.database_id AND mf.file_id = v.file_id;
-SELECT CAST(DB_NAME(f.database_id) AS nvarchar(128)), CAST(vs.volume_mount_point AS nvarchar(256)),
-       SUM(f.bytes_read), SUM(f.bytes_written), SUM(f.stall_ms)
+SELECT f.database_id, CAST(ISNULL(DB_NAME(f.database_id), N'') AS nvarchar(128)), f.file_id, f.type_desc, f.name, f.physical_name,
+       CAST(vs.volume_mount_point AS nvarchar(256)), f.reads, f.writes, f.stall_read_ms, f.stall_write_ms, f.bytes_read, f.bytes_written
 FROM @f AS f
-CROSS APPLY sys.dm_os_volume_stats(f.database_id, f.file_id) AS vs
-GROUP BY f.database_id, vs.volume_mount_point;`
+CROSS APPLY sys.dm_os_volume_stats(f.database_id, f.file_id) AS vs;`
 
-// readVolumeLoads reads every database's disk work per volume and whether SQL Server runs in a virtual
-// machine; a failure is kept in VolumeLoadError and costs nothing else.
-func readVolumeLoads(ctx context.Context, db *sql.DB, f *domain.StorageFacts) {
+// readServerFiles reads every database's files with their I/O and whether SQL Server runs in a virtual
+// machine; a failure is kept in ServerFilesError and costs nothing else.
+func readServerFiles(ctx context.Context, db *sql.DB, f *domain.StorageFacts) {
 	var vm sql.NullString
 	if err := db.QueryRowContext(ctx, Tag(safeSession+"SELECT CONVERT(nvarchar(60), virtual_machine_type_desc) FROM sys.dm_os_sys_info;")).Scan(&vm); err == nil {
 		f.VirtualMachine = vm.String
 	}
-	rows, err := db.QueryContext(ctx, Tag(volumeLoadQuery))
+	rows, err := db.QueryContext(ctx, Tag(serverFilesQuery))
 	if err != nil {
-		f.VolumeLoadError = friendlyError(err).Error()
+		f.ServerFilesError = friendlyError(err).Error()
 		return
 	}
 	defer rows.Close()
-	loads := []domain.VolumeLoad{}
+	files := []domain.ServerFile{}
 	for rows.Next() {
-		var l domain.VolumeLoad
-		var name sql.NullString
-		if err := rows.Scan(&name, &l.Volume, &l.BytesRead, &l.BytesWritten, &l.StallMs); err != nil {
-			f.VolumeLoadError = err.Error()
+		var x domain.ServerFile
+		if err := rows.Scan(&x.DatabaseID, &x.Database, &x.FileID, &x.Type, &x.LogicalName, &x.PhysicalName, &x.Volume,
+			&x.Reads, &x.Writes, &x.ReadStallMs, &x.WriteStallMs, &x.BytesRead, &x.BytesWritten); err != nil {
+			f.ServerFilesError = err.Error()
 			return
 		}
-		l.Database = name.String
-		loads = append(loads, l)
+		files = append(files, x)
 	}
 	if err := rows.Err(); err != nil {
-		f.VolumeLoadError = friendlyError(err).Error()
+		f.ServerFilesError = friendlyError(err).Error()
 		return
 	}
-	f.VolumeLoads = loads
+	f.ServerFiles = files
 }
 
 func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *domain.StorageFacts) error {

@@ -170,19 +170,28 @@ func (c IdentityColumn) MaxValue() int64 {
 	return math.MaxInt64
 }
 
+// ServerFile is one file of any database on the server and its I/O since the restart, from the file
+// statistics of every database (STO09: whether a disk is slow for the whole server, and who makes it
+// busy).
+type ServerFile struct {
+	DatabaseID   int
+	Database     string
+	FileID       int
+	Type         string // ROWS or LOG
+	LogicalName  string
+	PhysicalName string
+	Volume       string
+	Reads        int64
+	Writes       int64
+	ReadStallMs  int64
+	WriteStallMs int64
+	BytesRead    int64
+	BytesWritten int64
+}
+
 // StorageFacts is what the Storage card reads about one database and the instance facts its answer
 // depends on (docs/phase3b-contract.md, "What the collector reads"). Every area that could not be
 // read carries its reason; the checks that need it are skipped, the rest still run.
-// VolumeLoad is one database's disk work on one volume since the restart, from the file statistics of
-// every database (STO09: who makes the disk busy).
-type VolumeLoad struct {
-	Database     string
-	Volume       string
-	BytesRead    int64
-	BytesWritten int64
-	StallMs      int64 // the read and write waits added up
-}
-
 type StorageFacts struct {
 	Database      string
 	State         string // sys.databases state_desc
@@ -265,11 +274,11 @@ type StorageFacts struct {
 	VolumeError  string // sys.dm_os_volume_stats
 	LatencyError string // sys.dm_io_virtual_file_stats
 
-	// STO09: every database's disk work per volume since the restart (who makes the disk busy), and
-	// whether SQL Server runs in a virtual machine (virtual_machine_type_desc: NONE, HYPERVISOR, OTHER;
-	// "" when not read). VolumeLoadError when the loads could not be read.
-	VolumeLoads        []VolumeLoad
-	VolumeLoadError    string
+	// STO09: every file on the server with its I/O since the restart (nil when not read, and then
+	// ServerFilesError says why), and whether SQL Server runs in a virtual machine
+	// (virtual_machine_type_desc: NONE, HYPERVISOR, OTHER; "" when not read).
+	ServerFiles        []ServerFile
+	ServerFilesError   string
 	VirtualMachine     string
 	CPUError           string // sys.dm_os_sys_info
 	VLFError           string // sys.dm_db_log_info failed
@@ -348,44 +357,47 @@ func volumesOf(files []StorageFile) []volume {
 // Texts from the scan (01-QuickScan.sql sections 3 and 4, STO08, TMP03) and
 // PerformanceTriage.sql (IDX01, IDX07, IDX13), verbatim. IDX10 is kakapo's own.
 const (
-	sto01Why      = "When a disk fills up, databases cannot grow, transactions and backups fail, and applications stop working."
-	sto01Do       = "Free up or add space with the infrastructure team. Look for old backup files, oversized log files (STO07) and files that could move to another volume."
-	sto02Why      = "Percentage growth gets bigger as the file grows, so each growth takes longer and pauses activity. On log files it also creates too many VLFs (STO08)."
-	sto03WhyOff   = "Once the file is full, inserts and updates fail. Fine only if it is deliberate and space is monitored."
-	sto03WhySmall = "Many tiny growths fragment the file, create too many VLFs on log files, and each growth briefly pauses writes."
-	sto03WhyFull  = "Once the file is full, inserts and updates fail."
-	sto04Why      = "When the file reaches its maximum size it cannot grow, and inserts and updates start failing."
-	sto04DoExp    = "Archive or purge old data, or plan an upgrade to Standard edition."
-	sto05Finding  = "Database files are on the system drive (C:)."
-	sto05Why      = "C: holds Windows. If a database fills it, the whole server can become unstable. It is usually also the smallest and slowest disk."
-	sto05Do       = "Move the files to a dedicated data or log volume in a maintenance window (ALTER DATABASE ... MODIFY FILE, take the database offline, move the files, bring it online). For TempDB, change the path and restart SQL Server."
-	sto06Finding  = "The data and log files are on the same volume."
-	sto06Why      = "Data files do random reads and writes while the log needs fast sequential writes, so on one disk they compete. Matters less on modern SAN or SSD storage."
-	sto06Do       = "Low priority unless WRITELOG waits (WRK01) or log write latency (STO09) are high. When storage is next reviewed, place log files on a separate fast volume."
-	sto07Why      = "An oversized log usually means log space is not being reused: missing log backups, a transaction left open, or replication falling behind. It wastes disk and slows restores."
-	sto08Why      = "A log in many small pieces slows down database startup, restores, log backups and replication. It comes from many small autogrowths."
-	sto08Do       = "In a quiet period: take a log backup, shrink the log file (DBCC SHRINKFILE), grow it back to the size it needs in one or a few large steps, and set a fixed autogrowth (STO02/STO03)."
-	sto09WhyData  = "Every time a query needs data that is not in memory, it waits this long. Healthy storage is usually under 10 ms; above 20 ms users notice."
-	sto09WhyLog   = "Every transaction commit waits for the log write. Healthy is under 5 ms; slow log writes make every insert and update slower."
-	sto09Lead     = "Send this to the infrastructure/storage team. These are averages since the last restart; peaks are worse."
-	sto09Also     = "Also check memory (INS02/INS03) and missing indexes (WRK03): less reading means less waiting."
-	tmp01Why      = "With too few files, sessions that create temp tables or sort data queue for the same internal allocation pages (PAGELATCH waits), which slows everyone down under load."
-	tmp02Finding  = "TempDB data files are not all the same size and growth."
-	tmp02Why      = "SQL Server spreads work across TempDB files by free space. If one file is bigger it gets most of the work, which defeats the point of having several files."
-	tmp02Do       = "Apply \"Set up the TempDB files\": it grows the smaller files to the size of the largest and gives every file the same fixed growth, online and at once. Shrinking a larger file is best done by hand in a restart window."
-	tmp03Why      = "When TempDB is full, every query that sorts, hashes or uses a temp table fails, in every database on the server."
-	tmp03Do       = "Find what is using it right now (sys.dm_db_session_space_usage shows the pages per session: a runaway report, a huge sort, or a session holding a temp table) and deal with that query. If this is its normal size, pre-size TempDB larger in a maintenance window and make sure it can grow."
-	idx01Why      = "The biggest tables in this database, with the space their data and their other indexes take."
-	idx06Why      = "Without a clustered index, an updated row that no longer fits is moved and leaves a forwarding pointer behind, so reads get slower over time, and the space of deleted rows is not always reused."
-	idx06WhyNone  = " With no other index either, every query on it reads the whole table."
-	idx06Do       = "Add a clustered index in a maintenance window (it rewrites the whole table and needs about its size free in the data files). Choose the key with the application's owner: usually the primary key or an ever-increasing ID column."
-	idx07WhyFile  = "Usually a copy of a bigger database, or data that was deleted. The empty space costs disk and backup storage at every copy."
-	idx07WhyLog   = "The log is not being emptied, usually because of missing log backups or a transaction left open (ACT02). It keeps growing until the disk is full."
-	idx10Why      = "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk."
-	idx10Do       = "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so."
-	idx13Why      = "When the identity reaches the end of its range, every insert into this table fails with an arithmetic overflow error. There is no warning before it happens."
-	idx13DoHigh   = "Plan the change to bigint now (the column, every foreign key that references it, and the code that holds the value). Deleting old rows (IDX10) does not reset the identity."
-	idx13DoLow    = "Plan a change to bigint with the next major maintenance. If the table is purged regularly and the old values are never referenced, a DBCC CHECKIDENT reseed is an alternative: decide first."
+	sto01Why       = "When a disk fills up, databases cannot grow, transactions and backups fail, and applications stop working."
+	sto01Do        = "Free up or add space with the infrastructure team. Look for old backup files, oversized log files (STO07) and files that could move to another volume."
+	sto02Why       = "Percentage growth gets bigger as the file grows, so each growth takes longer and pauses activity. On log files it also creates too many VLFs (STO08)."
+	sto03WhyOff    = "Once the file is full, inserts and updates fail. Fine only if it is deliberate and space is monitored."
+	sto03WhySmall  = "Many tiny growths fragment the file, create too many VLFs on log files, and each growth briefly pauses writes."
+	sto03WhyFull   = "Once the file is full, inserts and updates fail."
+	sto04Why       = "When the file reaches its maximum size it cannot grow, and inserts and updates start failing."
+	sto04DoExp     = "Archive or purge old data, or plan an upgrade to Standard edition."
+	sto05Finding   = "Database files are on the system drive (C:)."
+	sto05Why       = "C: holds Windows. If a database fills it, the whole server can become unstable. It is usually also the smallest and slowest disk."
+	sto05Do        = "Move the files to a dedicated data or log volume in a maintenance window (ALTER DATABASE ... MODIFY FILE, take the database offline, move the files, bring it online). For TempDB, change the path and restart SQL Server."
+	sto06Finding   = "The data and log files are on the same volume."
+	sto06Why       = "Data files do random reads and writes while the log needs fast sequential writes, so on one disk they compete. Matters less on modern SAN or SSD storage."
+	sto06Do        = "Low priority unless WRITELOG waits (WRK01) or log write latency (STO09) are high. When storage is next reviewed, place log files on a separate fast volume."
+	sto07Why       = "An oversized log usually means log space is not being reused: missing log backups, a transaction left open, or replication falling behind. It wastes disk and slows restores."
+	sto08Why       = "A log in many small pieces slows down database startup, restores, log backups and replication. It comes from many small autogrowths."
+	sto08Do        = "In a quiet period: take a log backup, shrink the log file (DBCC SHRINKFILE), grow it back to the size it needs in one or a few large steps, and set a fixed autogrowth (STO02/STO03)."
+	sto09WhyData   = "Every time a query needs data that is not in memory, it waits this long. Healthy storage is usually under 10 ms; above 20 ms users notice."
+	sto09WhyLog    = "Every transaction commit waits for the log write. Healthy is under 5 ms; slow log writes make every insert and update slower."
+	sto09WhyWrite  = "Data-file writes mostly happen in the background, but slow ones hold up checkpoints, and TempDB's spills and temporary tables wait for them directly."
+	sto09WhyServer = "When a disk is slow for every database on it, the cause is the storage under it or the load on it, not one database: tuning one database's queries will not fix it."
+	sto09WhyTempdb = "Every database on the server shares TempDB: its sorts, hash joins, spills, temporary tables and row versions all wait for this disk."
+	sto09Lead      = "Send this to the infrastructure/storage team. These are averages since the last restart; peaks are worse."
+	sto09Also      = "Also check memory (INS02/INS03) and missing indexes (WRK03): less reading means less waiting."
+	tmp01Why       = "With too few files, sessions that create temp tables or sort data queue for the same internal allocation pages (PAGELATCH waits), which slows everyone down under load."
+	tmp02Finding   = "TempDB data files are not all the same size and growth."
+	tmp02Why       = "SQL Server spreads work across TempDB files by free space. If one file is bigger it gets most of the work, which defeats the point of having several files."
+	tmp02Do        = "Apply \"Set up the TempDB files\": it grows the smaller files to the size of the largest and gives every file the same fixed growth, online and at once. Shrinking a larger file is best done by hand in a restart window."
+	tmp03Why       = "When TempDB is full, every query that sorts, hashes or uses a temp table fails, in every database on the server."
+	tmp03Do        = "Find what is using it right now (sys.dm_db_session_space_usage shows the pages per session: a runaway report, a huge sort, or a session holding a temp table) and deal with that query. If this is its normal size, pre-size TempDB larger in a maintenance window and make sure it can grow."
+	idx01Why       = "The biggest tables in this database, with the space their data and their other indexes take."
+	idx06Why       = "Without a clustered index, an updated row that no longer fits is moved and leaves a forwarding pointer behind, so reads get slower over time, and the space of deleted rows is not always reused."
+	idx06WhyNone   = " With no other index either, every query on it reads the whole table."
+	idx06Do        = "Add a clustered index in a maintenance window (it rewrites the whole table and needs about its size free in the data files). Choose the key with the application's owner: usually the primary key or an ever-increasing ID column."
+	idx07WhyFile   = "Usually a copy of a bigger database, or data that was deleted. The empty space costs disk and backup storage at every copy."
+	idx07WhyLog    = "The log is not being emptied, usually because of missing log backups or a transaction left open (ACT02). It keeps growing until the disk is full."
+	idx10Why       = "Tables that only grow slow every backup, every integrity check and every query that reads them, and fill the disk."
+	idx10Do        = "Agree a retention period with the application's owner (how many months must stay) and have old rows deleted in batches in a quiet hour, or archived; then a scheduled cleanup keeps it that way. Never delete without the owner's say-so."
+	idx13Why       = "When the identity reaches the end of its range, every insert into this table fails with an arithmetic overflow error. There is no warning before it happens."
+	idx13DoHigh    = "Plan the change to bigint now (the column, every foreign key that references it, and the code that holds the value). Deleting old rows (IDX10) does not reset the identity."
+	idx13DoLow     = "Plan a change to bigint with the next major maintenance. If the table is purged regularly and the old values are never referenced, a DBCC CHECKIDENT reseed is an alternative: decide first."
 
 	// STO11 and STO12, from the contract's addendum.
 	sto11Why      = "When the log is full and can neither be reused nor grow, every insert, update and delete in this database fails with error 9002 until it is."
@@ -931,85 +943,268 @@ func (b *storageBuild) sto08() {
 		fmt.Sprintf("VLF count: %d.", *f.VLFCount))
 }
 
-// sto09: slow data reads or log writes since the restart, one finding per volume and kind (a
-// volume with one slow file reads as that file); the rank is the worst file's.
+// sto09Kind is what was slow on a file: data reads, data writes or log writes.
+type sto09Kind struct {
+	label   string // "Data reads"
+	writes  bool   // judged on the writes
+	why     string
+	slow    int64 // the average, ms, from which it is slow (Medium)
+	high    int64 // and High
+	minimum int64 // the operations needed before the average means anything
+}
+
+// Data-file writes happen mostly in the background (checkpoints, the lazy writer), so they are judged
+// from a higher average than the reads users wait on (docs/troubleshooting-review.md, proposal 2).
+var (
+	sto09Reads      = sto09Kind{"Data reads", false, sto09WhyData, 20, 50, 1000}
+	sto09DataWrites = sto09Kind{"Data writes", true, sto09WhyWrite, 50, 200, 1000}
+	sto09LogWrites  = sto09Kind{"Log writes", true, sto09WhyLog, 10, 20, 1000}
+)
+
+// sto09Slow is one slow file: what was slow, its average and the rank (2 High, 3 Medium).
+type sto09Slow struct {
+	file StorageFile
+	kind sto09Kind
+	ms   int64
+	rank int
+}
+
+// sto09Judge says whether a file is slow and on what; a data file slow on both reads and writes is
+// judged on the worse of the two.
+func sto09Judge(x StorageFile) (sto09Slow, bool) {
+	kinds := []sto09Kind{sto09LogWrites}
+	if x.isData() {
+		kinds = []sto09Kind{sto09Reads, sto09DataWrites}
+	} else if !x.isLog() {
+		return sto09Slow{}, false
+	}
+	var out sto09Slow
+	found := false
+	for _, k := range kinds {
+		ops, ms := x.Reads, x.AvgReadMs()
+		if k.writes {
+			ops, ms = x.Writes, x.AvgWriteMs()
+		}
+		if ops < k.minimum || ms < k.slow {
+			continue
+		}
+		rank := 3
+		if ms >= k.high {
+			rank = 2
+		}
+		// The worse rank wins; on a tie, the one further over its own High mark (790 ms writes against
+		// 200 beat 89 ms reads against 50).
+		if !found || rank < out.rank || (rank == out.rank && ms*out.kind.high > out.ms*k.high) {
+			out, found = sto09Slow{file: x, kind: k, ms: ms, rank: rank}, true
+		}
+	}
+	return out, found
+}
+
+// sto09: slow data reads, data writes or log writes since the restart. A drive that is slow for more
+// than one database (TempDB counts) gets one server-wide finding; a drive where only TempDB is slow gets
+// a TempDB finding; the rest is this database's own, one finding per volume and kind (a volume with one
+// slow file reads as that file). The rank is the worst file's.
 func (b *storageBuild) sto09() {
+	f := b.f
+	wide := map[string]bool{}
+	for _, v := range f.ownVolumes() {
+		slow := f.slowOnVolume(v)
+		dbs := sto09Databases(slow)
+		mine, temp := false, false
+		for _, db := range dbs {
+			mine = mine || strings.EqualFold(db, f.Database)
+			temp = temp || strings.EqualFold(db, "tempdb")
+		}
+		switch {
+		case len(dbs) >= 2 && (mine || temp):
+			b.sto09Server(v, slow, dbs)
+			wide[strings.ToUpper(v)] = true
+		case len(dbs) == 1 && temp:
+			b.sto09Tempdb(v, slow)
+			wide[strings.ToUpper(v)] = true
+		}
+	}
+
 	type group struct {
 		volume string
-		log    bool
-		files  []StorageFile
+		kind   sto09Kind
+		files  []sto09Slow
 	}
 	groups := []*group{}
 	byKey := map[string]*group{}
-	for _, x := range b.f.DatabaseFiles() {
-		if !x.HasIO {
+	for _, x := range f.DatabaseFiles() {
+		if !x.HasIO || wide[strings.ToUpper(x.Volume)] {
 			continue
 		}
-		slowData := x.isData() && x.Reads >= 1000 && x.AvgReadMs() >= 20
-		slowLog := x.isLog() && x.Writes >= 1000 && x.AvgWriteMs() >= 10
-		if !slowData && !slowLog {
+		s, ok := sto09Judge(x)
+		if !ok {
 			continue
 		}
-		key := fmt.Sprintf("%s|%v", x.Volume, slowLog)
+		key := x.Volume + "|" + s.kind.label
 		if x.Volume == "" {
 			key += "|" + x.LogicalName // a file whose volume was not read stands alone
 		}
 		g, ok := byKey[key]
 		if !ok {
-			g = &group{volume: x.Volume, log: slowLog}
+			g = &group{volume: x.Volume, kind: s.kind}
 			byKey[key] = g
 			groups = append(groups, g)
 		}
-		g.files = append(g.files, x)
+		g.files = append(g.files, s)
 	}
+	order := map[string]int{sto09Reads.label: 0, sto09DataWrites.label: 1, sto09LogWrites.label: 2}
 	sort.SliceStable(groups, func(i, j int) bool {
 		if groups[i].volume != groups[j].volume {
 			return groups[i].volume < groups[j].volume
 		}
-		return !groups[i].log && groups[j].log
+		return order[groups[i].kind.label] < order[groups[j].kind.label]
 	})
 	for _, g := range groups {
 		// The worst file decides the rank and is named; the average is over the group's I/O.
 		worst := g.files[0]
 		var ops, stall int64
-		parts := []string{}
-		for _, x := range g.files {
-			avg, worstAvg := x.AvgReadMs(), worst.AvgReadMs()
-			if g.log {
-				avg, worstAvg = x.AvgWriteMs(), worst.AvgWriteMs()
+		parts, files := []string{}, []StorageFile{}
+		for _, s := range g.files {
+			x := s.file
+			files = append(files, x)
+			if g.kind.writes {
 				ops, stall = ops+x.Writes, stall+x.WriteStallMs
 			} else {
 				ops, stall = ops+x.Reads, stall+x.ReadStallMs
 			}
-			if avg > worstAvg {
-				worst = x
+			if s.ms > worst.ms {
+				worst = s
 			}
 			parts = append(parts, fmt.Sprintf("%s: reads %d (avg %d ms), writes %d (avg %d ms)", x.PhysicalName, x.Reads, x.AvgReadMs(), x.Writes, x.AvgWriteMs()))
 		}
-		worstMs, kind, why, high := worst.AvgReadMs(), "Data reads", sto09WhyData, int64(50)
-		if g.log {
-			worstMs, kind, why, high = worst.AvgWriteMs(), "Log writes", sto09WhyLog, 20
-		}
 		rank := 3
-		if worstMs >= high {
+		if worst.ms >= g.kind.high {
 			rank = 2
 		}
 		if len(g.files) == 1 {
-			x := g.files[0]
+			x := worst.file
 			// Only the kind that was judged: a log file's few reads (or a data file's writes) are not
 			// part of the finding and read as if they were.
 			evidence := fmt.Sprintf("Reads: %s (avg %d ms).", n0int(x.Reads), x.AvgReadMs())
-			if g.log {
+			if g.kind.writes {
 				evidence = fmt.Sprintf("Writes: %s (avg %d ms).", n0int(x.Writes), x.AvgWriteMs())
 			}
 			b.add("STO09", rank, "Planned", EffortProject, x.LogicalName,
-				fmt.Sprintf("%s average %d ms on %s.", kind, worstMs, x.PhysicalName), why, b.sto09Do(g.volume, g.files), evidence+b.f.waitShares(g.volume))
+				fmt.Sprintf("%s average %d ms on %s.", g.kind.label, worst.ms, x.PhysicalName), g.kind.why, b.sto09Do(g.volume, files), evidence+f.waitShares(g.volume))
 			continue
 		}
 		b.add("STO09", rank, "Planned", EffortProject, g.volume,
-			fmt.Sprintf("%s average %d ms on %d files on %s (%s is the slowest at %d ms).", kind, stall/ops, len(g.files), g.volume, worst.LogicalName, worstMs),
-			why, b.sto09Do(g.volume, g.files), strings.Join(parts, "; ")+"."+b.f.waitShares(g.volume))
+			fmt.Sprintf("%s average %d ms on %d files on %s (%s is the slowest at %d ms).", g.kind.label, stall/ops, len(g.files), g.volume, worst.file.LogicalName, worst.ms),
+			g.kind.why, b.sto09Do(g.volume, files), strings.Join(parts, "; ")+"."+f.waitShares(g.volume))
 	}
+}
+
+// sto09Server is the finding for a drive that is slow for more than one database: one incident, not a
+// ticket per database.
+func (b *storageBuild) sto09Server(volume string, slow []sto09Slow, dbs []string) {
+	worst := slow[0]
+	names := dbs
+	more := ""
+	if len(names) > 3 {
+		names, more = dbs[:3], fmt.Sprintf(" and %d more", len(dbs)-3)
+	}
+	finding := fmt.Sprintf("Drive %s is slow for the whole server, not one database: %d slow files across %d databases (%s%s). The slowest: %s average %d ms on %s (%s).",
+		volume, len(slow), len(dbs), strings.Join(names, ", "), more, strings.ToLower(worst.kind.label), worst.ms, fileBase(worst.file.PhysicalName), worst.file.Database)
+	b.add("STO09", worst.rank, "Planned", EffortProject, volume, finding, sto09WhyServer, b.sto09Do(volume, sto09Files(slow)), sto09Evidence(slow, true)+b.f.waitShares(volume))
+}
+
+// sto09Tempdb is the finding for a drive where only TempDB's files are slow: every database waits for it.
+func (b *storageBuild) sto09Tempdb(volume string, slow []sto09Slow) {
+	worst := slow[0]
+	finding := fmt.Sprintf("TempDB is slow on %s: %s average %d ms on %s.", volume, strings.ToLower(worst.kind.label), worst.ms, fileBase(worst.file.PhysicalName))
+	if len(slow) > 1 {
+		finding = fmt.Sprintf("TempDB is slow on %s (%d slow files): %s average %d ms on %s, the slowest.", volume, len(slow), strings.ToLower(worst.kind.label), worst.ms, fileBase(worst.file.PhysicalName))
+	}
+	b.add("STO09", worst.rank, "Planned", EffortProject, "tempdb", finding, sto09WhyTempdb, b.sto09Do(volume, sto09Files(slow)), sto09Evidence(slow, false)+b.f.waitShares(volume))
+}
+
+// ownVolumes are the volumes of this database's and TempDB's files, each once, in order.
+func (f StorageFacts) ownVolumes() []string {
+	out, seen := []string{}, map[string]bool{}
+	for _, x := range f.Files {
+		if x.Volume != "" && !seen[strings.ToUpper(x.Volume)] {
+			seen[strings.ToUpper(x.Volume)] = true
+			out = append(out, x.Volume)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// slowOnVolume are the slow files of every database on the volume, worst first (rank, then average);
+// none when the server's files were not read.
+func (f StorageFacts) slowOnVolume(volume string) []sto09Slow {
+	out := []sto09Slow{}
+	for _, s := range f.ServerFiles {
+		if !strings.EqualFold(s.Volume, volume) {
+			continue
+		}
+		x := StorageFile{DatabaseID: s.DatabaseID, Database: s.Database, FileID: s.FileID, Type: s.Type, LogicalName: s.LogicalName,
+			PhysicalName: s.PhysicalName, Volume: s.Volume, HasIO: true, Reads: s.Reads, Writes: s.Writes, ReadStallMs: s.ReadStallMs, WriteStallMs: s.WriteStallMs}
+		if j, ok := sto09Judge(x); ok {
+			out = append(out, j)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].rank != out[j].rank {
+			return out[i].rank < out[j].rank
+		}
+		return out[i].ms > out[j].ms
+	})
+	return out
+}
+
+// sto09Databases are the databases of the slow files, each once, the worst first.
+func sto09Databases(slow []sto09Slow) []string {
+	out, seen := []string{}, map[string]bool{}
+	for _, s := range slow {
+		if !seen[strings.ToLower(s.file.Database)] {
+			seen[strings.ToLower(s.file.Database)] = true
+			out = append(out, s.file.Database)
+		}
+	}
+	return out
+}
+
+func sto09Files(slow []sto09Slow) []StorageFile {
+	out := []StorageFile{}
+	for _, s := range slow {
+		out = append(out, s.file)
+	}
+	return out
+}
+
+// sto09Evidence lists the slow files, worst first, eight at most: "tempdb temp1.ndf: reads 1,234 (avg
+// 89 ms), writes 5,678 (avg 790 ms)"; the database is named when the files span databases.
+func sto09Evidence(slow []sto09Slow, named bool) string {
+	parts := []string{}
+	for i, s := range slow {
+		if i == 8 {
+			parts = append(parts, fmt.Sprintf("and %d more slow files", len(slow)-8))
+			break
+		}
+		x := s.file
+		name := fileBase(x.PhysicalName)
+		if named {
+			name = x.Database + " " + name
+		}
+		parts = append(parts, fmt.Sprintf("%s: reads %s (avg %d ms), writes %s (avg %d ms)", name, n0int(x.Reads), x.AvgReadMs(), n0int(x.Writes), x.AvgWriteMs()))
+	}
+	return strings.Join(parts, "; ") + "."
+}
+
+// fileBase is a file's name without its folder.
+func fileBase(path string) string {
+	if i := strings.LastIndexAny(path, `\/`); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 // volumeShare is one database's share of the time spent waiting on a volume since the restart.
@@ -1023,21 +1218,31 @@ type volumeShare struct {
 // left out; none when the loads were not read or nothing waited.
 func (f StorageFacts) volumeShares(volume string) []volumeShare {
 	var total int64
-	for _, l := range f.VolumeLoads {
-		if volume != "" && strings.EqualFold(l.Volume, volume) {
-			total += l.StallMs
+	byDB, order := map[string]*volumeShare{}, []string{}
+	stalls := map[string]int64{}
+	for _, s := range f.ServerFiles {
+		if volume == "" || !strings.EqualFold(s.Volume, volume) {
+			continue
 		}
+		key := strings.ToLower(s.Database)
+		if byDB[key] == nil {
+			byDB[key] = &volumeShare{Database: s.Database}
+			order = append(order, key)
+		}
+		byDB[key].Read += s.BytesRead
+		byDB[key].Written += s.BytesWritten
+		stalls[key] += s.ReadStallMs + s.WriteStallMs
+		total += s.ReadStallMs + s.WriteStallMs
 	}
 	out := []volumeShare{}
 	if total <= 0 {
 		return out
 	}
-	for _, l := range f.VolumeLoads {
-		if !strings.EqualFold(l.Volume, volume) {
-			continue
-		}
-		if pct := int(roundHalfAway(float64(l.StallMs)*100/float64(total), 0)); pct >= 1 {
-			out = append(out, volumeShare{Database: l.Database, Pct: pct, Read: l.BytesRead, Written: l.BytesWritten})
+	for _, key := range order {
+		if pct := int(roundHalfAway(float64(stalls[key])*100/float64(total), 0)); pct >= 1 {
+			share := *byDB[key]
+			share.Pct = pct
+			out = append(out, share)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Pct > out[j].Pct })
@@ -1111,18 +1316,18 @@ func (b *storageBuild) sto09Do(volume string, slow []StorageFile) string {
 	return strings.Join(lines, "\n")
 }
 
-// sqlFolders are the folders of this database's and tempdb's files on the volume (the slow files' own
-// when the volume was not read), each once, in file order.
+// sqlFolders are the folders of this database's and tempdb's files on the volume and of the slow files,
+// each once, in file order, six at most.
 func (f StorageFacts) sqlFolders(volume string, slow []StorageFile) []string {
-	files := slow
+	files := []StorageFile{}
 	if volume != "" {
-		files = []StorageFile{}
 		for _, x := range f.Files {
 			if strings.EqualFold(x.Volume, volume) {
 				files = append(files, x)
 			}
 		}
 	}
+	files = append(files, slow...)
 	out, seen := []string{}, map[string]bool{}
 	for _, x := range files {
 		i := strings.LastIndexAny(x.PhysicalName, `\/`)
@@ -1134,6 +1339,9 @@ func (f StorageFacts) sqlFolders(volume string, slow []StorageFile) []string {
 			seen[strings.ToLower(dir)] = true
 			out = append(out, dir)
 		}
+	}
+	if len(out) > 6 {
+		out = append(out[:6], fmt.Sprintf("and %d more folders", len(out)-6))
 	}
 	return out
 }

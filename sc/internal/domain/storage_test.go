@@ -456,7 +456,9 @@ func TestStorageSTO09(t *testing.T) {
 		{"WarehouseLive", 1000, 50000, 0, 0, SeverityHigh, `Data reads average 50 ms on D:\Data\WarehouseLive.mdf.`},
 		{"WarehouseLive", 999, 99900, 0, 0, "", ""},
 		{"WarehouseLive", 1000, 19999, 0, 0, "", ""},
-		{"WarehouseLive", 0, 0, 1000, 90000, "", ""}, // slow data writes are not STO09
+		{"WarehouseLive", 0, 0, 1000, 49999, "", ""}, // data writes are slow from 50 ms
+		{"WarehouseLive", 0, 0, 1000, 90000, SeverityMedium, `Data writes average 90 ms on D:\Data\WarehouseLive.mdf.`},
+		{"WarehouseLive", 0, 0, 1000, 200000, SeverityHigh, `Data writes average 200 ms on D:\Data\WarehouseLive.mdf.`},
 		{"WarehouseLive_log", 0, 0, 1000, 10000, SeverityMedium, `Log writes average 10 ms on L:\Log\WarehouseLive_log.ldf.`},
 		{"WarehouseLive_log", 0, 0, 1000, 20000, SeverityHigh, `Log writes average 20 ms on L:\Log\WarehouseLive_log.ldf.`},
 		{"WarehouseLive_log", 0, 0, 999, 99900, "", ""},
@@ -496,11 +498,11 @@ func TestStorageSTO09(t *testing.T) {
 	f = sfacts()
 	set(&f, "WarehouseLive", 2000, 60000, 0, 0)
 	f.VirtualMachine = "HYPERVISOR"
-	f.VolumeLoads = []VolumeLoad{
-		{Database: "WarehouseTest", Volume: `D:\`, BytesRead: 120 << 30, BytesWritten: 441 << 30, StallMs: 800},
-		{Database: "WarehouseLive", Volume: `D:\`, BytesRead: 1 << 30, BytesWritten: 1 << 20, StallMs: 150},
-		{Database: "master", Volume: `D:\`, StallMs: 1},
-		{Database: "tempdb", Volume: `T:\`, StallMs: 5000},
+	f.ServerFiles = []ServerFile{
+		{Database: "WarehouseTest", Volume: `D:\`, BytesRead: 120 << 30, BytesWritten: 441 << 30, ReadStallMs: 800},
+		{Database: "WarehouseLive", Volume: `D:\`, BytesRead: 1 << 30, BytesWritten: 1 << 20, ReadStallMs: 150},
+		{Database: "master", Volume: `D:\`, ReadStallMs: 1},
+		{Database: "tempdb", Volume: `T:\`, ReadStallMs: 5000},
 	}
 	_, fs, _ = sbuild(f)
 	x := one(t, fs, "STO09")
@@ -522,22 +524,22 @@ func TestStorageSTO09(t *testing.T) {
 		t.Errorf("STO09 evidence %q", x.Evidence)
 	}
 	// TempDB the busy one: what makes it busy, not only what fills it.
-	f.VolumeLoads[3].Volume = `D:\`
+	f.ServerFiles[3].Volume = `D:\`
 	_, fs, _ = sbuild(f)
 	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "tempdb accounts for 84% of the time spent waiting on D:\\") ||
 		!strings.Contains(x.DoThis, "spill sorts and hashes to disk") || !strings.Contains(x.DoThis, "A bigger TempDB does not fix this.") {
 		t.Errorf("STO09 tempdb busy:\n%s", x.DoThis)
 	}
-	f.VolumeLoads[3].Volume = `T:\`
+	f.ServerFiles[3].Volume = `T:\`
 
 	// This database the busy one, a physical server: no busy line, the physical check.
-	f.VolumeLoads[0].StallMs, f.VirtualMachine = 10, "NONE"
+	f.ServerFiles[0].ReadStallMs, f.VirtualMachine = 10, "NONE"
 	_, fs, _ = sbuild(f)
 	if x := one(t, fs, "STO09"); strings.Contains(x.DoThis, "accounts for") || !strings.Contains(x.DoThis, "1. This server is physical") {
 		t.Errorf("STO09 mine, physical:\n%s", x.DoThis)
 	}
 	// Loads and VM not read: the request still names the folders and the measurement.
-	f.VolumeLoads, f.VirtualMachine = nil, ""
+	f.ServerFiles, f.VirtualMachine = nil, ""
 	_, fs, _ = sbuild(f)
 	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "1. Antivirus is one possible cause.") || x.Evidence != "Reads: 2,000 (avg 30 ms)." {
 		t.Errorf("STO09 unread:\n%s / %q", x.DoThis, x.Evidence)
@@ -1244,6 +1246,62 @@ func TestNumberFormats(t *testing.T) {
 	if n0int(9223372036854775807) != "9,223,372,036,854,775,807" {
 		t.Error(n0int(9223372036854775807))
 	}
+}
+
+// TestStorageSTO09Server covers docs/troubleshooting-review.md, proposal 2: a drive slow for more than
+// one database is one server-wide finding; a drive where only TempDB is slow is a TempDB finding; another
+// database's slow files alone are its own card's business.
+func TestStorageSTO09Server(t *testing.T) {
+	sf := func(db, name, typ, vol string, reads, readStall, writes, writeStall int64) ServerFile {
+		return ServerFile{Database: db, Type: typ, LogicalName: name, PhysicalName: vol + `Data\` + name, Volume: vol,
+			Reads: reads, ReadStallMs: readStall, Writes: writes, WriteStallMs: writeStall}
+	}
+	// TempDB's data files on T:\ write at 790 ms; this database's files are quick.
+	f := sfacts()
+	f.ServerFiles = []ServerFile{
+		sf("tempdb", "temp1.ndf", "ROWS", `T:\`, 1000, 89000, 5000, 3950000),
+		sf("tempdb", "temp2.ndf", "ROWS", `T:\`, 1000, 30000, 1000, 10000),
+		sf("WarehouseLive", "WarehouseLive.mdf", "ROWS", `D:\`, 5000, 5000, 100, 100),
+	}
+	_, fs, _ := sbuild(f)
+	x := one(t, fs, "STO09")
+	wantStorageFinding(t, x, SeverityHigh, WhenDecideFirst, EffortProject, "tempdb",
+		`TempDB is slow on T:\ (2 slow files): data writes average 790 ms on temp1.ndf, the slowest.`)
+	if x.Why != sto09WhyTempdb || !strings.HasPrefix(x.Evidence, `temp1.ndf: reads 1,000 (avg 89 ms), writes 5,000 (avg 790 ms); temp2.ndf: reads 1,000 (avg 30 ms)`) {
+		t.Errorf("TempDB: %q / %q", x.Why, x.Evidence)
+	}
+
+	// The same drive slow for this database, TempDB and another: one server-wide finding, and this
+	// database's own finding on that drive gives way to it.
+	f = sfacts()
+	d := file(&f, "WarehouseLive")
+	d.Volume, d.Reads, d.ReadStallMs = `C:\`, 2000, 150000
+	for i := range f.Files {
+		if f.Files[i].DatabaseID == 2 {
+			f.Files[i].Volume = `C:\`
+		}
+	}
+	f.ServerFiles = []ServerFile{
+		sf("WarehouseLive", "WarehouseLive.mdf", "ROWS", `C:\`, 2000, 150000, 10, 10),
+		sf("tempdb", "temp1.ndf", "ROWS", `C:\`, 1000, 89000, 5000, 3950000),
+		sf("WarehouseTest", "WarehouseTest_log.ldf", "LOG", `C:\`, 10, 10, 10000, 530000),
+		sf("Archive", "Archive.mdf", "ROWS", `C:\`, 1000, 30000, 0, 0),
+		sf("Other", "Other.mdf", "ROWS", `C:\`, 5000, 5000, 0, 0), // quick: not counted
+	}
+	_, fs, _ = sbuild(f)
+	x = one(t, fs, "STO09")
+	wantStorageFinding(t, x, SeverityHigh, WhenDecideFirst, EffortProject, `C:\`,
+		`Drive C:\ is slow for the whole server, not one database: 4 slow files across 4 databases (tempdb, WarehouseLive, WarehouseTest and 1 more). The slowest: data writes average 790 ms on temp1.ndf (tempdb).`)
+	if x.Why != sto09WhyServer || !strings.HasPrefix(x.Evidence, `tempdb temp1.ndf: reads 1,000 (avg 89 ms), writes 5,000 (avg 790 ms); WarehouseLive WarehouseLive.mdf: reads 2,000 (avg 75 ms)`) ||
+		!strings.Contains(x.Evidence, "Waiting on C:\\ since the restart: tempdb ") || !strings.Contains(x.DoThis, `T:\TempDB\, C:\Data\ (the .mdf`) {
+		t.Errorf("server-wide: %q\n%s", x.Evidence, x.DoThis)
+	}
+
+	// Another database alone slow on this database's drive: its own card says it, not this one.
+	f = sfacts()
+	f.ServerFiles = []ServerFile{sf("WarehouseTest", "WarehouseTest.mdf", "ROWS", `D:\`, 2000, 150000, 0, 0)}
+	_, fs, _ = sbuild(f)
+	none(t, fs, "STO09")
 }
 
 // TestStorageSTO09PerVolume covers docs/phase3f-contract.md item 17: slow files grouped per volume
