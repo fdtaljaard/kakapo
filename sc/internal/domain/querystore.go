@@ -136,6 +136,27 @@ type FixPreview struct {
 	// Lead is the preview's first line, what the change does for this database in one sentence (the
 	// index of a foreign key, docs/phase5n-contract.md section 4); "" when there is none.
 	Lead string `json:"lead,omitempty"`
+	// Requires is what the change needs in place, each met or not, shown as a short checklist; Next is the
+	// one fix that puts the missing piece in place, before Apply (Held says why it waits) or right after it
+	// (docs/sql-express-backups.md: the switch to FULL needs log backups).
+	Requires []FixRequirement `json:"requires,omitempty"`
+	Next     *FixNext         `json:"next,omitempty"`
+}
+
+// FixRequirement is one thing a change needs in place, and whether it is.
+type FixRequirement struct {
+	Label  string `json:"label"`
+	Met    bool   `json:"met"`
+	Detail string `json:"detail"`
+}
+
+// FixNext is the fix that puts a missing requirement in place: When is "before" (Apply waits for it) or
+// "after" (it can only follow the change).
+type FixNext struct {
+	FixID string `json:"fixId"`
+	Label string `json:"label"`
+	When  string `json:"when"`
+	Why   string `json:"why"` // after the change: why it must follow now
 }
 
 // FixInput is one value the user may set in a fix's preview (docs/phase3g-contract.md).
@@ -150,6 +171,9 @@ type FixInput struct {
 	Warning string `json:"warning,omitempty"`
 	// Options are the values a "select" input offers (docs/phase4b-contract.md).
 	Options []string `json:"options,omitempty"`
+	// OptionLabels are what the dialog shows for an option, in plain words ("Any minute (FULL)"); an
+	// option without one shows as itself.
+	OptionLabels map[string]string `json:"optionLabels,omitempty"`
 	// Advanced puts the input under the dialog's collapsed "More options" (SCOPE rule 5): a choice
 	// with a default that works unseen. ReadOnly shows the value without a field (a table the
 	// finding or the picker chose).

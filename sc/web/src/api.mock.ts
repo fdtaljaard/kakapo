@@ -988,6 +988,7 @@ function backupsDetail(db: DatabaseStatus): CardDetail {
         doThis:
           "Confirm with the business how much data loss is acceptable (RPO). If it is less than the time between backups, switch to FULL recovery and schedule log backups.",
         evidence: "recovery_model = SIMPLE",
+        fixId: "recovery-model",
       }),
     ]
     return {
@@ -1139,6 +1140,93 @@ function scheduleDoThis(db: DatabaseStatus, kind: JobKind, doThis: string): { do
 }
 
 function backupFixes(db: DatabaseStatus): Fix[] {
+  // DBC08 on Warehouse_Archive (SIMPLE): the switch to FULL, which needs log backups in place.
+  const toFull: Fix[] =
+    db.name === "Warehouse_Archive"
+      ? [
+          {
+            id: "recovery-model",
+            title: "Change the recovery model",
+            scope: "database",
+            checkId: "DBC08",
+            setting: "RECOVERY",
+            current: "SIMPLE",
+            target: "FULL",
+            needsRestart: false,
+          },
+        ]
+      : []
+  return [...toFull, ...backupFixesBefore(db)]
+}
+
+// The recovery model in plain words, as the backend's domain builds it (docs/sql-express-backups.md):
+// what a restore goes back to today and for each choice, and what FULL needs in place.
+function recoveryPreview(info: InstanceInfo, db: DatabaseStatus, fix: Fix, options?: Record<string, string>): FixPreview {
+  const current = fix.current
+  const target = (options?.recoveryModel ?? fix.target).toUpperCase()
+  const quoted = quoteName(db.name)
+  const preview: FixPreview = {
+    database: db.name,
+    engineVersion: info.productVersion,
+    changes: [{ setting: "Recovery model", current, target }],
+    statement: `ALTER DATABASE ${quoted} SET RECOVERY ${target};`,
+    rollback: `ALTER DATABASE ${quoted} SET RECOVERY ${current};`,
+    warnings: ["Takes effect at once and online.", `Needs the ALTER permission on the database ${db.name}.`],
+    inputs: [
+      {
+        name: "recoveryModel",
+        label: "A restore goes back to",
+        value: target,
+        help: "Any minute needs a log backup every 15 minutes or so, or the log fills the disk. The last full backup needs nothing more.",
+        kind: "select",
+        options: ["FULL", "SIMPLE"],
+        optionLabels: { FULL: "Any minute (FULL)", SIMPLE: "The last full backup (SIMPLE)" },
+      },
+    ],
+    options: { recoveryModel: target },
+    lead:
+      current === "SIMPLE"
+        ? "Today there is no full backup, so there is nothing to restore from (BAK01)."
+        : `Today the log has never been backed up: a restore goes back to the last full backup only, ${scanTime(daysAgoAt(0, 2, 0))}, and the log keeps growing.`,
+  }
+  if (target === current) {
+    return { ...preview, changes: [], statement: "", rollback: "", warnings: [`${db.name} already uses the ${current} recovery model: pick the other one.`] }
+  }
+  if (target === "FULL") {
+    preview.requires = [
+      { label: "Full backups on a schedule", met: false, detail: "Not set up: the Backup schedule's Apply creates the job." },
+      {
+        label: "Log backups every 15 minutes or so",
+        met: false,
+        detail:
+          "Not set up yet. A log backup job can only be created once the database is in FULL, so kakapo offers it right after the switch.",
+      },
+    ]
+    preview.next = {
+      fixId: "backup-schedule",
+      label: "Set up log backups",
+      when: "after",
+      why: "The log now grows until it is backed up. Set up the log backups now (with the daily full backup, if it has none).",
+    }
+    // localStorage "mock.express" = "1": SQL Server Express, where Apply waits for the maintenance procedure.
+    if (localStorage.getItem("mock.express") === "1") {
+      preview.requires = [
+        { label: "Full backups on a schedule", met: false, detail: "SQL Server Express has no Agent to schedule them." },
+        { label: "Log backups every 15 minutes or so", met: false, detail: "Not set up: without them the log fills the disk." },
+      ]
+      preview.next = { fixId: "install-maintenance-proc", label: "Install the maintenance procedure", when: "before", why: "" }
+      preview.held =
+        "Set up log backups first. SQL Server Express has no Agent: kakapo's maintenance procedure takes them, so install it, then come back here."
+    }
+  } else {
+    preview.warnings.unshift(
+      `From now on a restore goes back to the last full backup (${scanTime(daysAgoAt(0, 2, 0))}), not to any minute: agree that with the business (BAK05).`,
+    )
+  }
+  return preview
+}
+
+function backupFixesBefore(db: DatabaseStatus): Fix[] {
   const jobs = kakapoJobs[db.name]
   if (jobs?.length) {
     return [
@@ -2533,6 +2621,12 @@ export async function mockRequest<T>(path: string, init?: RequestInit): Promise<
     if (found.id === "backup-schedule") {
       if (fix[4] === "preview") return structuredClone(backupSchedulePreview(info, db, options)) as T
       return structuredClone(await applyBackupSchedule(srv, info, db, found, options)) as T
+    }
+    if (found.id === "recovery-model") {
+      const preview = recoveryPreview(info, db, found, options)
+      if (fix[4] === "preview") return structuredClone(preview) as T
+      // The result carries the previewed needs, so the dialog can offer what must follow (log backups).
+      return structuredClone({ ...(await applyFix(srv, info, db, found)), preview }) as T
     }
     if (found.id === "remove-backup-schedule") {
       if (fix[4] === "preview") return structuredClone(removeSchedulePreview(info, db)) as T

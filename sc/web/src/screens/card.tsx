@@ -267,6 +267,8 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
 
       {fixing && (
         <FixDialog
+          // A next step (preview.next) opens another fix in its place: a fresh dialog, not the old one's state.
+          key={fixing.fixId}
           serverId={serverId}
           database={database}
           fixId={fixing.fixId}
@@ -277,6 +279,7 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
             if (notice) setStillRunning(notice)
           }}
           onApplied={applied}
+          onNext={(fixId, title) => setFixing({ fixId, title })}
         />
       )}
     </PageShell>

@@ -45,28 +45,30 @@ const (
 
 // Texts of the Backups card's fixes.
 const (
-	recoveryModelHelp = "FULL keeps every change in the log until a log backup, so a restore can go back to any minute; SIMPLE empties the log by itself and a restore goes back to the last full or differential backup only."
-	recoveryToFull    = "The log grows until it is backed up: create the log backup job (the Backup schedule row) right after this, or the disk fills."
-	// On Express, kakapo's maintenance procedure takes the log backups (docs/sql-express-backups.md, gap 1).
-	recoveryToFullExpress = "The log grows until it is backed up, and SQL Server Express has no Agent to do it: install kakapo's maintenance procedure (the Upkeep card) right after this, or the disk fills."
-	recoveryToFullProc    = "The log grows until it is backed up: kakapo's maintenance procedure serves this database and takes a log backup every %d minutes from its next call, once a full backup exists."
-	recoveryToSimpleProc  = "kakapo's maintenance procedure stops the log backups by itself in SIMPLE recovery and keeps taking the full backup."
-	recoveryChain         = "The log-backup chain starts at the next full backup: until then the log cannot be backed up and a restore still goes back to the last full backup only."
-	recoveryToSimple      = "Point-in-time restore is lost; agree the data-loss window with the business (BAK05)."
-	recoveryNoAlter       = "kakapo's login cannot ALTER the database %s, so Apply will be refused: connect with a sysadmin login."
-	checkdbDayHelp        = "The day of the week the check runs, server time."
-	checkdbTimeHelp       = "Server time, HH:MM. Pick a quiet hour that does not overlap the full backup."
-	physicalOnlyHelp      = "Checks the pages and their checksums only: far quicker and lighter on a large database, but not the logical consistency. Run a full check monthly (or on a restored copy) when you tick this."
-	checkdbTimeWarn       = "The time must be HH:MM, for example 01:00."
-	checkdbDayWarn        = "Pick a day from Sunday to Saturday."
-	physicalOnlyWarn      = "Physical only must be ticked or not (true or false)."
-	checkdbLoad           = "Runs online but loads the disk and tempdb; a quiet hour is better."
-	checkdbFirstRun       = "How long the check takes is unknown until it has run once: look at the job's history after the first run (MNT02)."
-	physicalOnlyNote      = "WITH PHYSICAL_ONLY checks pages and checksums only, not the logical consistency: run a full check monthly, or on a restored copy of the backup."
-	checkdbNoOperator     = "No operator with an email exists (MNT07): nobody is told when the check fails or finds damage."
-	checkdbWait           = "kakapo waits up to 4 hours for the result; keep this page open while it runs."
-	suspectNoRollback     = "There is no rollback: the records are history only, and the change log keeps them in its result."
-	suspectHistory        = "Clearing the records repairs nothing: it only stops BAK04 reporting damage that a clean check has shown is gone."
+	// The recovery model in plain words (docs/sql-express-backups.md): what a restore can go back to, and
+	// what each choice needs. FULL needs log backups in place, or the log fills the disk.
+	recoveryModelLabel = "A restore goes back to"
+	recoveryModelHelp  = "Any minute needs a log backup every 15 minutes or so, or the log fills the disk. The last full backup needs nothing more."
+	recoveryFullLabel  = "Any minute (FULL)"
+	recoverySimpleLbl  = "The last full backup (SIMPLE)"
+	// Waiting for log backups before the switch to FULL.
+	recoveryHeldExpress  = "Set up log backups first. SQL Server Express has no Agent: kakapo's maintenance procedure takes them, so install it, then come back here."
+	recoveryHeldInWay    = "Set up log backups first. A procedure named master.dbo.kakapo_Maintenance that kakapo did not create is in the way, so kakapo cannot install its own: schedule log backups by hand, then come back here."
+	recoveryToSimpleProc = "kakapo's maintenance procedure stops the log backups by itself in SIMPLE recovery and keeps taking the full backup."
+	recoveryNoAlter      = "kakapo's login cannot ALTER the database %s, so Apply will be refused: connect with a sysadmin login."
+	checkdbDayHelp       = "The day of the week the check runs, server time."
+	checkdbTimeHelp      = "Server time, HH:MM. Pick a quiet hour that does not overlap the full backup."
+	physicalOnlyHelp     = "Checks the pages and their checksums only: far quicker and lighter on a large database, but not the logical consistency. Run a full check monthly (or on a restored copy) when you tick this."
+	checkdbTimeWarn      = "The time must be HH:MM, for example 01:00."
+	checkdbDayWarn       = "Pick a day from Sunday to Saturday."
+	physicalOnlyWarn     = "Physical only must be ticked or not (true or false)."
+	checkdbLoad          = "Runs online but loads the disk and tempdb; a quiet hour is better."
+	checkdbFirstRun      = "How long the check takes is unknown until it has run once: look at the job's history after the first run (MNT02)."
+	physicalOnlyNote     = "WITH PHYSICAL_ONLY checks pages and checksums only, not the logical consistency: run a full check monthly, or on a restored copy of the backup."
+	checkdbNoOperator    = "No operator with an email exists (MNT07): nobody is told when the check fails or finds damage."
+	checkdbWait          = "kakapo waits up to 4 hours for the result; keep this page open while it runs."
+	suspectNoRollback    = "There is no rollback: the records are history only, and the change log keeps them in its result."
+	suspectHistory       = "Clearing the records repairs nothing: it only stops BAK04 reporting damage that a clean check has shown is gone."
 )
 
 // CheckdbRun is one DBCC CHECKDB run started from the app (checkdb-now), stored in checkdb_run and
@@ -274,7 +276,9 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 	p := FixPreview{Database: f.Database, EngineVersion: f.EngineVersion, Changes: []Drift{}, Warnings: []string{}, Options: map[string]string{}}
 
 	usable := true
-	in := FixInput{Name: OptionRecoveryModel, Label: "Recovery model", Help: recoveryModelHelp, Kind: "select", Options: RecoveryModels, Value: target}
+	in := FixInput{Name: OptionRecoveryModel, Label: recoveryModelLabel, Help: recoveryModelHelp, Kind: "select", Options: RecoveryModels, Value: target,
+		OptionLabels: map[string]string{"FULL": recoveryFullLabel, "SIMPLE": recoverySimpleLbl}}
+	p.Lead = f.recoveryLead()
 	if typed, given := options[OptionRecoveryModel]; given {
 		v := strings.ToUpper(strings.TrimSpace(typed))
 		switch {
@@ -306,25 +310,20 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 	}
 	switch target {
 	case "FULL":
-		toFull := recoveryToFull
 		logPart := RoomPart{Label: "the log", Unbounded: true, Basis: "it grows until log backups run; no job takes them yet"}
 		if j, ok := f.CoveringJob(JobLog); ok {
 			logPart = RoomPart{Label: "the log", Basis: "it grows between log backups; " + j.Name + " takes them"}
 		}
-		if !f.HasAgent {
-			toFull = recoveryToFullExpress
-			if row, ok := f.procRow(); ok {
-				toFull = fmt.Sprintf(recoveryToFullProc, row.LogMinutes)
-				logPart = RoomPart{Label: "the log", Basis: fmt.Sprintf("it grows between log backups; kakapo's maintenance procedure takes them every %d minutes", row.LogMinutes)}
-			}
+		if row, ok := f.procRow(); ok {
+			logPart = RoomPart{Label: "the log", Basis: fmt.Sprintf("it grows between log backups; kakapo's maintenance procedure takes them every %d minutes", row.LogMinutes)}
 		}
-		p.Warnings = append(p.Warnings, toFull, recoveryChain)
 		p.Needs = append(p.Needs, RoomNeed{Path: RoleLog, Part: logPart})
-		if j, ok := f.CoveringJob(JobLog); ok {
-			p.Warnings = append(p.Warnings, "The job "+j.Name+" already takes log backups of this database: check it runs (MNT02).")
-		}
+		p.Requires, p.Next, p.Held = f.fullRecoveryNeeds()
 	case "SIMPLE":
-		p.Warnings = append(p.Warnings, recoveryToSimple)
+		p.Warnings = append(p.Warnings, f.toSimpleLine())
+		if f.LogSizeMB != nil && *f.LogSizeMB >= 1024 {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("The log file stays %d MB: SIMPLE frees the space inside it but does not shrink it. Shrink it once afterwards if the disk needs the room (STO08).", *f.LogSizeMB))
+		}
 		if _, ok := f.procRow(); ok {
 			p.Warnings = append(p.Warnings, recoveryToSimpleProc)
 		}
@@ -349,6 +348,76 @@ func BuildRecoveryModelFix(f BackupFacts, readOnly bool, options map[string]stri
 		p.Rollback = "ALTER DATABASE " + db + " SET RECOVERY " + current + ";"
 	}
 	return p, fix, nil
+}
+
+// recoveryLead is the recovery fix's first line: what a restore can go back to today, in plain words.
+func (f BackupFacts) recoveryLead() string {
+	if fullOrBulk(f.RecoveryModel) {
+		if f.LastLog != nil {
+			return "Today a restore can go back to any minute up to the last log backup, " + sqlTime(*f.LastLog) + "."
+		}
+		if f.LastFull != nil {
+			return "Today the log has never been backed up: a restore goes back to the last full backup only, " + sqlTime(*f.LastFull) + ", and the log keeps growing."
+		}
+		return "Today the log has never been backed up and there is no full backup to restore from, and the log keeps growing."
+	}
+	if f.LastFull == nil {
+		return "Today there is no full backup, so there is nothing to restore from (BAK01)."
+	}
+	lead := "Today a restore goes back to the last full backup, " + sqlTime(*f.LastFull)
+	if w := WorstGapMinutes(f); w > 0 {
+		lead += ": up to " + FormatGap(w) + " of work could be lost"
+	}
+	return lead + "."
+}
+
+// toSimpleLine is what the switch to SIMPLE gives up, in plain words.
+func (f BackupFacts) toSimpleLine() string {
+	last := ""
+	if f.LastFull != nil {
+		last = " (" + sqlTime(*f.LastFull) + ")"
+	}
+	return "From now on a restore goes back to the last full backup" + last + ", not to any minute: agree that with the business (BAK05)."
+}
+
+// fullRecoveryNeeds is what the switch to FULL needs in place: full backups on a schedule (log backups start
+// after the next one) and log backups, the fix that sets them up, and why Apply waits when it must. On
+// Express kakapo's maintenance procedure does both, so Apply waits for its install. With an Agent the log
+// backup job can only be created once the database is in FULL, so it is the next step after the switch.
+func (f BackupFacts) fullRecoveryNeeds() ([]FixRequirement, *FixNext, string) {
+	full := FixRequirement{Label: "Full backups on a schedule"}
+	logs := FixRequirement{Label: "Log backups every 15 minutes or so"}
+	if !f.HasAgent {
+		if row, ok := f.procRow(); ok {
+			full.Met, full.Detail = true, "kakapo's maintenance procedure takes one daily at "+row.FullTime+". Log backups start after the next one."
+			logs.Label = fmt.Sprintf("Log backups every %d minutes", row.LogMinutes)
+			logs.Met, logs.Detail = true, "kakapo's maintenance procedure takes them from its next call after that full backup."
+			return []FixRequirement{full, logs}, nil, ""
+		}
+		full.Detail = "SQL Server Express has no Agent to schedule them."
+		logs.Detail = "Not set up: without them the log fills the disk."
+		if f.Proc != nil && f.Proc.ProcExists && !f.Proc.ProcOurs {
+			return []FixRequirement{full, logs}, nil, recoveryHeldInWay
+		}
+		return []FixRequirement{full, logs}, &FixNext{FixID: FixInstallMaintenanceProc, Label: "Install the maintenance procedure", When: "before"}, recoveryHeldExpress
+	}
+	if f.JobsError != "" {
+		full.Detail = "kakapo could not read the Agent jobs (" + f.JobsError + "): check one takes them."
+		logs.Detail = full.Detail
+		return []FixRequirement{full, logs}, nil, ""
+	}
+	if j, ok := f.CoveringJob(JobFull); ok {
+		full.Met, full.Detail = true, "The job "+j.Name+" takes them. Log backups start after the next one."
+	} else {
+		full.Detail = "Not set up: the Backup schedule's Apply creates the job."
+	}
+	if j, ok := f.CoveringJob(JobLog); ok {
+		logs.Met, logs.Detail = true, "The job "+j.Name+" takes them: check it runs (MNT02)."
+		return []FixRequirement{full, logs}, nil, ""
+	}
+	logs.Detail = "Not set up yet. A log backup job can only be created once the database is in FULL, so kakapo offers it right after the switch."
+	return []FixRequirement{full, logs}, &FixNext{FixID: FixBackupSchedule, Label: "Set up log backups", When: "after",
+		Why: "The log now grows until it is backed up. Set up the log backups now (with the daily full backup, if it has none)."}, ""
 }
 
 // RecoveryModelReadBack says what recovery_model_desc reads after the fix, and whether it is the target.

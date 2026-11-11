@@ -3,7 +3,6 @@ package domain
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -94,11 +93,28 @@ func TestRecoveryModelFix(t *testing.T) {
 		len(p.Changes) != 1 || p.Changes[0] != (Drift{"Recovery model", "SIMPLE", "FULL"}) || fix.CheckID != "DBC08" || fix.Target != "FULL" {
 		t.Errorf("to FULL: %+v %+v", p, fix)
 	}
-	if p.Warnings[0] != recoveryToFull || p.Warnings[1] != recoveryChain || p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database WarehouseLive." {
+	if p.Warnings[len(p.Warnings)-1] != "Needs the ALTER permission on the database WarehouseLive." {
 		t.Errorf("to FULL warnings %q", p.Warnings)
 	}
-	if len(p.Inputs) != 1 || p.Inputs[0].Kind != "select" || p.Inputs[0].Value != "FULL" || p.Options[OptionRecoveryModel] != "FULL" {
+	// In plain words: what a restore goes back to, today and for each choice.
+	if len(p.Inputs) != 1 || p.Inputs[0].Kind != "select" || p.Inputs[0].Value != "FULL" || p.Options[OptionRecoveryModel] != "FULL" ||
+		p.Inputs[0].Label != recoveryModelLabel || p.Inputs[0].OptionLabels["FULL"] != "Any minute (FULL)" || p.Inputs[0].OptionLabels["SIMPLE"] != "The last full backup (SIMPLE)" {
 		t.Errorf("inputs %+v", p.Inputs)
+	}
+	if p.Lead != "Today there is no full backup, so there is nothing to restore from (BAK01)." {
+		t.Errorf("lead %q", p.Lead)
+	}
+	// With an Agent and no log job: both needs missing, the log job is the next step after the switch
+	// (it can only be created once the database is in FULL), so Apply does not wait.
+	if len(p.Requires) != 2 || p.Requires[0].Met || p.Requires[1].Met || p.Held != "" ||
+		p.Next == nil || p.Next.FixID != FixBackupSchedule || p.Next.When != "after" {
+		t.Errorf("to FULL needs %+v next %+v held %q", p.Requires, p.Next, p.Held)
+	}
+	g := f
+	g.BackupJobs = []BackupJob{{Name: "Fulls", Enabled: true, Kind: JobFull}, {Name: "Logs", Enabled: true, Kind: JobLog}}
+	if p, _, _ := BuildRecoveryModelFix(g, false, nil); !p.Requires[0].Met || !p.Requires[1].Met || p.Next != nil || p.Held != "" ||
+		p.Requires[1].Detail != "The job Logs takes them: check it runs (MNT02)." {
+		t.Errorf("jobs in place: %+v %+v", p.Requires, p.Next)
 	}
 	// The same model, an unknown one, a read-only database: the warning, no changes.
 	for _, c := range []struct {
@@ -120,22 +136,33 @@ func TestRecoveryModelFix(t *testing.T) {
 	f = scheduleFacts("FULL")
 	nightlyFulls(&f)
 	p, fix, err = BuildRecoveryModelFix(f, false, nil)
-	if err != nil || p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" || fix.CheckID != "BAK02" || p.Warnings[0] != recoveryToSimple {
+	if err != nil || p.Statement != "ALTER DATABASE [WarehouseLive] SET RECOVERY SIMPLE;" || fix.CheckID != "BAK02" ||
+		!strings.HasPrefix(p.Warnings[0], "From now on a restore goes back to the last full backup (") || len(p.Requires) != 0 || p.Next != nil {
 		t.Errorf("to SIMPLE: %v %+v %+v", err, p, fix)
 	}
-	// On Express the warnings name kakapo's maintenance procedure, not a job (docs/sql-express-backups.md, gap 1).
+	if !strings.HasPrefix(p.Lead, "Today the log has never been backed up: a restore goes back to the last full backup only, ") {
+		t.Errorf("FULL lead %q", p.Lead)
+	}
+	// On Express, kakapo's maintenance procedure takes the log backups: Apply waits for its install
+	// (docs/sql-express-backups.md).
 	e := scheduleFacts("SIMPLE")
 	e.HasAgent = false
-	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != recoveryToFullExpress {
-		t.Errorf("Express to FULL: %q", p.Warnings)
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Held != recoveryHeldExpress || p.Next == nil ||
+		p.Next.FixID != FixInstallMaintenanceProc || p.Next.When != "before" || p.Requires[1].Met {
+		t.Errorf("Express to FULL: held %q next %+v", p.Held, p.Next)
+	}
+	e.Proc = &MaintProcFacts{ProcExists: true}
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Held != recoveryHeldInWay || p.Next != nil {
+		t.Errorf("Express, procedure in the way: held %q next %+v", p.Held, p.Next)
 	}
 	e.Proc = &MaintProcFacts{ProcExists: true, ProcOurs: true, SettingsExists: true, LogExists: true,
-		Settings: []MaintSettings{{Database: "WarehouseLive", Enabled: true, LogMinutes: 15}}}
-	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != fmt.Sprintf(recoveryToFullProc, 15) {
-		t.Errorf("Express served to FULL: %q", p.Warnings)
+		Settings: []MaintSettings{{Database: "WarehouseLive", Enabled: true, FullTime: "22:00", LogMinutes: 15}}}
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Held != "" || p.Next != nil || !p.Requires[0].Met || !p.Requires[1].Met ||
+		p.Requires[1].Label != "Log backups every 15 minutes" {
+		t.Errorf("Express served to FULL: %+v %q", p.Requires, p.Held)
 	}
 	e.RecoveryModel = "FULL"
-	if p, _, _ := BuildRecoveryModelFix(e, false, nil); p.Warnings[0] != recoveryToSimple || p.Warnings[1] != recoveryToSimpleProc {
+	if p, _, _ := BuildRecoveryModelFix(e, false, nil); !bakHasWarning(p, recoveryToSimpleProc) {
 		t.Errorf("Express served to SIMPLE: %q", p.Warnings)
 	}
 	f.IsAgMember = true

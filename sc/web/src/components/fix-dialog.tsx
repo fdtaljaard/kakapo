@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { Check, ChevronRight, CircleCheck, Copy, Loader2, TriangleAlert, XCircle } from "lucide-react"
+import { ArrowRight, Check, ChevronRight, CircleAlert, CircleCheck, Copy, Loader2, TriangleAlert, XCircle } from "lucide-react"
 
-import { api, ApiError, type FixInput, type FixPreview, type FixResult, type FixRun } from "@/api"
+import { api, ApiError, type FixInput, type FixNext, type FixPreview, type FixRequirement, type FixResult, type FixRun } from "@/api"
 import { FixProgress, FixTook } from "@/components/fix-progress"
 import { RoomLines } from "@/components/room-line"
 import { CopyFallback, StatementBlock } from "@/components/statement-block"
@@ -70,6 +70,7 @@ export function FixDialog({
   options: initialOptions,
   onClose,
   onApplied,
+  onNext,
   preview: previewFix = api.previewFix,
   apply: applyFix = api.applyFix,
   run: loadRun = api.fixRun,
@@ -84,6 +85,8 @@ export function FixDialog({
   // notice: closed while a long fix still runs in the background, what the page shows meanwhile.
   onClose: (notice?: string) => void
   onApplied: (result: FixResult) => void
+  // The fix that puts a missing requirement in place (preview.next): this dialog closes and that one opens.
+  onNext?: (fixId: string, title: string) => void
   preview?: PreviewFn
   apply?: ApplyFn
   run?: RunFn
@@ -267,6 +270,9 @@ export function FixDialog({
             <TriangleAlert className="size-4" />
             <AlertTitle>Apply is held back</AlertTitle>
             <AlertDescription className="break-words">{step.preview.held}</AlertDescription>
+            {step.preview.next?.when === "before" && onNext && (
+              <NextButton next={step.preview.next} onNext={onNext} />
+            )}
           </Alert>
         )}
 
@@ -294,6 +300,18 @@ export function FixDialog({
             result={step.result}
             took={<FixTook fixId={fixId} options={step.options} seconds={step.tookSeconds} />}
           />
+        )}
+
+        {/* What the change still needs, which could only follow it (the log backup job after the switch to FULL). */}
+        {step.kind === "done" && step.result.preview.next?.when === "after" && onNext && (
+          <Alert className="border-amber-400 dark:border-amber-800">
+            <TriangleAlert className="size-4" />
+            <AlertTitle>One more step</AlertTitle>
+            <AlertDescription className="break-words">
+              {step.result.preview.next.why || step.result.preview.next.label}
+            </AlertDescription>
+            <NextButton next={step.result.preview.next} onNext={onNext} />
+          </Alert>
         )}
 
         {script.fallback && <CopyFallback text={script.fallback} onClose={script.dismiss} />}
@@ -429,7 +447,7 @@ function FixInputs({
             <SelectContent>
               {(input.options ?? []).map((option) => (
                 <SelectItem key={option} value={option}>
-                  {option}
+                  {input.optionLabels?.[option] ?? option}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -509,6 +527,43 @@ function CopyScriptButton({
   )
 }
 
+// The button that opens the fix putting a missing requirement in place.
+function NextButton({ next, onNext }: { next: FixNext; onNext: (fixId: string, title: string) => void }) {
+  return (
+    <div className="col-start-2 pt-2">
+      <Button size="sm" onClick={() => onNext(next.fixId, next.label)}>
+        {next.label}
+        <ArrowRight />
+      </Button>
+    </div>
+  )
+}
+
+// What the change needs in place, as a checklist: met ones ticked, missing ones flagged with why.
+function Requirements({ requires }: { requires?: FixRequirement[] }) {
+  if (!requires || requires.length === 0) return null
+  return (
+    <div className="grid gap-1.5">
+      <div className="font-medium">What this needs</div>
+      <ul className="grid gap-2">
+        {requires.map((r) => (
+          <li key={r.label} className="flex items-start gap-2">
+            {r.met ? (
+              <CircleCheck className="size-4 shrink-0 translate-y-0.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <CircleAlert className="size-4 shrink-0 translate-y-0.5 text-amber-600 dark:text-amber-400" />
+            )}
+            <div className="grid gap-0.5 min-w-0">
+              <span className="font-medium">{r.label}</span>
+              {r.detail && <span className="text-muted-foreground break-words">{r.detail}</span>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function PreviewBody({ preview }: { preview: FixPreview }) {
   const warnings =
     preview.warnings.length > 0 ? (
@@ -568,6 +623,8 @@ function PreviewBody({ preview }: { preview: FixPreview }) {
           ))}
         </TableBody>
       </Table>
+
+      <Requirements requires={preview.requires} />
 
       {warnings}
 

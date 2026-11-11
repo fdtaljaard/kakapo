@@ -103,6 +103,24 @@ export interface FixPreview {
   // Phase 5n: the preview's first line, what the change does for this database ("Deletes from Orders read all
   // 1,376,845 rows of Lines today; with this index they read only the matching rows.").
   lead?: string
+  // What the change needs in place, each met or not, shown as a checklist; next is the one fix that puts the
+  // missing piece in place, before Apply ("before": held says why it waits) or right after it ("after").
+  // The switch to FULL recovery needs log backups (docs/sql-express-backups.md).
+  requires?: FixRequirement[]
+  next?: FixNext
+}
+
+export interface FixRequirement {
+  label: string
+  met: boolean
+  detail: string
+}
+
+export interface FixNext {
+  fixId: string
+  label: string
+  when: "before" | "after"
+  why: string // after the change: why it must follow now
 }
 
 // Phase 5l: one drive's room for a change.
@@ -127,6 +145,7 @@ export interface FixInput {
   kind: "text" | "bool" | "select"
   warning?: string // what is wrong with this value, shown under the field
   options?: string[] // phase 4b: the values a "select" offers (docs/phase4b-contract.md)
+  optionLabels?: Record<string, string> // what an option shows, in plain words ("Any minute (FULL)")
   // SCOPE rule 5: an advanced input sits under the dialog's collapsed "More options"; a read-only one shows
   // its value without a field (docs/phase5a-contract.md).
   advanced?: boolean
