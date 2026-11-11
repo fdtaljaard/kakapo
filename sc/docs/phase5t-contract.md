@@ -41,11 +41,15 @@ SCOPE section 1a, rules 1, 2, 4 and 5. Index work is never offline.
    (5q's `Scan`, via `ShowplanTables`) and that has **1,000 pages or more** (Ola Hallengren's
    `MinNumberOfPages`). The page count is screened from `sys.dm_db_partition_stats` (cheap); the exact leaf
    count comes with the measurement. Heaps, columnstore and disabled indexes are left out (nothing to
-   reorganise, as 5q). At most 50 rows, ordered by the total duration of the queries that read them.
+   reorganise, as 5q). At most 50 rows. Before measuring they are ordered by the total duration of the queries that read them; once
+   measured, by the **pages a reorganise would save** (pages minus the estimate), not by percent: 20% of a
+   half-million-page index (about 100,000 pages) matters more than 60% of a 1,200-page one.
 5. **Measuring is explicit, and uses 5q's read.** **Measure all** runs `collect.IndexShape` (SAMPLED) one index
-   after another, in the order of the list; each row also has its own Measure. Nothing is measured on page
-   load. Measure all is driven by the page, one request per index, and **Stop** cancels the request in
-   flight. Measurements are not stored: they are shown for this visit (they age the moment anything changes).
+   after another, in the order of the list, **at most 20 per click** (kakapo's bound, said as such; the button
+   then reads "Measure the next 20"); each row also has its own Measure. A single SAMPLED read of a
+   half-million-page index (about 4 GB) has been seen to answer fast enough to run on demand, which is why
+   Measure all is feasible; the cap keeps one click's I/O bounded. Nothing is measured on page load. Measure all
+   is driven by the page, one request per index, and **Stop** cancels the request in flight. Measurements are not stored: they are shown for this visit (they age the moment anything changes).
 6. **Pre-ticked rows: measured, with a gain, statistics not stale.** A *gain* is 5q's: the estimated page
    saving is 5% or more (Ola's low level, used by 5q for the saving). A row whose index is only out of order
    (5% or more) but already about as full as it can be is listed, unticked, in 5q's words. Unmeasured rows are
@@ -121,12 +125,15 @@ After Measure all:
 Then the rows, one per index, largest saving first once measured (otherwise by the queries' duration):
 
 - a checkbox (disabled when the index cannot be reorganised: the reason in words);
-- `schema.table` · index name, pages and MB, **page density, fragmentation, estimated saving "23% fewer
-  pages"** (5q's sentence, `BuildIndexShape`), after measuring;
+- `schema.table` · index name, **size in GB (MB under 1 GB) and pages**, and after measuring **page density,
+  fragmentation, estimated saving "23% fewer pages"** (5q's sentence, `BuildIndexShape`) with the **pages
+  saved** beside the percent ("about 103,000 pages fewer");
 - **the evidence: the slow queries that read it.** The top three by total duration, each "Orders by date, 4,310
   runs, 38 min in 7 days, last ran 10 Nov", linking to its query page; "and 7 more" folded. This is why the
   index is on the list;
-- a statistics note and **Update statistics** where decision 7 applies;
+- **Update statistics** for the row's table, beside the index action, on every row, as the query page's table
+  row has it (the fix is always there for a table with statistics); where decision 7 says they are stale, also
+  the note, and the row is unticked;
 - the note from decision 10, where it applies.
 
 Below the rows, a bar: "3 selected, 21,400 pages (167 MB)". **Reorganise selected** opens the fix dialog
