@@ -1,5 +1,5 @@
 import { useContext } from "react"
-import { Check, Copy, Search } from "lucide-react"
+import { Check, Copy, Search, Server } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import type { Finding, Severity } from "@/api"
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { FindingContext } from "@/lib/finding-context"
-import { copyLabel, findingObject, handoverText, type HandoverContext } from "@/lib/handover"
+import { copyLabel, findingObject, handoverText, machineWords, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { cn } from "@/lib/utils"
 
@@ -105,12 +105,29 @@ export function FindingCard({
         <p className={cn(!info && "text-base font-medium")}>{f.finding}</p>
 
         {f.why && <Section label="Why it matters" text={f.why} />}
-        {f.doThis && <StatementBlock label="Do this" text={f.doThis} prose={!isStatement(f.doThis)} />}
+        {f.doThis && (
+          <StatementBlock
+            label={f.onServerMachine ? <ServerMachineLabel ctx={ctx} /> : "Do this"}
+            text={f.doThis}
+            prose={!isStatement(f.doThis)}
+          />
+        )}
         {f.thenCheck && <Section label="Then check" text={f.thenCheck} />}
         {f.evidence && <Evidence text={f.evidence} />}
         {fallback && <CopyFallback text={fallback} onClose={dismiss} />}
       </CardContent>
     </Card>
+  )
+}
+
+// "Do this on the SQL Server machine, SQL01", and when kakapo runs elsewhere, that this is not that machine.
+function ServerMachineLabel({ ctx }: { ctx: HandoverContext }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5">
+      <Server className="size-4 shrink-0 text-muted-foreground" />
+      Do this {machineWords(ctx)}
+      {ctx.machine && ctx.onServer === false && <span className="font-normal text-muted-foreground">(not this computer)</span>}
+    </span>
   )
 }
 

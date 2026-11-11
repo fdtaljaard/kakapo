@@ -491,6 +491,48 @@ func TestStorageSTO09(t *testing.T) {
 	if len(got) != 2 || got[0].Evidence != "Reads: 2,000 (avg 30 ms)." || got[1].Evidence != "Writes: 2,000 (avg 15 ms)." {
 		t.Errorf("per file: %+v", got)
 	}
+	// The request for IT (docs/troubleshooting-review.md): who makes the disk busy, VM or physical, the
+	// antivirus exclusions and the measurement on the server.
+	f = sfacts()
+	set(&f, "WarehouseLive", 2000, 60000, 0, 0)
+	f.VirtualMachine = "HYPERVISOR"
+	f.VolumeLoads = []VolumeLoad{
+		{Database: "WarehouseTest", Volume: `D:\`, BytesRead: 120 << 30, BytesWritten: 441 << 30, StallMs: 800},
+		{Database: "WarehouseLive", Volume: `D:\`, BytesRead: 1 << 30, BytesWritten: 1 << 20, StallMs: 150},
+		{Database: "master", Volume: `D:\`, StallMs: 1},
+		{Database: "tempdb", Volume: `T:\`, StallMs: 5000},
+	}
+	_, fs, _ = sbuild(f)
+	x := one(t, fs, "STO09")
+	for _, want := range []string{
+		"Send this to the infrastructure/storage team.",
+		`Most of the waiting on D:\ comes from WarehouseTest, not this database: 84% since the restart (441.0 GB written, 120.0 GB read).`,
+		`1. This server is a virtual machine: check the storage under D:\ on the host`,
+		`2. Keep SQL Server's files out of antivirus scanning: exclude D:\Data\ (the .mdf`,
+		`3. Measure on the SQL Server machine for 15 minutes during business hours, in a command prompt:` + "\n" +
+			`typeperf "\LogicalDisk(D:)\Avg. Disk sec/Read" "\LogicalDisk(D:)\Avg. Disk sec/Write" -si 15 -sc 60`,
+		"Also check memory (INS02/INS03)",
+	} {
+		if !strings.Contains(x.DoThis, want) {
+			t.Errorf("STO09 do this lacks %q:\n%s", want, x.DoThis)
+		}
+	}
+	if !x.OnServerMachine() || x.Evidence != `Reads: 2,000 (avg 30 ms). Waiting on D:\ since the restart: WarehouseTest 84%, WarehouseLive 16%.` {
+		t.Errorf("STO09 evidence %q", x.Evidence)
+	}
+	// This database the busy one, a physical server: no busy line, the physical check.
+	f.VolumeLoads[0].StallMs, f.VirtualMachine = 10, "NONE"
+	_, fs, _ = sbuild(f)
+	if x := one(t, fs, "STO09"); strings.Contains(x.DoThis, "Most of the waiting") || !strings.Contains(x.DoThis, "1. This server is physical") {
+		t.Errorf("STO09 mine, physical:\n%s", x.DoThis)
+	}
+	// Loads and VM not read: the request still names the folders and the measurement.
+	f.VolumeLoads, f.VirtualMachine = nil, ""
+	_, fs, _ = sbuild(f)
+	if x := one(t, fs, "STO09"); !strings.Contains(x.DoThis, "1. Keep SQL Server's files out") || x.Evidence != "Reads: 2,000 (avg 30 ms)." {
+		t.Errorf("STO09 unread:\n%s / %q", x.DoThis, x.Evidence)
+	}
+
 	// Latency unreadable: skipped, the card still answers.
 	f = sfacts()
 	f.LatencyError = "the login does not have VIEW SERVER STATE."

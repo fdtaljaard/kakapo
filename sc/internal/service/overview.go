@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"strings"
 	"time"
 
@@ -129,6 +130,8 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	info.ServerID, info.Name, info.Host = srv.ID, srv.Name, srv.Host
 	info.ProductName = domain.ProductName(domain.EngineMajor(info.ProductVersion))
 	info.UptimeDays = domain.UptimeDays(info.StartedAt, checkedAt)
+	info.KakapoMachine, _ = os.Hostname()
+	info.OnServer = domain.SameMachine(info.MachineName, info.KakapoMachine)
 
 	// d.Name is the name as SQL Server spells it, which is how the change log stores it.
 	changes, err := s.ListChanges(ctx, serverID, d.Name, recentChanges)

@@ -172,3 +172,11 @@ test("a finding with two fixes gets one named Apply for each", () => {
   assert.equal(twoWaysChoices({ altFixId: "recovery-model" }, fixes), undefined)
   assert.equal(twoWaysChoices({}), undefined)
 })
+
+test("a step done on the SQL Server machine names the machine in What to do", () => {
+  const ifi: Finding = { ...bak02, checkId: "INS07", owner: "Client IT", onServerMachine: true, doThis: "Grant the right." }
+  const text = handoverText(ifi, { ...ctx, machine: "SQL01", onServer: false })
+  assert.match(text, /\n\nWhat to do on the SQL Server machine, SQL01 \(the infrastructure team; /)
+  assert.match(handoverText(ifi, ctx), /\n\nWhat to do on the SQL Server machine \(the infrastructure team; /)
+  assert.doesNotMatch(handoverText(bak02, { ...ctx, machine: "SQL01" }), /SQL Server machine/)
+})

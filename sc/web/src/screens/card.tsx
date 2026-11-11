@@ -86,6 +86,8 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
     database,
     asOf: card?.asOf ? formatWhen(card.asOf) : "",
     version,
+    machine: ov.overview?.instance.machineName || undefined,
+    onServer: ov.overview?.instance.onServer,
   }
   const roomContext = detail?.checkdbRoom ? { ...handover, asOf: formatWhen(detail.checkdbRoom.capturedAt) } : handover
   const deadlockContext = detail?.deadlocks ? { ...handover, asOf: formatWhen(detail.deadlocks.capturedAt) } : handover

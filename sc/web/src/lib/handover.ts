@@ -11,6 +11,14 @@ export interface HandoverContext {
   database: string
   asOf: string
   version: string
+  // The machine SQL Server runs on, and whether kakapo runs there too: a step done on the server names it.
+  machine?: string
+  onServer?: boolean
+}
+
+// Where a step that needs hands on the server is done: "on the SQL Server machine, SQL01".
+export function machineWords(ctx: Pick<HandoverContext, "machine">): string {
+  return `on the SQL Server machine${ctx.machine ? `, ${ctx.machine}` : ""}`
 }
 
 const ownerWords: Record<Owner, string> = {
@@ -38,7 +46,7 @@ export function handoverText(f: Finding, ctx: HandoverContext): string {
     head.join("\n"),
     section("What was found", f.finding),
     section("Why it matters", f.why),
-    section(`What to do${meta ? ` (${meta})` : ""}`, f.doThis),
+    section(`What to do${f.onServerMachine ? ` ${machineWords(ctx)}` : ""}${meta ? ` (${meta})` : ""}`, f.doThis),
     section("Then check", f.thenCheck),
     section("Evidence", f.evidence),
     ctx.version ? `From kakapo build ${ctx.version}` : "",

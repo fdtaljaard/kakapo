@@ -19,6 +19,7 @@ IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
 IF @started IS NULL
     SELECT @started = create_date FROM sys.databases WHERE database_id = 2;
 SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)),
+       CAST(ISNULL(SERVERPROPERTY('ComputerNamePhysicalNetBIOS'), N'') AS nvarchar(128)),
        CAST(SERVERPROPERTY('Edition') AS nvarchar(128)),
        CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
        CAST(SERVERPROPERTY('ProductLevel') AS nvarchar(64)),
@@ -34,7 +35,7 @@ SELECT CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)),
 func InstanceInfo(ctx context.Context, db *sql.DB) (domain.InstanceInfo, error) {
 	var i domain.InstanceInfo
 	var started sql.NullTime
-	err := db.QueryRowContext(ctx, Tag(instanceQuery)).Scan(&i.ServerName, &i.Edition, &i.ProductVersion,
+	err := db.QueryRowContext(ctx, Tag(instanceQuery)).Scan(&i.ServerName, &i.MachineName, &i.Edition, &i.ProductVersion,
 		&i.ProductLevel, &started, &i.DatabaseCount)
 	if err != nil {
 		return i, friendlyError(err)

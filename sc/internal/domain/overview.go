@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -88,10 +89,16 @@ type Card struct {
 
 // InstanceInfo is the instance part of the database page header.
 type InstanceInfo struct {
-	ServerID       int64     `json:"serverId"`
-	Name           string    `json:"name"` // the registered display name
-	Host           string    `json:"host"`
-	ServerName     string    `json:"serverName"` // @@SERVERNAME
+	ServerID   int64  `json:"serverId"`
+	Name       string `json:"name"` // the registered display name
+	Host       string `json:"host"`
+	ServerName string `json:"serverName"` // @@SERVERNAME
+	// MachineName is the Windows machine SQL Server runs on (ComputerNamePhysicalNetBIOS: the active node
+	// of a cluster); KakapoMachine is the one kakapo runs on, and OnServer says they are the same. Steps
+	// that need hands on the server (Finding.OnServerMachine) are done on MachineName.
+	MachineName    string    `json:"machineName"`
+	KakapoMachine  string    `json:"kakapoMachine"`
+	OnServer       bool      `json:"onServer"`
 	Edition        string    `json:"edition"`
 	ProductVersion string    `json:"productVersion"`
 	ProductLevel   string    `json:"productLevel"`
@@ -102,6 +109,19 @@ type InstanceInfo struct {
 	// XESession is kakapo's installed event session as read with the header (docs/phase5e-contract.md),
 	// its own read: a part that failed is in its Error. Left out when it was not read.
 	XESession *XESession `json:"xeSession,omitempty"`
+}
+
+// SameMachine says whether two machine names are one machine: case aside, and the first label only, so
+// "SQL01" and "sql01.corp.local" match. An empty name matches nothing.
+func SameMachine(a, b string) bool {
+	short := func(s string) string {
+		s = strings.TrimSpace(s)
+		if i := strings.IndexByte(s, '.'); i >= 0 {
+			s = s[:i]
+		}
+		return strings.ToUpper(s)
+	}
+	return short(a) != "" && short(a) == short(b)
 }
 
 // ChangeEntry is one row of the change log as the database page shows it.

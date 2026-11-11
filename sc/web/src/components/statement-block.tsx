@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { Check, Copy } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 
 // A block of text to copy: a T-SQL statement in monospace, or a sentence for the client's IT in prose.
 // When the clipboard is blocked the text is selected instead, so Ctrl+C works.
-export function StatementBlock({ label, text, prose = false }: { label?: string; text: string; prose?: boolean }) {
+export function StatementBlock({ label, text, prose = false }: { label?: ReactNode; text: string; prose?: boolean }) {
   const { status, copy } = useCopy()
   const block = useRef<HTMLPreElement>(null)
 

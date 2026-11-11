@@ -191,6 +191,10 @@ function instanceInfo(srv: Server, db?: DatabaseStatus): InstanceInfo {
     name: srv.name,
     host: srv.host,
     serverName: srv.host.toUpperCase(),
+    // localStorage "mock.onServer" = "1": kakapo runs on the SQL Server machine itself.
+    machineName: srv.host.toUpperCase().split("\\")[0],
+    kakapoMachine: localStorage.getItem("mock.onServer") === "1" ? srv.host.toUpperCase().split("\\")[0] : "LAPTOP7",
+    onServer: localStorage.getItem("mock.onServer") === "1",
     edition: "Standard Edition (64-bit)",
     productVersion: "16.0.4255.2",
     productLevel: "CU25",
@@ -273,13 +277,17 @@ function rankFindings(findings: Finding[]): Finding[] {
   )
 }
 
+// The checks whose "Do this" is done on the SQL Server machine itself (the backend's serverMachineChecks).
+const serverMachineChecks = new Set(["INS07", "INS08", "INS12", "INS13", "MNT01", "STO01", "STO09"])
+
 function setupFinding(
   checkId: string,
   object: string,
   f: Pick<Finding, "severity" | "when" | "effort" | "finding" | "why" | "doThis" | "evidence"> & { fixId?: string },
 ): Finding {
   const check = setupChecks.find((c) => c.checkId === checkId)!
-  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, ...f }
+  const onServerMachine = serverMachineChecks.has(checkId) || undefined
+  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, onServerMachine, ...f }
 }
 
 const quoteName = (name: string) => `[${name.replace(/]/g, "]]")}]`
@@ -652,7 +660,8 @@ function upkeepFinding(
   f: Pick<Finding, "severity" | "when" | "effort" | "finding" | "why" | "doThis" | "evidence"> & { fixId?: string },
 ): Finding {
   const check = upkeepChecks.find((c) => c.checkId === checkId)!
-  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, ...f }
+  const onServerMachine = serverMachineChecks.has(checkId) || undefined
+  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, onServerMachine, ...f }
 }
 
 const scanDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -1586,7 +1595,8 @@ function storageFinding(
   f: Pick<Finding, "severity" | "when" | "effort" | "finding" | "why" | "doThis" | "evidence">,
 ): Finding {
   const check = storageChecks.find((c) => c.checkId === checkId)!
-  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, ...f }
+  const onServerMachine = serverMachineChecks.has(checkId) || undefined
+  return { checkId, title: check.title, owner: check.owner, object, thenCheck: check.thenCheck, onServerMachine, ...f }
 }
 
 // IDX01: one Info finding whose evidence lists the 10 biggest tables: name, data MB, index MB, rows.

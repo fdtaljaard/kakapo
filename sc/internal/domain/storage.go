@@ -173,6 +173,16 @@ func (c IdentityColumn) MaxValue() int64 {
 // StorageFacts is what the Storage card reads about one database and the instance facts its answer
 // depends on (docs/phase3b-contract.md, "What the collector reads"). Every area that could not be
 // read carries its reason; the checks that need it are skipped, the rest still run.
+// VolumeLoad is one database's disk work on one volume since the restart, from the file statistics of
+// every database (STO09: who makes the disk busy).
+type VolumeLoad struct {
+	Database     string
+	Volume       string
+	BytesRead    int64
+	BytesWritten int64
+	StallMs      int64 // the read and write waits added up
+}
+
 type StorageFacts struct {
 	Database      string
 	State         string // sys.databases state_desc
@@ -250,10 +260,17 @@ type StorageFacts struct {
 	ServerNow        time.Time // GETDATE()
 	UTCOffsetMinutes int
 
-	Error              string // nothing could be read at all
-	FilesError         string // sys.master_files shows nothing of this database
-	VolumeError        string // sys.dm_os_volume_stats
-	LatencyError       string // sys.dm_io_virtual_file_stats
+	Error        string // nothing could be read at all
+	FilesError   string // sys.master_files shows nothing of this database
+	VolumeError  string // sys.dm_os_volume_stats
+	LatencyError string // sys.dm_io_virtual_file_stats
+
+	// STO09: every database's disk work per volume since the restart (who makes the disk busy), and
+	// whether SQL Server runs in a virtual machine (virtual_machine_type_desc: NONE, HYPERVISOR, OTHER;
+	// "" when not read). VolumeLoadError when the loads could not be read.
+	VolumeLoads        []VolumeLoad
+	VolumeLoadError    string
+	VirtualMachine     string
 	CPUError           string // sys.dm_os_sys_info
 	VLFError           string // sys.dm_db_log_info failed
 	VLFUnsupported     bool   // sys.dm_db_log_info does not exist (before 2016 SP2)
@@ -350,7 +367,8 @@ const (
 	sto08Do       = "In a quiet period: take a log backup, shrink the log file (DBCC SHRINKFILE), grow it back to the size it needs in one or a few large steps, and set a fixed autogrowth (STO02/STO03)."
 	sto09WhyData  = "Every time a query needs data that is not in memory, it waits this long. Healthy storage is usually under 10 ms; above 20 ms users notice."
 	sto09WhyLog   = "Every transaction commit waits for the log write. Healthy is under 5 ms; slow log writes make every insert and update slower."
-	sto09Do       = "Share with the infrastructure/storage team (these are averages since the last restart; peaks are worse). Also check memory (INS02/INS03) and missing indexes (WRK03): less reading means less waiting."
+	sto09Lead     = "Send this to the infrastructure/storage team. These are averages since the last restart; peaks are worse."
+	sto09Also     = "Also check memory (INS02/INS03) and missing indexes (WRK03): less reading means less waiting."
 	tmp01Why      = "With too few files, sessions that create temp tables or sort data queue for the same internal allocation pages (PAGELATCH waits), which slows everyone down under load."
 	tmp02Finding  = "TempDB data files are not all the same size and growth."
 	tmp02Why      = "SQL Server spreads work across TempDB files by free space. If one file is bigger it gets most of the work, which defeats the point of having several files."
@@ -985,13 +1003,134 @@ func (b *storageBuild) sto09() {
 				evidence = fmt.Sprintf("Writes: %s (avg %d ms).", n0int(x.Writes), x.AvgWriteMs())
 			}
 			b.add("STO09", rank, "Planned", EffortProject, x.LogicalName,
-				fmt.Sprintf("%s average %d ms on %s.", kind, worstMs, x.PhysicalName), why, sto09Do, evidence)
+				fmt.Sprintf("%s average %d ms on %s.", kind, worstMs, x.PhysicalName), why, b.sto09Do(g.volume, g.files), evidence+b.f.waitShares(g.volume))
 			continue
 		}
 		b.add("STO09", rank, "Planned", EffortProject, g.volume,
 			fmt.Sprintf("%s average %d ms on %d files on %s (%s is the slowest at %d ms).", kind, stall/ops, len(g.files), g.volume, worst.LogicalName, worstMs),
-			why, sto09Do, strings.Join(parts, "; ")+".")
+			why, b.sto09Do(g.volume, g.files), strings.Join(parts, "; ")+"."+b.f.waitShares(g.volume))
 	}
+}
+
+// volumeShare is one database's share of the time spent waiting on a volume since the restart.
+type volumeShare struct {
+	Database      string
+	Pct           int
+	Read, Written int64
+}
+
+// volumeShares are the databases' shares of the waiting on a volume, the biggest first, those under 1%
+// left out; none when the loads were not read or nothing waited.
+func (f StorageFacts) volumeShares(volume string) []volumeShare {
+	var total int64
+	for _, l := range f.VolumeLoads {
+		if volume != "" && strings.EqualFold(l.Volume, volume) {
+			total += l.StallMs
+		}
+	}
+	out := []volumeShare{}
+	if total <= 0 {
+		return out
+	}
+	for _, l := range f.VolumeLoads {
+		if !strings.EqualFold(l.Volume, volume) {
+			continue
+		}
+		if pct := int(roundHalfAway(float64(l.StallMs)*100/float64(total), 0)); pct >= 1 {
+			out = append(out, volumeShare{Database: l.Database, Pct: pct, Read: l.BytesRead, Written: l.BytesWritten})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Pct > out[j].Pct })
+	return out
+}
+
+// waitShares is STO09's evidence on who waits on the volume, three at most: " Waiting on C:\ since the
+// restart: ClientDB_Test 80%, tempdb 15%, ClientDB 3%."; "" when not read.
+func (f StorageFacts) waitShares(volume string) string {
+	shares := f.volumeShares(volume)
+	if len(shares) == 0 {
+		return ""
+	}
+	parts := []string{}
+	for i, s := range shares {
+		if i == 3 {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s %d%%", s.Database, s.Pct))
+	}
+	return fmt.Sprintf(" Waiting on %s since the restart: %s.", volume, strings.Join(parts, ", "))
+}
+
+// sto09Do is STO09's request for the infrastructure team: who makes the disk busy when it is another
+// database, whether the server is a virtual machine, the folders to keep out of antivirus scanning and
+// the measurement to take on the server (docs/troubleshooting-review.md, proposals 3 and 4).
+func (b *storageBuild) sto09Do(volume string, slow []StorageFile) string {
+	f := b.f
+	lines := []string{sto09Lead}
+	where := volume
+	if where == "" {
+		where = "this disk"
+	}
+	if shares := f.volumeShares(volume); len(shares) > 0 && shares[0].Pct >= 50 && !strings.EqualFold(shares[0].Database, f.Database) {
+		top := shares[0]
+		busy := fmt.Sprintf("Most of the waiting on %s comes from %s, not this database: %d%% since the restart (%s written, %s read).",
+			where, top.Database, top.Pct, sizeText(float64(top.Written)/1048576), sizeText(float64(top.Read)/1048576))
+		if strings.EqualFold(top.Database, "tempdb") {
+			busy += " Find what fills TempDB (TMP03) before buying faster storage."
+		} else {
+			busy += " If it is a test or reporting database, moving it off this server, or off " + where + ", is the quickest relief."
+		}
+		lines = append(lines, busy)
+	}
+	n := 0
+	step := func(s string) {
+		n++
+		lines = append(lines, fmt.Sprintf("%d. %s", n, s))
+	}
+	switch f.VirtualMachine {
+	case "HYPERVISOR":
+		step("This server is a virtual machine: check the storage under " + where + " on the host (the datastore) and the other virtual machines sharing it.")
+	case "NONE":
+		step("This server is physical: check the disk controller (its cache and battery), the RAID set and the drives under " + where + ".")
+	}
+	if folders := f.sqlFolders(volume, slow); len(folders) > 0 {
+		step("Keep SQL Server's files out of antivirus scanning: exclude " + strings.Join(folders, ", ") + " (the .mdf, .ndf and .ldf files).")
+	}
+	if len(volume) >= 2 && volume[1] == ':' {
+		disk := strings.TrimRight(volume, `\`)
+		step(fmt.Sprintf("Measure on the SQL Server machine for 15 minutes during business hours, in a command prompt:\n"+
+			`typeperf "\LogicalDisk(%s)\Avg. Disk sec/Read" "\LogicalDisk(%s)\Avg. Disk sec/Write" -si 15 -sc 60`+
+			"\nAbove 0.020 (20 ms) means the disk itself is slow.", disk, disk))
+	}
+	lines = append(lines, sto09Also)
+	return strings.Join(lines, "\n")
+}
+
+// sqlFolders are the folders of this database's and tempdb's files on the volume (the slow files' own
+// when the volume was not read), each once, in file order.
+func (f StorageFacts) sqlFolders(volume string, slow []StorageFile) []string {
+	files := slow
+	if volume != "" {
+		files = []StorageFile{}
+		for _, x := range f.Files {
+			if strings.EqualFold(x.Volume, volume) {
+				files = append(files, x)
+			}
+		}
+	}
+	out, seen := []string{}, map[string]bool{}
+	for _, x := range files {
+		i := strings.LastIndexAny(x.PhysicalName, `\/`)
+		if i <= 0 {
+			continue
+		}
+		dir := x.PhysicalName[:i+1]
+		if !seen[strings.ToLower(dir)] {
+			seen[strings.ToLower(dir)] = true
+			out = append(out, dir)
+		}
+	}
+	return out
 }
 
 // tempdbData are tempdb's data files.

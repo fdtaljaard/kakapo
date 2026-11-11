@@ -1,4 +1,4 @@
-import { Loader2, RotateCw } from "lucide-react"
+import { Loader2, RotateCw, Server } from "lucide-react"
 
 import type { InstanceInfo } from "@/api"
 import { ExpressNotice, isExpress } from "@/components/express-notice"
@@ -53,6 +53,9 @@ export function DatabaseHeader({
             loading && <Skeleton className="h-4 w-64 max-w-full" />
           )}
         </div>
+        {instance?.machineName && !instance.onServer && (
+          <ElsewhereNotice machine={instance.machineName} here={instance.kakapoMachine} />
+        )}
         {isExpress(instance?.edition) && <ExpressNotice version={instance?.productVersion} />}
       </div>
       <Button variant="outline" onClick={onRefresh} disabled={loading}>
@@ -60,6 +63,21 @@ export function DatabaseHeader({
         Refresh
       </Button>
     </header>
+  )
+}
+
+// kakapo runs on another computer than SQL Server: what it applies goes over the connection, but the steps
+// marked for the server (a Windows right, the power plan) are done on that machine.
+function ElsewhereNotice({ machine, here }: { machine: string; here: string }) {
+  return (
+    <div role="note" className="flex items-start gap-1.5 rounded-md border px-3 py-2 text-sm">
+      <Server className="size-4 shrink-0 translate-y-0.5 text-muted-foreground" />
+      <span>
+        kakapo runs on <span className="font-medium">{here || "this computer"}</span>, not on the SQL Server machine,{" "}
+        <span className="font-medium">{machine}</span>. Steps marked "Do this on the SQL Server machine" are done on{" "}
+        {machine}, for example over Remote Desktop.
+      </span>
+    </div>
   )
 }
 

@@ -1,6 +1,9 @@
 package domain
 
-import "sort"
+import (
+	"encoding/json"
+	"sort"
+)
 
 // Severity is how bad a finding is, in the words of the HTML reports. The scan ranks 1..5.
 type Severity string
@@ -109,6 +112,24 @@ type Finding struct {
 	// Clock says which clock a Performance finding reads (docs/phase3e-contract.md): ClockNow,
 	// ClockSinceRestart or ClockWindow; "" on the other cards, and then it is left out of the JSON.
 	Clock string `json:"clock,omitempty"`
+}
+
+// serverMachineChecks are the checks whose "Do this" needs hands on the Windows machine SQL Server runs
+// on (a Windows right, the power plan, a service, the disk), not a statement from anywhere.
+var serverMachineChecks = map[string]bool{
+	"INS07": true, "INS08": true, "INS12": true, "INS13": true, "MNT01": true, "STO01": true, "STO09": true,
+}
+
+// OnServerMachine says whether the finding's "Do this" is done on the SQL Server machine itself.
+func (f Finding) OnServerMachine() bool { return serverMachineChecks[f.CheckID] }
+
+// MarshalJSON adds onServerMachine, so the page can say which machine the step is done on.
+func (f Finding) MarshalJSON() ([]byte, error) {
+	type plain Finding
+	return json.Marshal(struct {
+		plain
+		OnServerMachine bool `json:"onServerMachine,omitempty"`
+	}{plain(f), f.OnServerMachine()})
 }
 
 // Clocks of a Performance finding: right now, since the last restart, or a window (the last 7 days).

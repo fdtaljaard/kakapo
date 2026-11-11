@@ -311,6 +311,11 @@ export interface InstanceInfo {
   name: string // the registered display name
   host: string
   serverName: string // @@SERVERNAME
+  // The Windows machine SQL Server runs on, the one kakapo runs on, and whether they are the same: steps
+  // that need hands on the server (Finding.onServerMachine) are done on machineName. "" when not read.
+  machineName: string
+  kakapoMachine: string
+  onServer: boolean
   edition: string // "Standard Edition (64-bit)"
   productVersion: string // "15.0.4382.1"
   productLevel: string // "RTM", "CU25"
@@ -401,6 +406,9 @@ export type Effort = "Quick win" | "Moderate" | "Project" | "None"
 
 export interface Finding {
   checkId: string // "BAK05"
+  // "Do this" needs hands on the SQL Server machine itself (a Windows right, the power plan, a service, the
+  // disk), not a statement from anywhere.
+  onServerMachine?: boolean
   title: string // the check's title from the catalogue, e.g. "Worst-case data loss"
   severity: Severity
   owner: Owner

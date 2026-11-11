@@ -436,6 +436,7 @@ func StorageFacts(ctx context.Context, db *sql.DB, database string) (domain.Stor
 	if err := readStorageInstance(ctx, db, database, &f); err != nil {
 		return f, err
 	}
+	readVolumeLoads(ctx, db, &f)
 	if f.State == "ONLINE" {
 		if err := readStorageDatabase(ctx, db, database, &f); err != nil {
 			msg := "could not read inside the database: " + err.Error()
@@ -444,6 +445,53 @@ func StorageFacts(ctx context.Context, db *sql.DB, database string) (domain.Stor
 		}
 	}
 	return f, nil
+}
+
+// volumeLoadQuery is every database's disk work per volume since the restart (STO09: who makes the disk
+// busy). It reads the file statistics of every database, so it needs VIEW SERVER STATE. Only the files of
+// sys.master_files, kept first: the file statistics also list SQL Server 2022's hidden model_msdb and
+// model_replicatedmaster (32761, 32762), and sys.dm_os_volume_stats on those never returns.
+const volumeLoadQuery = safeSession + `SET NOCOUNT ON;
+DECLARE @f TABLE (database_id int NOT NULL, file_id int NOT NULL, bytes_read bigint NOT NULL, bytes_written bigint NOT NULL, stall_ms bigint NOT NULL);
+INSERT @f
+SELECT v.database_id, v.file_id, v.num_of_bytes_read, v.num_of_bytes_written, v.io_stall_read_ms + v.io_stall_write_ms
+FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS v
+JOIN sys.master_files AS mf ON mf.database_id = v.database_id AND mf.file_id = v.file_id;
+SELECT CAST(DB_NAME(f.database_id) AS nvarchar(128)), CAST(vs.volume_mount_point AS nvarchar(256)),
+       SUM(f.bytes_read), SUM(f.bytes_written), SUM(f.stall_ms)
+FROM @f AS f
+CROSS APPLY sys.dm_os_volume_stats(f.database_id, f.file_id) AS vs
+GROUP BY f.database_id, vs.volume_mount_point;`
+
+// readVolumeLoads reads every database's disk work per volume and whether SQL Server runs in a virtual
+// machine; a failure is kept in VolumeLoadError and costs nothing else.
+func readVolumeLoads(ctx context.Context, db *sql.DB, f *domain.StorageFacts) {
+	var vm sql.NullString
+	if err := db.QueryRowContext(ctx, Tag(safeSession+"SELECT CONVERT(nvarchar(60), virtual_machine_type_desc) FROM sys.dm_os_sys_info;")).Scan(&vm); err == nil {
+		f.VirtualMachine = vm.String
+	}
+	rows, err := db.QueryContext(ctx, Tag(volumeLoadQuery))
+	if err != nil {
+		f.VolumeLoadError = friendlyError(err).Error()
+		return
+	}
+	defer rows.Close()
+	loads := []domain.VolumeLoad{}
+	for rows.Next() {
+		var l domain.VolumeLoad
+		var name sql.NullString
+		if err := rows.Scan(&name, &l.Volume, &l.BytesRead, &l.BytesWritten, &l.StallMs); err != nil {
+			f.VolumeLoadError = err.Error()
+			return
+		}
+		l.Database = name.String
+		loads = append(loads, l)
+	}
+	if err := rows.Err(); err != nil {
+		f.VolumeLoadError = friendlyError(err).Error()
+		return
+	}
+	f.VolumeLoads = loads
 }
 
 func readStorageInstance(ctx context.Context, db *sql.DB, database string, f *domain.StorageFacts) error {
