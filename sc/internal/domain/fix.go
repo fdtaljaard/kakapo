@@ -126,6 +126,8 @@ var FixDefs = []FixDef{
 	// Phase 5p (docs/phase5p-contract.md): the maintenance plan as one procedure, for SQL Server Express.
 	{FixInstallMaintenanceProc, "Install the maintenance procedure", ScopeServer, "MNT03", "Maintenance procedure"},
 	{FixRemoveMaintenanceProc, "Remove kakapo's maintenance procedure", ScopeServer, "MNT03", "Maintenance procedure"},
+	// Phase 5u (docs/phase5u-contract.md): Ola Hallengren's IndexOptimize, installed from the copy inside kakapo.
+	{FixInstallOlaIndex, "Install Ola Hallengren's IndexOptimize", ScopeServer, "MNT03", "IndexOptimize"},
 	// Phase 5s (docs/phase5s-contract.md, section 3): DES01's fix, a primary key for a table that has none.
 	{FixAddPrimaryKey, "Add a primary key", ScopeDatabase, "DES01", "Primary key"},
 }

@@ -25,6 +25,8 @@ const statusWords: Record<PlanStatus, { word: string; tone: string }> = {
 
 // Phase 5p: on SQL Server Express the plan is one procedure kakapo installs, so the row's one button says so.
 const installProcFixId = "install-maintenance-proc"
+// Phase 5u: the Index maintenance row installs Ola Hallengren's IndexOptimize first; its button says so.
+export const installOlaFixId = "install-ola-index"
 
 // The Upkeep card's Maintenance plan row (docs/phase5b-contract.md): one line per piece of regular maintenance
 // with its status word in colour, the job and its last and next run, and Create where kakapo can make it (the
@@ -119,7 +121,7 @@ function PieceLine({ piece: p, onCreate }: { piece: PlanPiece; onCreate: () => v
       </div>
       {creatable && (
         <Button variant="outline" size="sm" onClick={onCreate}>
-          Create
+          {p.fixId === installOlaFixId ? "Install" : "Create"}
         </Button>
       )}
     </li>

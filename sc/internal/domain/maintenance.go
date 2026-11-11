@@ -139,9 +139,13 @@ type MaintenancePlanFacts struct {
 	LastGoodCheckDb *time.Time
 	CheckError      string
 	IndexOptimize   bool // master.dbo.IndexOptimize and master.dbo.CommandExecute exist
-	Jobs            []PlanJob
-	JobsError       string
-	ServerNow       time.Time
+	// Phase 5u: CommandExecute exists (with or without IndexOptimize), and the version in Ola's
+	// "--// Version: " line of IndexOptimize, else CommandExecute ("" when neither is there).
+	OlaCommandExecute bool
+	OlaVersion        string
+	Jobs              []PlanJob
+	JobsError         string
+	ServerNow         time.Time
 	// Proc is kakapo's maintenance procedure as read (phase 5p, Express only); nil when not read.
 	Proc *MaintProcFacts
 }
@@ -499,6 +503,9 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 					p.Status = PlanOptional
 				}
 			}
+			if id == PieceIndexes && p.Status == PlanOptional && olaInstallable(f) {
+				p.FixID = FixInstallOlaIndex
+			}
 			plan.Pieces = append(plan.Pieces, p)
 			continue
 		case f.JobsError != "":
@@ -527,7 +534,7 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 			if id == PieceIndexes && j == nil {
 				p.Status = PlanOptional
 				if !olaIndex {
-					p.Note = "kakapo offers index maintenance only with Ola Hallengren's IndexOptimize installed in master (https://ola.hallengren.com); statistics matter more."
+					p.Note = olaIndexNote(f)
 				}
 			}
 		}
@@ -614,10 +621,33 @@ func planPieceFix(id string, f MaintenancePlanFacts, ownBackup, olaIndex bool) (
 			return FixMaintenanceJob, map[string]string{OptionStatsOnly: "false", OptionMaintIndexOnly: "true",
 				OptionMaintDay: DefaultPlanDay, OptionMaintIndexTime: DefaultPlanIndexTime}
 		}
+		// Phase 5u: without Ola, the row installs kakapo's copy of his IndexOptimize first.
+		if olaInstallable(f) {
+			return FixInstallOlaIndex, nil
+		}
 	case PieceCleanup:
 		return FixHistoryCleanup, nil
 	}
 	return "", nil
+}
+
+// olaInstallable says whether the Index maintenance row offers install-ola-index: IndexOptimize is
+// missing and nothing holds kakapo back (docs/phase5u-contract.md, decisions 3 and 4).
+func olaInstallable(f MaintenancePlanFacts) bool {
+	return !f.IndexOptimize && OlaInstallBlock(f.ProductVersion, f.OlaCommandExecute, f.OlaVersion) == ""
+}
+
+// olaIndexNote is the Index maintenance row's note when Ola's IndexOptimize cannot be used: why kakapo
+// cannot install it, or what Install does.
+func olaIndexNote(f MaintenancePlanFacts) string {
+	if !f.IndexOptimize {
+		if why := OlaInstallBlock(f.ProductVersion, f.OlaCommandExecute, f.OlaVersion); why != "" {
+			return why + " Statistics matter more."
+		}
+		return "Index work needs Ola Hallengren's IndexOptimize in master: Install puts the copy inside kakapo there (version " + OlaVersion +
+			"; https://ola.hallengren.com). Statistics matter more."
+	}
+	return "Ola Hallengren's IndexOptimize cannot take this database's name (a comma, %, [ or ], or a leading -): kakapo offers no index job for it. Statistics matter more."
 }
 
 // planPieceNoFix says why a missing piece has no Create.

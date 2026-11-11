@@ -357,7 +357,8 @@ func ChooseMaintenancePlan(plan MaintenancePlan, a PlanAlerts, options map[strin
 	c := PlanChoice{Calls: []PlanCall{}, Inputs: []FixInput{}, Options: map[string]string{}, Blocked: []string{}, Warnings: []string{}}
 	creatable := func(id string) bool {
 		p, ok := plan.piece(id)
-		return ok && p.FixID != "" && (p.Status == PlanMissing || p.Status == PlanDisabled || p.Status == PlanOptional)
+		// install-ola-index is the Index row's own step before index work: never part of the composite.
+		return ok && p.FixID != "" && p.FixID != FixInstallOlaIndex && (p.Status == PlanMissing || p.Status == PlanDisabled || p.Status == PlanOptional)
 	}
 	full, logB := creatable(PieceFullBackup), creatable(PieceLogBackup)
 	offer := map[string]bool{

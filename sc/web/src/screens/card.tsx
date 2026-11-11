@@ -14,7 +14,7 @@ import { PerformanceTrendBlock } from "@/components/performance-trend"
 import { SamplePanel } from "@/components/sample-panel"
 import { FindingCard } from "@/components/finding-card"
 import { FixDialog } from "@/components/fix-dialog"
-import { MaintenancePlanRow } from "@/components/maintenance-plan-row"
+import { installOlaFixId, MaintenancePlanRow } from "@/components/maintenance-plan-row"
 import { StillRunningNotice } from "@/components/fix-progress"
 import { CardStatusLine } from "@/components/instance-card"
 import { PageCrumbs } from "@/components/page-crumbs"
@@ -242,7 +242,11 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
                   fixes={detail.fixes}
                   context={handover}
                   onCreate={(piece) =>
-                    setFixing({ fixId: piece.fixId ?? "", title: `Create: ${piece.title}`, options: piece.options })
+                    setFixing({
+                      fixId: piece.fixId ?? "",
+                      title: piece.fixId === installOlaFixId ? "Install Ola Hallengren's IndexOptimize" : `Create: ${piece.title}`,
+                      options: piece.options,
+                    })
                   }
                   onSetUp={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
                 />

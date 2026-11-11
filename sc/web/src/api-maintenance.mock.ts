@@ -78,6 +78,9 @@ interface MockPlanState {
   operator?: boolean
 }
 
+// Phase 5u: whether Ola Hallengren's IndexOptimize is in master, per server (WarehouseLive's server has it).
+let olaInstalled = false
+
 const states = new Map<string, MockPlanState>()
 
 function stateOf(db: string): MockPlanState {
@@ -132,7 +135,17 @@ function planOf(db: string): MaintenancePlan {
             lastDuration: id === "integrity-check" ? "18 min" : "3 min",
           }
     }
-    if (id === "indexes") return { ...p, status: "optional", fixId: d.fixId, options: d.options }
+    if (id === "indexes") {
+      if (db !== "WarehouseLive" && !olaInstalled) {
+        return {
+          ...p,
+          status: "optional",
+          fixId: "install-ola-index",
+          note: "Index work needs Ola Hallengren's IndexOptimize in master: Install puts the copy inside kakapo there (version 2026-09-12 15:02:38; https://ola.hallengren.com). Statistics matter more.",
+        }
+      }
+      return { ...p, status: "optional", fixId: d.fixId, options: d.options }
+    }
     const backupMade = !!st.jobs["full-backup"] || !!st.jobs["log-backup"]
     if ((id === "full-backup" || id === "log-backup") && backupMade) {
       return { ...p, note: "kakapo's backup schedule exists without this job: remove it on the Backups card and create it again." }
@@ -246,6 +259,32 @@ function historyPreview(options: Record<string, string> = {}): FixPreview {
   ].join("\n")
   preview.rollback = "EXEC msdb.dbo.sp_delete_job @job_name = N'kakapo: history cleanup';"
   return preview
+}
+
+// install-ola-index's preview (docs/phase5u-contract.md, section 2), with a shortened statement.
+function olaPreview(): FixPreview {
+  const v = "version 2026-09-12 15:02:38"
+  return {
+    database: "",
+    engineVersion: "16.0.4255.2",
+    lead: "Installs Ola Hallengren's IndexOptimize in master, from the copy inside kakapo, so the maintenance plan can offer weekly index work.",
+    changes: [
+      { setting: "Table master.dbo.CommandLog", current: "missing", target: "created" },
+      { setting: "Procedure master.dbo.CommandExecute", current: "missing", target: v },
+      { setting: "Procedure master.dbo.IndexOptimize", current: "missing", target: v },
+    ],
+    statement: [
+      "/* kakapo: Ola Hallengren's SQL Server Maintenance Solution (https://ola.hallengren.com), version 2026-09-12 15:02:38, MIT licence: CommandLog, CommandExecute and IndexOptimize only, no jobs. */",
+      "USE master;",
+      "GO",
+      "-- CommandLog.sql, CommandExecute.sql and IndexOptimize.sql as Ola wrote them (about 200 KB)",
+    ].join("\n"),
+    rollback: ["USE master;", "GO", "DROP PROCEDURE dbo.IndexOptimize;", "DROP PROCEDURE dbo.CommandExecute;", "DROP TABLE dbo.CommandLog;"].join("\n"),
+    warnings: [
+      "Index work stays off until you turn it on in the maintenance plan.",
+      "The rollback removes them again: a job that calls IndexOptimize fails after it.",
+    ],
+  }
 }
 
 // A piece's own fix as the row's Create opens it: one job (or the operator and alerts).
@@ -367,7 +406,7 @@ function create(db: string, id: PieceId) {
 }
 
 export const mockMaintenance: FeatureMock = async (method, path, init) => {
-  const fix = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/(maintenance-plan|history-cleanup|operator-alerts|maintenance-job|checkdb-job)\/(preview|apply)$/)
+  const fix = path.match(/^\/api\/servers\/(\d+)\/databases\/([^/]+)\/fixes\/(maintenance-plan|history-cleanup|operator-alerts|maintenance-job|checkdb-job|install-ola-index)\/(preview|apply)$/)
   if (!fix || method !== "POST") return undefined
   const db = decodeURIComponent(fix[2])
   const options = init?.body ? ((JSON.parse(String(init.body)) as { options?: Record<string, string> }).options ?? {}) : {}
@@ -379,6 +418,13 @@ export const mockMaintenance: FeatureMock = async (method, path, init) => {
     await delay(1000)
     create(db, "history-cleanup")
     return result(preview, "182,400 backup and 9,420 job history rows, nothing prunes them", "kakapo: history cleanup: enabled, next run not set by Agent yet.")
+  }
+  if (fix[3] === "install-ola-index") {
+    const preview = olaPreview()
+    if (fix[4] === "preview") return preview
+    await delay(1500)
+    olaInstalled = true
+    return result(preview, "missing", "version 2026-09-12 15:02:38 (CommandLog, CommandExecute, IndexOptimize)")
   }
   if (fix[3] !== "maintenance-plan") {
     const preview = piecePreview(fix[3], options)

@@ -5,3 +5,6 @@
 *.jpg binary
 *.m4a binary
 *.woff2 binary
+# Ola Hallengren's scripts are shipped byte for byte (CRLF, BOM): their SHA-256 is checked.
+internal/domain/ola/*.sql -text
+internal/domain/ola/LICENSE -text

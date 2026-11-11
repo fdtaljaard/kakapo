@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"sqlmonitor/internal/domain"
@@ -40,6 +41,12 @@ END CATCH;
 
 DECLARE @ola bit = CASE WHEN OBJECT_ID(N'master.dbo.IndexOptimize', N'P') IS NOT NULL
                          AND OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NOT NULL THEN 1 ELSE 0 END;
+/* Phase 5u: CommandExecute on its own (Ola's backups only), and the version Ola writes in his procedures. */
+DECLARE @olaExec bit = CASE WHEN OBJECT_ID(N'master.dbo.CommandExecute', N'P') IS NOT NULL THEN 1 ELSE 0 END;
+DECLARE @olaDef nvarchar(max) = COALESCE(OBJECT_DEFINITION(OBJECT_ID(N'master.dbo.IndexOptimize', N'P')),
+                                         OBJECT_DEFINITION(OBJECT_ID(N'master.dbo.CommandExecute', N'P')));
+DECLARE @olaVersion nvarchar(19) = CASE WHEN CHARINDEX(N'--// Version: ', @olaDef) > 0
+                                        THEN SUBSTRING(@olaDef, CHARINDEX(N'--// Version: ', @olaDef) + 14, 19) END;
 
 /* kakapo's jobs and the jobs with a maintenance step: steps, schedules, next run, last outcome */
 DECLARE @jobs TABLE (job_id uniqueidentifier NOT NULL PRIMARY KEY, name sysname NOT NULL, enabled bit NOT NULL,
@@ -87,7 +94,7 @@ BEGIN CATCH
 END CATCH;
 
 SELECT @found, CAST(ISNULL(@@SERVERNAME, N'') AS nvarchar(256)), CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)),
-       CONVERT(int, SERVERPROPERTY('EngineEdition')), @recovery, @lastGood, @checkError, @ola, @jobsError, GETDATE();
+       CONVERT(int, SERVERPROPERTY('EngineEdition')), @recovery, @lastGood, @checkError, @ola, @jobsError, GETDATE(), @olaExec, @olaVersion;
 SELECT j.name, j.enabled, ISNULL(j.next_date, 0), ISNULL(j.next_time, 0), ISNULL(j.last_status, -1), ISNULL(j.last_date, 0),
        ISNULL(j.last_time, 0), ISNULL(j.last_duration, 0)
 FROM @jobs AS j ORDER BY j.name;
@@ -112,19 +119,20 @@ func MaintenancePlan(ctx context.Context, db *sql.DB, database string) (domain.M
 		return f, errors.New("SQL Server returned no maintenance plan facts")
 	}
 	var (
-		found                       bool
-		recovery, checkErr, jobsErr sql.NullString
-		lastGood                    sql.NullTime
-		now                         time.Time
+		found                                   bool
+		recovery, checkErr, jobsErr, olaVersion sql.NullString
+		lastGood                                sql.NullTime
+		now                                     time.Time
 	)
 	if err := rows.Scan(&found, &f.ServerName, &f.ProductVersion, &f.EngineEdition, &recovery, &lastGood, &checkErr, &f.IndexOptimize,
-		&jobsErr, &now); err != nil {
+		&jobsErr, &now, &f.OlaCommandExecute, &olaVersion); err != nil {
 		return f, fmt.Errorf("read the maintenance plan of %s: %w", database, err)
 	}
 	if !found {
 		return f, fmt.Errorf("there is no database named %q", database)
 	}
 	f.RecoveryModel, f.LastGoodCheckDb, f.CheckError, f.JobsError, f.ServerNow = recovery.String, naivePtr(lastGood), checkErr.String, jobsErr.String, naive(now)
+	f.OlaVersion = strings.TrimSpace(olaVersion.String)
 
 	if err := nextResultSet(rows, "jobs"); err != nil {
 		return f, err
