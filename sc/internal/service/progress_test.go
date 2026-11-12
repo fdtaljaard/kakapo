@@ -18,7 +18,7 @@ func TestProgressRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	var se *Error
 	if _, err := svc.Progress(ctx, 42, "WMS"); !errors.As(err, &se) || se.Kind != KindNotFound {

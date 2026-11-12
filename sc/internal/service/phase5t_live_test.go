@@ -115,7 +115,7 @@ func TestPhase5tLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	// 1. The page lists A, B, E and Big, not C (under 1,000 pages) or D (only sought).
 	lens, err := svc.IndexLens(ctx, srv.ID, q5tLiveDB)

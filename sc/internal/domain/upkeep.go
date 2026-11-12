@@ -90,6 +90,9 @@ type UpkeepFacts struct {
 	TraceOldestUTC *time.Time
 	TraceNewestUTC *time.Time
 	SchemaChanges  []SchemaChangeFact
+	// SettingChanges are the trace's configuration changes (sp_configure) at any age it holds
+	// (docs/phase5w-contract.md, A6), from the same read.
+	SettingChanges []SettingChangeFact
 	// LoginName is SUSER_SNAME(): the login kakapo reads with, for the ALTER TRACE grant.
 	LoginName string
 

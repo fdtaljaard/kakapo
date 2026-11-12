@@ -124,7 +124,7 @@ func reorganizeAndLog(ctx context.Context, s *Service, serverID int64, g *generi
 	after, err := readIndexShape(ctx, g, schema, table, index)
 	if err != nil {
 		change.Result = "applied, but the index could not be measured again: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the index %s was reorganised on %s.%s, but could not be measured again: %v", index, schema, table, err)

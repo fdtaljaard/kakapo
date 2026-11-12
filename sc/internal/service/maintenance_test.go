@@ -100,7 +100,7 @@ func planServiceFixture(t *testing.T) (*Service, int64, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(st, fakeCreds{}), srv.ID, st
+	return New(st, fakeCreds{}, "test"), srv.ID, st
 }
 
 // The composite prepares and applies the pieces through their own fixes in the contract's order

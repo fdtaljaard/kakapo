@@ -14,6 +14,13 @@ whoever made them; (B) kakapo's own log of every action, written before and afte
 the server; (C) SQL Server's own history, which 5f already reads, for who and the exact time while it still holds
 them. Built in that order: A, then B, then C, the **What changed?** screen.
 
+**Built in two steps** (Francois, 2026-11-12). **Step one**: A (all of it), B1-B4 (the local log, before and
+after, seeded from the `change` table) and C (the screen), with nothing written to any server. **Step two**: the
+server copy, B5-B7 (`install-change-log`, `remove-change-log`, the catch-up and lost-rows check, the preview
+warning, CHG02) and C3's row "kakapo's log on this server removed or emptied". Step one leaves the
+`kakapo/change_log` baseline item in (it reads "absent") so step two only adds. Done when below is split the
+same way: step one's live test runs the outside-change and kakapo-fix parts only.
+
 SCOPE section 1a rules 1, 2, 4 and 5; section 3 item 9 (this phase makes "recorded in the change log" mean before
 and after, with who). The only things written to a server are the log's table, installed by a named fix, and
 the log rows of actions the user confirmed.
@@ -370,4 +377,73 @@ read run in it; each failure is a sentence in the answer, never a failed page.
 
 ## Built
 
-(to be filled in by the build)
+**Step one, 2026-11-12.** A, B1-B4 and C as above; nothing is written to any server's master (the
+`kakapo/change_log` item reads "absent"). Step two (B5-B7, CHG02, C3's "log removed" row) is not built.
+
+Where it is: `collect/baseline.go` (`ReadBaseline`, `ReadTraceHarvest`, `LastLogBackups`, `SQLLogin`), the event 22
+branch in `collect/upkeep.go`; `domain/baseline.go` (items, `DiffBaselines`, headlines) and `domain/audit.go` (A6's
+parse, A5's `AttributeSettingChange`, C3's `AuditRules`, the rows, the verdict, the memory line); `store/audit.go`
+and migration 14 in `store/store.go`; `service/audit.go` (baselines on reads, `startAction` and `endAction`),
+`service/changes.go` (the screen); `api/changes.go`; `web/src/screens/changes.tsx`, `api-changes.ts` and its mock.
+
+Decided while building:
+- **Item keys.** A database, file or job is a group with a `present` item (`db/{name}/present`, ...), so a name
+  that holds "/" still parses (the prop is always the last part). `server/cu` is `ProductUpdateLevel`, else
+  `ProductLevel` ("RTM"). File growth and maximum size are said in words ("64 MB", "10%", "none", "unlimited").
+  `server/start_time` is SQL Server's own (server-local) value, stable between restarts. The hash covers the
+  items and the names of the areas not read, so an area that starts or stops failing is a new snapshot.
+- **The trace's text starts with the error log's time and spid** ("2026-11-12 12:49:16.95 spid85 Configuration
+  option ..."), seen live on 2025 Express: the `LIKE` and the parse are not anchored at the start.
+- **The What changed? screen also harvests the trace** (the instance part of the Upkeep read, as master's: still
+  one `fn_trace_gettable`), so who made a setting change is known without opening a database page first.
+- **Baselines on reads**: the instance page's in the installed-helpers read (it always loads), the database
+  page's beside the Upkeep read, the Memory screen's live read, and the What changed? screen. Not the database
+  picker (the instance page already takes one).
+- **Order of an action**: the snapshot before (reason before-action, with the action id), the started row, the
+  statement, the ended row, the snapshot after, on the action's connection, or a fresh one when it is gone (a lost
+  long run). A started row that cannot be written is a 409, "kakapo could not write its own log of this change, so
+  nothing was run". An ended row that cannot be written is logged; the action has run. Stopped wins over failed
+  and verified.
+- **The change rows of an action** are collected through the request's context: every fix's `change` row now goes
+  through `Service.insertChange`, which notes the id on the action in progress; `FixResult.ChangeID` is added if
+  missing. The rows themselves are unchanged.
+- **A5's kakapo match** is the bracket (the action started between the two reads, or the later read is its
+  after-action snapshot) and the fix's items (`actionItems`: the setting fixes name their item; index, plan,
+  statistics, session and CHECKDB fixes never take a setting; an unknown fix is matched by the bracket alone). A
+  trace row may sit 2 minutes outside the bracket (two clocks). A difference attributed to an action or a trace
+  row carries its time and who, and that action or row is not listed again.
+- **Who for a restart or version change** is "Outside kakapo, between the two reads". A row seen in the trace says
+  what changed in its headline and who on its own line ("Deploy: 32 objects (...)", "By {login} on {host}
+  (SQLCMD), from SQL Server's trace").
+- **action_log.db_name** keeps the page's database; a server setting is shown as one by the fix's scope (a copied
+  row without a fix id: by its object naming a server fix's setting). Copied rows take `logged_at` = the old
+  change's time (no time-zone-safe "now" in the migration's plain SQL), the outcome from the result's text, and the
+  change's id.
+- **The screen**: a problem time is server time (as Record a change), placed with the offset the harvest read
+  (UTC, with a note, when the server cannot be read); the window is the 7 days before it. Filters and pages are
+  server-side, 100 rows a page, newest first, Newer and Older; the query lives in the URL. Copy holds the verdict
+  and every row of the window under the filter (all pages), times in UTC. The verdict's tone is red or amber by
+  its rows, green for "No kakapo action and no setting change". Each database's last log backup is read when the
+  screen opens; when msdb cannot be read, recovery to full stays red and a note says why. Query Store going
+  read-only comes from consecutive `db_query_store` snapshots.
+- **The memory line**: at most 600 readings, evenly kept; a reading is a dot while there are 60 or fewer (one
+  reading draws no line); a gap of more than 48 hours is said in words; a Memory screen snapshot opens that screen
+  at `?snapshot=N` (added there). The change ticks under the line take their row's flag colour.
+- `service.New` takes the version; `main` passes the build stamp.
+
+Proven live (2026-11-12):
+- `.\SQLEXPRESS` (2025 Express), `TestPhase5wLive`: cost threshold changed 5 to 4 in sqlcmd; the screen listed it
+  as "By {login} on {host} (SQLCMD), from SQL Server's trace", at the trace's time, between kakapo's two reads,
+  amber; kakapo's fix then set 4 to 50 with a started and an ended row (Windows user, SQL login, host, version,
+  before 4, after 50, verified, its change id, the duration), and the reads were first, read, before-action,
+  after-action, read. The value was put back to 5 (and show advanced options to 0) with sqlcmd.
+  `TestPhase5wReadOnlyLive` passed there too.
+- `localhost\SQL2022` (2022 Developer), read-only: `TestPhase5wReadOnlyLive` (every area read, 499 items; two reads
+  on one snapshot and an empty diff; the screen with and without a problem time). The running app's screen there,
+  at desktop width and at 375 px (no horizontal scroll with every fold open), with a problem time, Copy, paging to
+  101-200 of 226, the instance page's button and the Memory screen's link.
+
+Not proven: the upgrade of a data file with real fix rows (the seed is unit-tested on a migrated file; the app's
+own data file here had none); a closed AUTO_CLOSE database's NULLs, a login without msdb or VIEW SERVER STATE,
+versions before 2016 (the column fallbacks); a long run's ended row against a live server (unit-tested only); a
+Query Store going read-only; anything of step two.

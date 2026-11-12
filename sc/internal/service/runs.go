@@ -337,8 +337,10 @@ func (s *Service) runFix(ctx context.Context, cancel context.CancelFunc, run Fix
 	for {
 		select {
 		case o := <-done:
-			closeDB()
+			stopped := s.runs.stopRequested(run.RunID)
 			s.runs.finish(run.RunID, o.res, o.err)
+			s.endAction(ctx, g.db, g.action, o.res, o.err, stopped)
+			closeDB()
 			return
 		case <-tick.C:
 			res, err, ended := s.watchRun(ctx, run, serverID, g, long, &w)
@@ -346,6 +348,8 @@ func (s *Service) runFix(ctx context.Context, cancel context.CancelFunc, run Fix
 				continue
 			}
 			s.runs.finish(run.RunID, res, err)
+			// The connection is dead: the ended row's snapshot after is read on a fresh one.
+			s.endAction(ctx, nil, g.action, res, err, false)
 			// Stop the apply waiting on the dead connection, then close it once the apply returns
 			// (sql.DB.Close waits for the queries in progress).
 			cancel()
@@ -416,7 +420,7 @@ func (s *Service) logRecovered(ctx context.Context, serverID int64, g *genericFi
 		}
 	}
 	change.Result = result + " (" + lostConnectionNote + ")"
-	id, err := s.store.InsertChange(keep, change)
+	id, err := s.insertChange(keep, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

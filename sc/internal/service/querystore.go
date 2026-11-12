@@ -196,6 +196,25 @@ func (s *Service) ApplyQueryStoreFix(ctx context.Context, serverID int64, dbName
 	if fc.preview.Statement == "" {
 		return domain.QueryStoreFixResult{}, newError(KindConflict, "Query Store on %s already has the recommended settings; nothing to apply", name)
 	}
+	// kakapo's own log (docs/phase5w-contract.md, B2): the started row before the statement, the ended row
+	// when it returns.
+	def, _ := domain.FindFixDef(domain.FixQueryStore)
+	srvName := fc.srv.Name
+	beforeSummary := domain.NewQueryStoreStatus(fc.options, fc.version, time.Now().UTC(), true).Summary
+	ctx, act, err := s.startAction(ctx, fc.db, actionInfo{serverID: serverID, serverName: srvName, database: name, def: def,
+		fix: domain.Fix{Setting: def.Setting}, preview: fc.preview, before: beforeSummary})
+	if err != nil {
+		return domain.QueryStoreFixResult{}, err
+	}
+	res, err := s.applyQueryStoreFix(ctx, serverID, fc)
+	fr := domain.FixResult{Before: res.Before.Summary, After: res.After.Summary, Verified: res.After.Verdict == domain.VerdictOK, ChangeID: res.ChangeID}
+	s.endAction(ctx, fc.db, act, fr, err, false)
+	return res, err
+}
+
+// applyQueryStoreFix is the phase 1 apply of a prepared Query Store fix.
+func (s *Service) applyQueryStoreFix(ctx context.Context, serverID int64, fc *fixContext) (domain.QueryStoreFixResult, error) {
+	name := fc.database.Name
 	before := domain.NewQueryStoreStatus(fc.options, fc.version, time.Now().UTC().Truncate(time.Microsecond), true)
 	if err := s.store.InsertQueryStoreSnapshot(ctx, serverID, name, before); err != nil {
 		return domain.QueryStoreFixResult{}, err
@@ -209,7 +228,7 @@ func (s *Service) ApplyQueryStoreFix(ctx context.Context, serverID int64, dbName
 	after, err := readBack(ctx, fc.db, name, domain.EngineMajor(fc.version))
 	if err != nil {
 		// The statement ran; log it even though we could not prove it took.
-		_, logErr := s.store.InsertChange(ctx, s.changeRow(serverID, fc, appliedAt, "applied, but the settings could not be read back: "+err.Error()))
+		_, logErr := s.insertChange(ctx, s.changeRow(serverID, fc, appliedAt, "applied, but the settings could not be read back: "+err.Error()))
 		if logErr != nil {
 			return domain.QueryStoreFixResult{}, logErr
 		}
@@ -228,7 +247,7 @@ func (s *Service) ApplyQueryStoreFix(ctx context.Context, serverID int64, dbName
 		}
 		result += "; still differs: " + strings.Join(parts, ", ")
 	}
-	id, err := s.store.InsertChange(ctx, s.changeRow(serverID, fc, appliedAt, result))
+	id, err := s.insertChange(ctx, s.changeRow(serverID, fc, appliedAt, result))
 	if err != nil {
 		return domain.QueryStoreFixResult{}, err
 	}

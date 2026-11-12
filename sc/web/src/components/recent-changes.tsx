@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatWhen } from "@/lib/format"
-import { tuningPath } from "@/lib/paths"
+import { changesPath, tuningPath } from "@/lib/paths"
 import { useCopy } from "@/lib/use-copy"
 
 // The "prove it" panel under the cards: what changed on this database, newest first. Every row is about the
@@ -41,12 +41,20 @@ export function RecentChanges({ changes, window }: { changes: Change[]; window?:
         <CardTitle role="heading" aria-level={2}>
           Recent changes
         </CardTitle>
-        {canLink && !recording && (
-          <Button variant="outline" size="sm" onClick={() => setRecording(true)}>
-            <PenLine />
-            Record a change
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Phase 5w: every change on the server, server settings included (docs/phase5w-contract.md, C1). */}
+          {Number.isInteger(serverId) && serverId > 0 && (
+            <Link to={changesPath(serverId)} className="text-sm text-primary underline-offset-2 hover:underline">
+              All changes on this server
+            </Link>
+          )}
+          {canLink && !recording && (
+            <Button variant="outline" size="sm" onClick={() => setRecording(true)}>
+              <PenLine />
+              Record a change
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="grid gap-3">
         {recording && (

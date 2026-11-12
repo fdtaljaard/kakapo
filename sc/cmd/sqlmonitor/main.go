@@ -76,7 +76,7 @@ func run(port int, dataDir string, openWindow bool) (err error) {
 	if err != nil {
 		return err
 	}
-	svc := service.New(st, cred.New(installID))
+	svc := service.New(st, cred.New(installID), version)
 	presence := &api.Presence{}
 	svc.SetBusy(presence) // a long fix running in the background keeps the app up (docs/phase4f-contract.md)
 	srv := &http.Server{Handler: api.WithEvents(api.Handler(svc, web.Dist()), presence), ReadHeaderTimeout: 10 * time.Second}

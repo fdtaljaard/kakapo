@@ -20,7 +20,7 @@ func TestCardDetailRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	var se *Error
 	if _, err := svc.CardDetail(ctx, 42, "WarehouseLive", "backups"); !errors.As(err, &se) || se.Kind != KindNotFound {
@@ -74,7 +74,7 @@ func TestFixesRefuseBeforeApplying(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 	srv, err := st.InsertServer(ctx, domain.ServerInput{Name: "client", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "m"},
 		domain.ConnectionInfo{})
 	if err != nil {

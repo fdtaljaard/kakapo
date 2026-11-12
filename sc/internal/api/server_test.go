@@ -30,7 +30,7 @@ func TestGetAndEditServerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := Handler(service.New(st, noCreds{}), fstest.MapFS{"index.html": {Data: []byte("app")}})
+	h := Handler(service.New(st, noCreds{}, "test"), fstest.MapFS{"index.html": {Data: []byte("app")}})
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))

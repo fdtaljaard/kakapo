@@ -8,6 +8,7 @@ import { mockSample } from "./api-sample.mock"
 import { mockTables, withArchives } from "./api-tables.mock"
 import { mockTuning, withRecordedChanges } from "./api-tuning.mock"
 import { mockHelpers } from "./api-helpers.mock"
+import { mockChanges } from "./api-changes.mock"
 import { designDetail, mockDesign } from "./api-design.mock"
 
 // Dev-only fixture backend. Loaded by api.ts only when import.meta.env.DEV and VITE_MOCK_API=1,
@@ -2531,6 +2532,7 @@ const featureMocks: FeatureMock[] = [
   mockMaintenance,
   mockTuning,
   mockHelpers,
+  mockChanges,
 ]
 
 export async function mockRequest<T>(path: string, init?: RequestInit): Promise<T> {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Database, Loader2, RotateCw } from "lucide-react"
 
 import { ApiError } from "@/api"
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useServers } from "@/hooks/use-servers"
 import { formatAgo, formatWhen } from "@/lib/format"
-import { cardPath, instancePath, memoryDatabasePath } from "@/lib/paths"
+import { cardPath, changesPath, instancePath, memoryDatabasePath } from "@/lib/paths"
 import { cn } from "@/lib/utils"
 
 // "/instances/:id/memory" (docs/phase5v-contract.md): where SQL Server's memory goes, and whether anything
@@ -50,7 +50,10 @@ function MemoryPageView({ serverId }: { serverId: number }) {
     },
     [serverId],
   )
-  useEffect(() => open(), [open])
+  // ?snapshot=N (the What changed? screen's memory line, docs/phase5w-contract.md) opens that snapshot first.
+  const [search] = useSearchParams()
+  const first = Number(search.get("snapshot")) || undefined
+  useEffect(() => open(first), [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const readDatabases = async () => {
     setNotice(null)
@@ -126,6 +129,12 @@ function MemoryPageView({ serverId }: { serverId: number }) {
               </div>
             )}
             <Verdict tone={view.tone} text={view.verdict} />
+            {/* Phase 5w: did anything that changed line up with this? (docs/phase5w-contract.md, C1) */}
+            <p className="-mt-2 text-sm">
+              <Link className="underline underline-offset-2" to={changesPath(serverId)}>
+                What changed on this server?
+              </Link>
+            </p>
             {then && (
               <div role="note" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-sm">
                 <span>

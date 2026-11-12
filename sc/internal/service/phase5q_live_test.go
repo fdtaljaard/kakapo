@@ -96,7 +96,7 @@ func TestPhase5qLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	// The query page's measurement of a fragmented index, and the fix.
 	pk := func() string {

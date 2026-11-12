@@ -47,7 +47,7 @@ func TestHarvestSchemaChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 	srv, err := st.InsertServer(ctx, domain.ServerInput{Name: "client", Host: "nowhere.invalid", Auth: domain.AuthWindows}, domain.ConnectionInfo{})
 	if err != nil {
 		t.Fatal(err)

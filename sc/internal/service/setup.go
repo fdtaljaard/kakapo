@@ -70,6 +70,9 @@ type genericFix struct {
 	// runID is the background run this fix is being applied by, set when the run starts; a batch fix
 	// reports its parts to it (docs/phase5t-contract.md).
 	runID string
+	// action is the run's entry in kakapo's own log (docs/phase5w-contract.md, B2): the run writes its
+	// ended row.
+	action *action
 }
 
 // prepareGenericFix connects, finds the database, reads the facts the fix's card needs (the setup
@@ -233,11 +236,33 @@ func (s *Service) ApplyFixWithOptions(ctx context.Context, serverID int64, dbNam
 		return domain.FixResult{}, newError(KindConflict, "%s", g.preview.Held)
 	}
 	r, registered := registeredFixFor(fixID)
+	// kakapo's own log (docs/phase5w-contract.md, B2): the started row, after the preview checks and before
+	// dispatch; nothing runs when it cannot be written.
+	def, _ := domain.FindFixDef(fixID)
+	ctx, act, err := s.startAction(ctx, g.db, genericActionInfo(serverID, def, g))
+	if err != nil {
+		g.db.Close()
+		return domain.FixResult{}, err
+	}
 	if registered && runsInBackground(r, g) {
-		// A long fix (docs/phase4f-contract.md) answers at once with a pending run; the run owns g.
-		return s.startRun(ctx, serverID, fixID, g, r.apply, *r.long)
+		// A long fix (docs/phase4f-contract.md) answers at once with a pending run; the run owns g, and
+		// writes the ended row when it ends, is stopped or is recovered.
+		g.action = act
+		res, err := s.startRun(ctx, serverID, fixID, g, r.apply, *r.long)
+		if err != nil {
+			s.endAction(ctx, nil, act, domain.FixResult{}, err, false)
+		}
+		return res, err
 	}
 	defer g.db.Close()
+	res, err := s.applyPrepared(ctx, serverID, fixID, g, r, registered)
+	s.endAction(ctx, g.db, act, res, err, false)
+	return res, err
+}
+
+// applyPrepared runs a prepared fix that is not a background run: a registered fix's own apply, the Upkeep
+// and Backups cards' applies, or a Setup setting.
+func (s *Service) applyPrepared(ctx context.Context, serverID int64, fixID string, g *genericFix, r registeredFix, registered bool) (domain.FixResult, error) {
 	if registered {
 		return r.apply(ctx, s, serverID, g)
 	}
@@ -277,7 +302,7 @@ func (s *Service) ApplyFixWithOptions(ctx context.Context, serverID int64, dbNam
 	if err != nil {
 		// The statement ran; log it even though we could not prove it took.
 		change.Result = "applied, but the value could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the change to %s on %s ran, but the value could not be read back: %v", fix.Setting, on, err)
@@ -287,7 +312,7 @@ func (s *Service) ApplyFixWithOptions(ctx context.Context, serverID int64, dbNam
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

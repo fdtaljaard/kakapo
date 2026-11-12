@@ -18,7 +18,7 @@ func TestDeadlockReportRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	var se *Error
 	if _, err := svc.DeadlockReport(ctx, 42, "WarehouseLive"); !errors.As(err, &se) || se.Kind != KindNotFound {

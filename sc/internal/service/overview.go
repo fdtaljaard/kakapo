@@ -89,6 +89,8 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
+	// The settings baseline beside the Upkeep read (docs/phase5w-contract.md, A2); it never fails the page.
+	s.takeBaseline(ctx, db, serverID, domain.BaselineRead, "")
 	// The changes made outside kakapo, from the same read of the default trace (docs/phase5f-contract.md).
 	window, err := s.harvestSchemaChanges(ctx, serverID, upkeep)
 	if err != nil {

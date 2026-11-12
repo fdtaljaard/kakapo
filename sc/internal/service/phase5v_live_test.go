@@ -90,7 +90,7 @@ func TestPhase5vLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	// Panels 2 and 3, before any snapshot: no databases panel.
 	page, err := svc.Memory(ctx, srv.ID, 0)

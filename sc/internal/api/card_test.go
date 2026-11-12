@@ -30,7 +30,7 @@ func cardsHandler(t *testing.T, in domain.ServerInput) (http.Handler, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Handler(service.New(st, noCreds{}), fstest.MapFS{"index.html": {Data: []byte("app")}}), srv.ID
+	return Handler(service.New(st, noCreds{}, "test"), fstest.MapFS{"index.html": {Data: []byte("app")}}), srv.ID
 }
 
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {

@@ -102,7 +102,7 @@ func (s *Service) applyUpkeepFix(ctx context.Context, serverID int64, g *generic
 	n, err := collect.ReadStaleStatsCount(ctx, g.db, name)
 	if err != nil {
 		change.Result = "applied, but the statistics could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the statistics update on %s ran, but the statistics could not be read back: %v", name, err)
@@ -113,7 +113,7 @@ func (s *Service) applyUpkeepFix(ctx context.Context, serverID int64, g *generic
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

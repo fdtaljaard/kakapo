@@ -110,7 +110,7 @@ func applyKillSession(ctx context.Context, s *Service, serverID int64, g *generi
 	rb, err := readKillBack(ctx, g, n, loginTime)
 	if err != nil {
 		change.Result = "applied, but the session could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "session %d on %s was killed, but could not be read back: %v", n, server, err)
@@ -120,7 +120,7 @@ func applyKillSession(ctx context.Context, s *Service, serverID int64, g *generi
 	if verified {
 		change.Result = after + " Verified."
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -218,7 +218,7 @@ func applyRCSI(ctx context.Context, s *Service, serverID int64, g *genericFix) (
 	f, err := collect.ReadRCSI(ctx, g.db, name)
 	if err != nil {
 		change.Result = "applied, but the value could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "READ COMMITTED SNAPSHOT was changed on %s, but could not be read back: %v", name, err)
@@ -228,7 +228,7 @@ func applyRCSI(ctx context.Context, s *Service, serverID int64, g *genericFix) (
 	if f.RCSI {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

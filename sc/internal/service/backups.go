@@ -94,7 +94,7 @@ func (s *Service) applyBackupFix(ctx context.Context, serverID int64, g *generic
 	if err != nil {
 		// The jobs were created; log it even though we could not prove it.
 		change.Result = "applied, but the jobs could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the backup jobs were created on %s, but could not be read back: %v", server, err)
@@ -115,7 +115,7 @@ func (s *Service) applyBackupFix(ctx context.Context, serverID int64, g *generic
 	if verified {
 		change.Result = after + " Verified."
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -146,7 +146,7 @@ func (s *Service) applyRemoveBackupSchedule(ctx context.Context, serverID int64,
 	states, _, err := collect.ReadBackupJobs(ctx, g.db, name)
 	if err != nil {
 		change.Result = "applied, but the jobs could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the backup jobs were deleted on %s, but that could not be read back: %v", server, err)
@@ -156,7 +156,7 @@ func (s *Service) applyRemoveBackupSchedule(ctx context.Context, serverID int64,
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

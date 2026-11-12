@@ -223,6 +223,7 @@ BEGIN TRY
                  AND x.ObjectType IN (` + schemaObjectTypeList + `)
                  AND NOT (x.EventClass = 164 AND x.ObjectType = 22601)
                  AND (x.ObjectType <> 16964 OR x.EventClass = 164) THEN 2
+            WHEN x.EventClass = 22 AND CONVERT(nvarchar(400), x.TextData) LIKE N'%Configuration option ''%'' changed from % to %' THEN 3
             WHEN x.StartTime = x.Oldest THEN 0 END) AS k (Kind)
         WHERE k.Kind IS NOT NULL;
         SELECT @traceOldest = MIN(Oldest), @traceNewest = MAX(Newest) FROM @trace;
@@ -314,7 +315,14 @@ OUTER APPLY (SELECT 1 AS ok
                              AND (d.is_auto_close_on = 0 OR d.name = @db))
                AND (t.ObjectType = 22601 OR OBJECT_NAME(t.ObjectID, t.DatabaseID) = t.ObjectName)) AS o
 WHERE t.EventClass IN (46, 47, 164)
-ORDER BY t.StartTime, t.TransactionID;`
+ORDER BY t.StartTime, t.TransactionID;
+/* The server configuration changes of the default trace at any age it holds (docs/phase5w-contract.md,
+   A6), from the same @trace: a recent one was kept by MNT06's branch (Kind 1), an older one by Kind 3. The text
+   starts with the error log's time and spid: "2026-11-12 12:49:16.95 spid85      Configuration option ...". */
+SELECT DATEADD(MINUTE, @toUtc, t.StartTime), t.TextData, t.LoginName, t.HostName, t.ApplicationName
+FROM @trace AS t
+WHERE t.EventClass = 22 AND t.TextData LIKE N'%Configuration option ''%'' changed from % to %'
+ORDER BY t.StartTime;`
 
 // schemaObjectTypeList is the ObjectType codes the change log keeps (domain.SchemaObjectTypeCodes),
 // as the trace read's IN list.
@@ -566,6 +574,24 @@ func readUpkeepInstance(ctx context.Context, db *sql.DB, database string, f *dom
 		x.Schema, x.Name, x.Table, x.TransactionID = schema.String, name.String, table.String, tx.Int64
 		x.Login, x.Host, x.Program = login.String, host.String, program.String
 		f.SchemaChanges = append(f.SchemaChanges, x)
+	}
+
+	// The configuration changes of the default trace (docs/phase5w-contract.md, A6).
+	if err := nextResultSet(rows, "setting changes"); err != nil {
+		return err
+	}
+	f.SettingChanges = []domain.SettingChangeFact{}
+	for rows.Next() {
+		var at sql.NullTime
+		var text, login, host, program sql.NullString
+		if err := rows.Scan(&at, &text, &login, &host, &program); err != nil {
+			return err
+		}
+		if !at.Valid {
+			continue
+		}
+		f.SettingChanges = append(f.SettingChanges, domain.SettingChangeFact{At: naive(at.Time), Text: text.String,
+			Login: login.String, Host: host.String, Program: program.String})
 	}
 	return friendlyErrOrNil(rows.Err())
 }

@@ -133,7 +133,7 @@ func applyAutogrowth(ctx context.Context, s *Service, serverID int64, g *generic
 	cancel()
 	if err != nil {
 		change.Result = "applied, but the file could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the autogrowth of %s was changed, but could not be read back: %v", file, err)
@@ -171,7 +171,7 @@ func applyAddTempdbFiles(ctx context.Context, s *Service, serverID int64, g *gen
 		if readErr == nil && anyAdded(st, added) {
 			after, _ := domain.TempdbFilesReadBack(st, added)
 			change.Result = "partly applied: " + execErr.Error() + "; " + after
-			if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+			if _, logErr := s.insertChange(ctx, change); logErr != nil {
 				return domain.FixResult{}, logErr
 			}
 		}
@@ -180,7 +180,7 @@ func applyAddTempdbFiles(ctx context.Context, s *Service, serverID int64, g *gen
 	}
 	if readErr != nil {
 		change.Result = "applied, but the files could not be read back: " + readErr.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the TempDB files were added, but could not be read back: %v", readErr)
@@ -227,7 +227,7 @@ func applyTempdbFiles(ctx context.Context, s *Service, serverID int64, g *generi
 		if readErr == nil && domain.TempdbSetupChanged(p, st) {
 			after, _ := domain.TempdbSetupReadBack(st, p.Options)
 			change.Result = "partly applied: " + execErr.Error() + "; " + after
-			if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+			if _, logErr := s.insertChange(ctx, change); logErr != nil {
 				return domain.FixResult{}, logErr
 			}
 		}
@@ -236,7 +236,7 @@ func applyTempdbFiles(ctx context.Context, s *Service, serverID int64, g *generi
 	}
 	if readErr != nil {
 		change.Result = "applied, but the files could not be read back: " + readErr.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the TempDB files were set up, but could not be read back: %v", readErr)

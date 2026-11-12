@@ -105,7 +105,7 @@ func prepareBackupAction(ctx context.Context, s *Service, g *genericFix, def dom
 func (s *Service) logBackupAction(ctx context.Context, change domain.Change, g *genericFix, after string, verified bool, readErr error, what string) (domain.FixResult, error) {
 	if readErr != nil {
 		change.Result = "applied, but " + what + " could not be read back: " + readErr.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the change ran on %s, but %s could not be read back: %v", g.srv.Name, what, readErr)
@@ -188,7 +188,7 @@ func applyCheckdbNow(ctx context.Context, s *Service, serverID int64, g *generic
 	}
 	change := domain.Change{ServerID: serverID, Database: name, ChangedAt: start, Object: "CHECKDB", ChangeType: "CHECK",
 		Description: domain.CheckdbRunChangeDescription(name, run), Statement: p.Statement, Result: run.Outcome}
-	id, err := s.store.InsertChange(keep, change)
+	id, err := s.insertChange(keep, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -251,14 +251,14 @@ func applySuspectPagesClear(ctx context.Context, s *Service, serverID int64, g *
 		// Keep what was removed on record even though what is left could not be read.
 		after, _ := domain.SuspectPagesReadBack(removed, nil)
 		change.Result = after + " Could not read what is left: " + readErr.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the records were cleared on %s, but what is left could not be read back: %v", g.srv.Name, readErr)
 	}
 	after, verified := domain.SuspectPagesReadBack(removed, remaining)
 	change.Result = after
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

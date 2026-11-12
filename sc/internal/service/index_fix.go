@@ -130,7 +130,7 @@ func applyCreateIndex(ctx context.Context, s *Service, serverID int64, g *generi
 	if err != nil {
 		// The index was created; log it even though we could not prove it.
 		change.Result = "applied, but the index could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the index %s was created on %s, but could not be read back: %v", index, table, err)
@@ -193,7 +193,7 @@ func applyDropIndex(ctx context.Context, s *Service, serverID int64, g *genericF
 	f, err := readIndexFacts(ctx, g, schema, table)
 	if err != nil {
 		change.Result = "applied, but the indexes could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the index %s was dropped on %s.%s, but that could not be read back: %v", index, schema, table, err)
@@ -256,7 +256,7 @@ func (s *Service) logIndexChange(ctx context.Context, change domain.Change, p do
 	if verified {
 		change.Result = result + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -348,7 +348,7 @@ func applyDisableIndex(ctx context.Context, s *Service, serverID int64, g *gener
 	f, err := readIndexFacts(ctx, g, schema, table)
 	if err != nil {
 		change.Result = "applied, but the index could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the index %s was disabled on %s.%s, but could not be read back: %v", index, schema, table, err)

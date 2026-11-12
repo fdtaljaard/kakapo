@@ -36,7 +36,9 @@ func (s *Service) harvestSchemaChanges(ctx context.Context, serverID int64, f do
 		return window, nil
 	}
 	since := domain.SeenWindowStart(*f.TraceOldestUTC)
-	if _, _, err := s.store.ReplaceSeenChanges(ctx, serverID, since, domain.BuildSeenChanges(serverID, f.SchemaChanges, since)); err != nil {
+	// The DDL (5f) and the configuration changes (docs/phase5w-contract.md, A6) of the same hours, together.
+	fresh := append(domain.BuildSeenChanges(serverID, f.SchemaChanges, since), domain.BuildSeenSettingChanges(serverID, f.SettingChanges, since)...)
+	if _, _, err := s.store.ReplaceSeenChanges(ctx, serverID, since, fresh); err != nil {
 		return nil, err
 	}
 	if f.TraceNewestUTC != nil {

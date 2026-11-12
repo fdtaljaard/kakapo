@@ -29,7 +29,7 @@ func TestConnectRefusesBeforeDialling(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 
 	var se *Error
 	if _, _, err := svc.connect(ctx, 42); !errors.As(err, &se) || se.Kind != KindNotFound {

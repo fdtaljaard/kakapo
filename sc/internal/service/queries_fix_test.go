@@ -47,7 +47,7 @@ func TestQueryDetailRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 	var se *Error
 	if _, err := svc.QueryDetail(ctx, 42, "WarehouseLive", "0x9F3A00112233AABB"); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("unknown server: want KindNotFound, got %v", err)

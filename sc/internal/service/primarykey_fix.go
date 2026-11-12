@@ -88,7 +88,7 @@ func applyAddPrimaryKey(ctx context.Context, s *Service, serverID int64, g *gene
 	f, err := readPrimaryKeyFacts(ctx, g, schema, table)
 	if err != nil {
 		change.Result = "applied, but the table could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the primary key was added to %s.%s, but could not be read back: %v", schema, table, err)

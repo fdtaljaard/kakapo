@@ -93,7 +93,7 @@ func applyPlanForceFix(ctx context.Context, s *Service, serverID int64, g *gener
 	change.Description = domain.PlanForceDescription(fix.ID, after, fix)
 	if err != nil {
 		change.Result = "applied, but the plan could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the forcing of plan %d in %s changed, but could not be read back: %v", planID, name, err)
@@ -108,7 +108,7 @@ func (s *Service) logQueryFix(ctx context.Context, change domain.Change, g *gene
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -162,7 +162,7 @@ func applyEvictPlanFix(ctx context.Context, s *Service, serverID int64, g *gener
 	after, err := collect.ReadCachedPlan(ctx, g.db, handle, raw)
 	if err != nil {
 		change.Result = "applied, but the plan cache could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the plan was removed on %s, but the plan cache could not be read back: %v", g.srv.Name, err)
@@ -220,7 +220,7 @@ func applyTableStatsFix(ctx context.Context, s *Service, serverID int64, g *gene
 	after, err := collect.ReadTableStats(ctx, g.db, name, schema, table)
 	if err != nil {
 		change.Result = "applied, but the statistics could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the statistics update on %s.%s ran, but could not be read back: %v", schema, table, err)

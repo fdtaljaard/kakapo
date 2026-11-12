@@ -49,6 +49,8 @@ func (s *Service) Memory(ctx context.Context, serverID, snapshotID int64) (domai
 		return page, err
 	}
 	defer db.Close()
+	// The Memory screen's read takes a settings baseline (docs/phase5w-contract.md, A2); it never fails the page.
+	s.takeBaseline(ctx, db, serverID, domain.BaselineRead, "")
 	readCtx, cancel := context.WithTimeout(ctx, memoryOverviewTimeout)
 	defer cancel()
 	f, err := collect.MemoryOverview(readCtx, db)

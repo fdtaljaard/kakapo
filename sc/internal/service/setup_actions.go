@@ -112,7 +112,7 @@ func suChange(serverID int64, g *genericFix, object, changeType, description str
 // returns the error the caller answers with.
 func (s *Service) suLogUnread(ctx context.Context, change domain.Change, readErr error, what string) error {
 	change.Result = "applied, but it could not be read back: " + readErr.Error()
-	if _, err := s.store.InsertChange(ctx, change); err != nil {
+	if _, err := s.insertChange(ctx, change); err != nil {
 		return err
 	}
 	return newError(KindUnreachable, "%s ran, but could not be read back: %v", what, readErr)
@@ -124,7 +124,7 @@ func (s *Service) suLog(ctx context.Context, change domain.Change, g *genericFix
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

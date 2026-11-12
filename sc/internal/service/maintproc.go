@@ -210,7 +210,7 @@ func (s *Service) maintPartial(ctx context.Context, g *genericFix, change domain
 		now, _ = domain.MaintRemoveReadBack(after, domain.MaintRemoveAll)
 	}
 	change.Result = "failed part way (" + execErr.Error() + "); now: " + now
-	if _, err := s.store.InsertChange(ctx, change); err != nil {
+	if _, err := s.insertChange(ctx, change); err != nil {
 		return err
 	}
 	return newError(KindUnreachable, "SQL Server refused to %s on %s part way: %v. Now: %s; the change log has the rollback. %s",

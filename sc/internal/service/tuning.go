@@ -141,7 +141,7 @@ func (s *Service) RecordChange(ctx context.Context, serverID int64, dbName strin
 		return domain.ChangeEntry{}, newError(KindInvalid, "the change is in the future (%s UTC); record it once it is made", at.Format("2006-01-02 15:04"))
 	}
 	c := rc.Change(serverID, dbName, at)
-	id, err := s.store.InsertChange(ctx, c)
+	id, err := s.insertChange(ctx, c)
 	if err != nil {
 		return domain.ChangeEntry{}, err
 	}

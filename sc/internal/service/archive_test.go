@@ -92,7 +92,7 @@ func TestListTablesRefusesBeforeReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 	var se *Error
 	if _, err := svc.ListTables(ctx, 42, "Shop"); !errors.As(err, &se) || se.Kind != KindNotFound {
 		t.Errorf("unknown server: want KindNotFound, got %v", err)

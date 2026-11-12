@@ -9,6 +9,7 @@ import { HomeScreen } from "@/screens/home"
 import { IndexesScreen } from "@/screens/indexes"
 import { InstanceScreen } from "@/screens/instance"
 import { MemoryScreen } from "@/screens/memory"
+import { ChangesScreen } from "@/screens/changes"
 import { MemoryDatabaseScreen } from "@/screens/memory-database"
 import { BlockingScreen } from "@/screens/blocking"
 import { QueryScreen } from "@/screens/query"
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/instances/:id" element={<InstanceScreen />} />
         <Route path="/instances/:id/edit" element={<EditInstanceScreen />} />
         <Route path="/instances/:id/memory" element={<MemoryScreen />} />
+        <Route path="/instances/:id/changes" element={<ChangesScreen />} />
         <Route path="/instances/:id/memory/databases/:db" element={<MemoryDatabaseScreen />} />
         <Route path="/instances/:id/databases/:db" element={<DatabaseScreen />} />
         <Route path="/instances/:id/databases/:db/cards/:card" element={<CardScreen />} />

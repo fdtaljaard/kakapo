@@ -40,3 +40,6 @@ export interface FromHome {
 export function cameFromHome(state: unknown): boolean {
   return typeof state === "object" && state !== null && (state as Partial<FromHome>).fromHome === true
 }
+
+// Phase 5w: what changed on an instance, kakapo's own actions and everyone else's.
+export const changesPath = (serverId: number) => `${instancePath(serverId)}/changes`

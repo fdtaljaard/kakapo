@@ -49,7 +49,7 @@ func runService(t *testing.T) (*Service, int64, *genericFix) {
 		preview: domain.FixPreview{Database: "WMS", Changes: []domain.Drift{{Setting: "CHECKDB", Current: "never", Target: "run now"}},
 			Statement: "DBCC CHECKDB (N'WMS') WITH NO_INFOMSGS, ALL_ERRORMSGS;", Warnings: []string{}},
 		fix: domain.Fix{ID: "fake-long", Current: "never"}}
-	return New(st, fakeCreds{}), srv.ID, g
+	return New(st, fakeCreds{}, "test"), srv.ID, g
 }
 
 // waitRun polls a run until it ends.

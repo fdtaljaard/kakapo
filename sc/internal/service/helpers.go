@@ -177,7 +177,7 @@ func (s *Service) xePartial(ctx context.Context, g *genericFix, change domain.Ch
 	}
 	now, _ := domain.XEInstallReadBack(after, -2)
 	change.Result = "failed part way (" + execErr.Error() + "); now: " + now
-	if _, err := s.store.InsertChange(ctx, change); err != nil {
+	if _, err := s.insertChange(ctx, change); err != nil {
 		return err
 	}
 	return newError(KindUnreachable, "SQL Server refused to %s on %s part way: %v. Now: %s; the change log has the rollback. %s",
@@ -195,6 +195,8 @@ func (s *Service) Helpers(ctx context.Context, serverID int64) (domain.Installed
 		return domain.InstalledHelpers{}, err
 	}
 	defer db.Close()
+	// The instance page's read takes a settings baseline (docs/phase5w-contract.md, A2); it never fails the page.
+	s.takeBaseline(ctx, db, serverID, domain.BaselineRead, "")
 	rctx, cancel := suReadCtx(ctx)
 	defer cancel()
 	hf, err := collect.ReadHelpers(rctx, db)

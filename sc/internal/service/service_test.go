@@ -11,7 +11,7 @@ import (
 )
 
 func TestResolvePassword(t *testing.T) {
-	svc := New(nil, fakeCreds{7: "stored"})
+	svc := New(nil, fakeCreds{7: "stored"}, "test")
 	for _, c := range []struct {
 		name string
 		in   domain.ServerInput
@@ -43,7 +43,7 @@ func TestUpdateServerRefusesAndChangesNothing(t *testing.T) {
 	}
 	defer st.Close()
 	creds := fakeCreds{}
-	svc := New(st, creds)
+	svc := New(st, creds, "test")
 
 	srv, err := st.InsertServer(ctx, domain.ServerInput{Name: "client", Host: "nowhere.invalid", Auth: domain.AuthSQL, Username: "monitor"},
 		domain.ConnectionInfo{})

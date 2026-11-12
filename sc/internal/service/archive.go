@@ -129,7 +129,7 @@ func applyArchiveTable(ctx context.Context, s *Service, serverID int64, g *gener
 	if err != nil {
 		// The archive was created; log it even though we could not prove it.
 		change.Result = "applied, but the job could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the archive of %s.%s was created on %s, but could not be read back: %v", plan.Schema, plan.Table, server, err)
@@ -161,7 +161,7 @@ func applyArchiveTable(ctx context.Context, s *Service, serverID int64, g *gener
 	if verified {
 		change.Result = after + " Verified."
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}
@@ -226,7 +226,7 @@ func applyRemoveArchive(ctx context.Context, s *Service, serverID int64, g *gene
 	states, err := collect.ReadJobsByName(ctx, g.db, []string{jobName})
 	if err != nil {
 		change.Result = "applied, but the job could not be read back: " + err.Error()
-		if _, logErr := s.store.InsertChange(ctx, change); logErr != nil {
+		if _, logErr := s.insertChange(ctx, change); logErr != nil {
 			return domain.FixResult{}, logErr
 		}
 		return domain.FixResult{}, newError(KindUnreachable, "the job %s was deleted on %s, but that could not be read back: %v", jobName, server, err)
@@ -236,7 +236,7 @@ func applyRemoveArchive(ctx context.Context, s *Service, serverID int64, g *gene
 	if verified {
 		change.Result = after + ", verified"
 	}
-	id, err := s.store.InsertChange(ctx, change)
+	id, err := s.insertChange(ctx, change)
 	if err != nil {
 		return domain.FixResult{}, err
 	}

@@ -197,7 +197,7 @@ func interruptedNote(keep context.Context, s *Service, serverID int64, g *generi
 		Object: domain.IndexObject(c.Schema, c.Table, before.Index), ChangeType: "INDEX",
 		Description: domain.ReorganizeChangeDescription(before, g.database.Name), Statement: g.preview.Statement, Result: text + ", differs",
 	}
-	if _, err := s.store.InsertChange(keep, change); err != nil {
+	if _, err := s.insertChange(keep, change); err != nil {
 		return text + " (the change log could not be written: " + err.Error() + ")"
 	}
 	return text

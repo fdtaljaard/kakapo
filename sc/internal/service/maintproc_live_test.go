@@ -145,7 +145,7 @@ func TestMaintProcLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := New(st, fakeCreds{})
+	svc := New(st, fakeCreds{}, "test")
 	clock := func() time.Time {
 		now, _, err := collect.ServerClock(ctx, db)
 		if err != nil {

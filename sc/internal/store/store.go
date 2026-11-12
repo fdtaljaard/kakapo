@@ -180,6 +180,42 @@ var migrations = []string{
 	   db_name VARCHAR,
 	   snapshot_json VARCHAR NOT NULL
 	 );`,
+	// 14: the change audit (docs/phase5w-contract.md, A3 and B4): the settings baseline, kept only when
+	// something changed, a row per read, and kakapo's own log of every action, before and after. Append-only:
+	// the store has no UPDATE or DELETE for these tables (store_test asserts it). action_log is seeded with
+	// every earlier action of kakapo's own from the change table, without who, host or version.
+	`CREATE SEQUENCE IF NOT EXISTS seq_baseline START 1;
+	 CREATE TABLE IF NOT EXISTS baseline (
+	   id INTEGER PRIMARY KEY DEFAULT nextval('seq_baseline'),
+	   server_id INTEGER NOT NULL, taken_at TIMESTAMP NOT NULL, hash VARCHAR NOT NULL,
+	   values_json VARCHAR NOT NULL,
+	   errors_json VARCHAR NOT NULL
+	 );
+	 CREATE TABLE IF NOT EXISTS baseline_read (
+	   server_id INTEGER NOT NULL, read_at TIMESTAMP NOT NULL, baseline_id INTEGER NOT NULL,
+	   reason VARCHAR NOT NULL,
+	   action_id VARCHAR, sql_memory_mb BIGINT, target_memory_mb BIGINT
+	 );
+	 CREATE SEQUENCE IF NOT EXISTS seq_action_log START 1;
+	 CREATE TABLE IF NOT EXISTS action_log (
+	   id INTEGER PRIMARY KEY DEFAULT nextval('seq_action_log'),
+	   action_id VARCHAR NOT NULL, phase VARCHAR NOT NULL,
+	   server_id INTEGER NOT NULL, logged_at TIMESTAMP NOT NULL, started_at TIMESTAMP NOT NULL,
+	   ended_at TIMESTAMP, duration_ms BIGINT,
+	   windows_user VARCHAR NOT NULL, sql_login VARCHAR NOT NULL, kakapo_host VARCHAR NOT NULL, kakapo_version VARCHAR NOT NULL,
+	   db_name VARCHAR, object VARCHAR NOT NULL, change_type VARCHAR NOT NULL, fix_id VARCHAR NOT NULL,
+	   description VARCHAR NOT NULL, statement VARCHAR NOT NULL, rollback_statement VARCHAR,
+	   value_before VARCHAR, value_after VARCHAR, outcome VARCHAR, result VARCHAR, change_ids VARCHAR
+	 );
+	 INSERT INTO action_log (action_id, phase, server_id, logged_at, started_at, ended_at, windows_user, sql_login, kakapo_host,
+	   kakapo_version, db_name, object, change_type, fix_id, description, statement, rollback_statement, outcome, result, change_ids)
+	 SELECT CAST(uuid() AS VARCHAR), 'copied', server_id, changed_at, changed_at, changed_at, '', '', '', '',
+	   db_name, object, change_type, '', description, statement, rollback_statement,
+	   CASE WHEN result LIKE '%verified%' THEN 'verified' WHEN result LIKE '%differs%' THEN 'differs' END,
+	   result, CAST(id AS VARCHAR)
+	 FROM change
+	 WHERE coalesce(result, '') NOT IN ('recorded by hand', 'seen on the server')
+	 ORDER BY id;`,
 }
 
 // InstallID returns the id of this data file, made once on first use. Stored passwords are

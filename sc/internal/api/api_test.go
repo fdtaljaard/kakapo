@@ -56,6 +56,11 @@ func TestRoutesRejectBadIDAndKeepSPA(t *testing.T) {
 		{http.MethodGet, "/api/servers/1/databases/%20/changes"},
 		{http.MethodGet, "/api/servers/1/databases/x/changes?limit=abc"},
 		{http.MethodGet, "/api/servers/1/databases/x/changes?limit=0"},
+		// The What changed? screen (docs/phase5w-contract.md, C4).
+		{http.MethodGet, "/api/servers/abc/changes"},
+		{http.MethodGet, "/api/servers/1/changes?who=everyone"},
+		{http.MethodGet, "/api/servers/1/changes?page=-1"},
+		{http.MethodGet, "/api/servers/1/changes?from=yesterday"},
 		{http.MethodPut, "/api/servers/abc/database"},
 		{http.MethodGet, "/api/servers/abc"},
 		{http.MethodPut, "/api/servers/0"},
@@ -69,7 +74,7 @@ func TestRoutesRejectBadIDAndKeepSPA(t *testing.T) {
 
 	// The server-level overview and changes of the skeleton are gone, and an unknown API path is a
 	// JSON 404, not the UI's index.html.
-	for _, path := range []string{"/api/servers/1/overview", "/api/servers/1/changes", "/api/nothing"} {
+	for _, path := range []string{"/api/servers/1/overview", "/api/nothing"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `"error"`) {
