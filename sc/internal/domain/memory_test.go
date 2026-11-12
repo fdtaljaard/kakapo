@@ -125,7 +125,7 @@ func TestBuildMemoryAmber(t *testing.T) {
 		{"cap above RAM", func(f *MemoryFacts) { f.MaxMB, f.MaxValueMB = 200000, 200000 }, "the memory cap (195.3 GB) is above the RAM in the machine (128.0 GB)"},
 		// The cap leaves under 4 GB once SQL Server reaches it: 128 GB - 121.0 GB cap - 5.0 GB everything else.
 		{"cap headroom", func(f *MemoryFacts) { f.MaxMB, f.MaxValueMB = 123952, 123952 },
-			"the memory cap (121.0 GB) leaves too little room: everything else on the machine uses 5.0 GB, so SQL Server at its cap would leave Windows only 2.0 GB; a cap of about 119 GB (121856 MB) keeps 4.0 GB free"},
+			"the memory cap (121.0 GB) leaves too little room: everything else on the machine uses 5.0 GB, so SQL Server at its cap would leave Windows only 2.0 GB; a cap of about 115 GB (117965 MB, the Setup card's Apply) leaves room for both"},
 		{"max pending", func(f *MemoryFacts) { f.MaxValueMB = 100000 }, "max server memory was set to 97.7 GB but not applied"},
 		{"min pending", func(f *MemoryFacts) { f.MinValueMB = 4096 }, "min server memory was set to 4.0 GB but not applied"},
 		{"lock memory", func(f *MemoryFacts) {
@@ -172,7 +172,7 @@ func TestBuildMemoryCapHeadroom(t *testing.T) {
 	f.CommittedMB, f.TargetMB = 102400, 104960
 	v := BuildMemory(f, nil)
 	want := "Full but healthy, with things worth a look: the memory cap (114.8 GB) leaves too little room: everything else on " +
-		"the machine uses 22.4 GB, so SQL Server at its cap would need 9.7 GB more than the RAM; a cap of about 101 GB (103424 MB) keeps 4.0 GB free."
+		"the machine uses 22.4 GB, so SQL Server at its cap would need 9.7 GB more than the RAM; a cap of about 101 GB (103424 MB, the Setup card's Apply) leaves room for both."
 	if v.Tone != "amber" || v.Verdict != want {
 		t.Errorf("verdict\n got %q\nwant %q", v.Verdict, want)
 	}

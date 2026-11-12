@@ -190,7 +190,16 @@ changes followed:
   else used 22.3 GB, so SQL Server at its cap would have needed about 9.5 GB more than the RAM, and the verdict
   said nothing. The sentence gives the cap that fits: RAM minus everything else minus 4 GB, in whole GB. The cap
   there was, within rounding, the Setup card's own suggestion (RAM minus 10%), which does not see other programs;
-  that gap belongs to the Setup card and is not changed here.
+  the same day the Setup card was changed to match (below).
 - **A test database is a note, not a memory signal.** Its pages are reused when other databases need them, so it
   no longer appears in the verdict; its row keeps a muted note ("Not a memory problem … whether it belongs on this
   instance is a question for other reasons").
+- **The Setup card's suggested cap counts the other programs.** The Setup read now also reads SQL Server's own
+  use (`sys.dm_os_process_memory`), so RAM minus SQL Server minus free is what the other programs use, Windows
+  included. `SuggestedCapMB` is the RAM-only suggestion, or, when the other programs need more room than it
+  leaves, RAM minus what they use now minus 4 GB, in whole GB. INS02's *Do this*, the `max-server-memory` fix's
+  target and the Memory screen's sentence all use it, so the screen and the fix give the same number (103,424 MB
+  on the production case). INS03 also fires when the cap leaves under 4 GB once the other programs are counted
+  ("…too little memory for Windows and the other programs on this server"); the preview's warning then says the
+  suggestion counts what they use now, so a heavier time of day needs a lower value by hand. When the memory read
+  fails, nothing changes from before. Proven by unit tests and by the live Setup read on a local instance.

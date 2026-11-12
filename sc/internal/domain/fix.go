@@ -152,9 +152,11 @@ func FindFixDef(id string) (FixDef, bool) {
 const (
 	warnPlanCache  = "SQL Server clears its plan cache: queries recompile for a few minutes."
 	warnMemoryRoom = "The suggestion leaves room for Windows only. If other software runs on this server (another instance, SSRS, a web shop, the application's own services), set a lower value by hand."
-	warnThirdParty = "Ignore if a third-party tool takes the backups."
-	warnPageVerify = "Pages are protected as they are next written; an index rebuild protects them all."
-	warnVendor     = "Check first that the application vendor does not require this (rare)."
+	// warnMemoryRoomCounted replaces it when the suggestion counts what the other programs use now.
+	warnMemoryRoomCounted = "The suggestion counts what Windows and the other programs on this server use now. If they use more at other times (a nightly report, a month-end run), set a lower value by hand."
+	warnThirdParty        = "Ignore if a third-party tool takes the backups."
+	warnPageVerify        = "Pages are protected as they are next written; an index rebuild protects them all."
+	warnVendor            = "Check first that the application vendor does not require this (rare)."
 )
 
 func warnServer(server string) string {
@@ -327,9 +329,14 @@ func buildFix(fixID string, f SetupFacts, dbName string) (FixPreview, Fix, error
 	case ScopeServer:
 		cur := f.ConfigFor(fixID)
 		var target int64
+		memoryRoom := warnMemoryRoom
 		switch fixID {
 		case "max-server-memory":
-			target = SuggestedMaxMemoryMB(f.PhysicalMB)
+			var counted bool
+			target, counted = f.SuggestedMaxMemory()
+			if counted {
+				memoryRoom = warnMemoryRoomCounted
+			}
 			fix.CheckID = "INS02"
 			if f.MaxServerMemoryMB < unlimitedMemory {
 				fix.CheckID = "INS03"
@@ -349,7 +356,7 @@ func buildFix(fixID string, f SetupFacts, dbName string) (FixPreview, Fix, error
 		case "backup-compression":
 			p.Warnings = append(p.Warnings, warnThirdParty)
 		case "max-server-memory":
-			p.Warnings = append(p.Warnings, warnPlanCache, warnMemoryRoom)
+			p.Warnings = append(p.Warnings, warnPlanCache, memoryRoom)
 		default:
 			p.Warnings = append(p.Warnings, warnPlanCache)
 		}

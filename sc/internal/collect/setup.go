@@ -122,11 +122,13 @@ BEGIN CATCH
 END CATCH;
 
 /* Windows low on memory (INS12): system-wide signals only, as the scan */
-DECLARE @memError nvarchar(2048), @memState nvarchar(60), @availMB bigint, @lowLast datetime, @low24 int, @low7 int;
+DECLARE @memError nvarchar(2048), @memState nvarchar(60), @availMB bigint, @sqlInUseMB bigint, @lowLast datetime, @low24 int, @low7 int;
 IF @vss = 0 SET @memError = @noVss;
 ELSE
 BEGIN TRY
     SELECT @memState = system_memory_state_desc, @availMB = available_physical_memory_kb / 1024 FROM sys.dm_os_sys_memory;
+    /* SQL Server's own use, so RAM - SQL Server - free is what the other programs use (the suggested cap) */
+    SELECT @sqlInUseMB = physical_memory_in_use_kb / 1024 FROM sys.dm_os_process_memory;
     SELECT @low24 = ISNULL(SUM(CASE WHEN x.EventTime >= DATEADD(HOUR, -24, GETDATE()) THEN 1 ELSE 0 END), 0),
            @low7  = COUNT(*), @lowLast = MAX(x.EventTime)
     FROM (SELECT DATEADD(SECOND, -(si.ms_ticks - r.timestamp) / 1000, GETDATE()) AS EventTime
@@ -206,7 +208,7 @@ SELECT CAST(CASE WHEN @dbid IS NULL THEN 0 ELSE 1 END AS bit),
        @cfgError, @maxMem, @maxDop, @cost, @adhoc, @boost, @bkc, @ff, @clr, @clrStrict,
        @minMem, @lwp, @aff, @aff64, @affIO, @aff64IO,
        @pcError, @pcMB, @suMB,
-       @memError, @memState, @availMB, @lowLast, @low24, @low7,
+       @memError, @memState, @availMB, @lowLast, @low24, @low7, @sqlInUseMB,
        @power, @powerError,
        @restoreError, @restoredAt, @srcServer, @srcDb, @srcBackupAt,
        @trusted, @clrLoaded, @clrError,
@@ -350,7 +352,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 		power, powerErr, restoreErr, srcServer, srcDb, clrErr      sql.NullString
 		cpu, cores, maxDop, cost, adhoc, boost, bkc, ff, clr, low7 sql.NullInt32
 		clrStrict, low24, trusted                                  sql.NullInt32
-		physMB, maxMem, availMB                                    sql.NullInt64
+		physMB, maxMem, availMB, sqlInUse                          sql.NullInt64
 		pcMB, suMB                                                 sql.NullFloat64
 		start, lowLast, restoredAt, srcBackupAt                    sql.NullTime
 		schedOnline, schedOffline, runnableNow, sockets, coresPS   sql.NullInt32
@@ -364,7 +366,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 		&cfgErr, &maxMem, &maxDop, &cost, &adhoc, &boost, &bkc, &ff, &clr, &clrStrict,
 		&minMem, &lwp, &aff, &aff64, &affIO, &aff64IO,
 		&pcErr, &pcMB, &suMB,
-		&memErr, &memState, &availMB, &lowLast, &low24, &low7,
+		&memErr, &memState, &availMB, &lowLast, &low24, &low7, &sqlInUse,
 		&power, &powerErr,
 		&restoreErr, &restoredAt, &srcServer, &srcDb, &srcBackupAt,
 		&trusted, &clrLoaded, &clrErr,
@@ -422,7 +424,7 @@ func readSetupInstance(ctx context.Context, db *sql.DB, database string, f *doma
 	}
 
 	f.PlanCacheError, f.PlanCacheMB, f.SingleUseMB = pcErr.String, pcMB.Float64, suMB.Float64
-	f.MemoryError, f.MemoryState, f.AvailableMB = memErr.String, memState.String, availMB.Int64
+	f.MemoryError, f.MemoryState, f.AvailableMB, f.SQLInUseMB = memErr.String, memState.String, availMB.Int64, sqlInUse.Int64
 	f.Low24, f.Low7, f.LowLast = int(low24.Int32), int(low7.Int32), naivePtr(lowLast)
 
 	f.PowerError = powerErr.String

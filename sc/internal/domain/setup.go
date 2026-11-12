@@ -80,6 +80,7 @@ type SetupFacts struct {
 	// INS12: sys.dm_os_sys_memory and the resource monitor ring buffer.
 	MemoryState string // system_memory_state_desc
 	AvailableMB int64
+	SQLInUseMB  int64 // sys.dm_os_process_memory.physical_memory_in_use_kb: with the two above, what other programs use
 	Low24       int
 	Low7        int
 	LowLast     *time.Time
@@ -308,6 +309,38 @@ func SuggestedMaxMemoryMB(physicalMB int64) int64 {
 	return physicalMB - reserve
 }
 
+// OtherProgramsMB is what everything on the machine but SQL Server uses now (Windows included): RAM minus
+// SQL Server minus free. ok is false when the memory read failed or SQL Server's own use was not read.
+func (f SetupFacts) OtherProgramsMB() (mb int64, ok bool) {
+	if f.MemoryError != "" || f.SysInfoError != "" || f.SQLInUseMB <= 0 || f.PhysicalMB <= 0 {
+		return 0, false
+	}
+	return max(f.PhysicalMB-f.SQLInUseMB-f.AvailableMB, 0), true
+}
+
+// SuggestedCapMB is the cap kakapo suggests when it knows what the other programs use: the RAM-only
+// suggestion, or, when other programs need more room than it leaves, RAM minus what they use now minus
+// MemoryCapHeadroomMB, in whole GB. The Memory screen and the Setup card give the same number (case of
+// 2026-11-12: RAM minus 10% left a server with 22 GB of other programs 9.5 GB short).
+func SuggestedCapMB(physicalMB, otherMB int64) int64 {
+	base := SuggestedMaxMemoryMB(physicalMB)
+	fit := (physicalMB - otherMB - MemoryCapHeadroomMB) / 1024 * 1024
+	if fit < base && fit >= 2048 {
+		return fit
+	}
+	return base
+}
+
+// SuggestedMaxMemory is the Setup card's suggested cap: SuggestedCapMB when the other programs' memory
+// was read, else the RAM-only suggestion. counted says which.
+func (f SetupFacts) SuggestedMaxMemory() (mb int64, counted bool) {
+	other, ok := f.OtherProgramsMB()
+	if !ok {
+		return SuggestedMaxMemoryMB(f.PhysicalMB), false
+	}
+	return SuggestedCapMB(f.PhysicalMB, other), true
+}
+
 // SuggestedMaxDop is min(cores per NUMA node, 8), as the scan suggests it.
 func (f SetupFacts) SuggestedMaxDop() int {
 	return min(f.CoresPerNode, 8)
@@ -491,6 +524,7 @@ const (
 	ins01NewerDo   = "This version is newer than the build table in this script: refresh the table from the First Responder Kit."
 	ins02Why       = "SQL Server will take almost all the RAM on the server and starve Windows and other services. This causes paging and sudden slowdowns."
 	ins03LowWhy    = "Windows needs memory of its own. When it runs short it pages SQL Server memory to disk, which makes everything slow."
+	ins03OthersWhy = "Other programs on this server (Windows, reporting services, the application's own services) need memory too. If SQL Server grows to its cap, Windows runs short and pages memory to disk, which makes everything slow."
 	ins03HalfWhy   = "Memory is the cheapest way to avoid disk reads. If nothing else runs on this server, the unused RAM is wasted."
 	ins04ZeroWhy   = "A single large query can occupy every CPU and make other users wait. Microsoft recommends capping this on servers with more than 8 CPUs."
 	ins04AboveWhy  = "Very wide parallel queries rarely run faster and take CPUs away from other users."
@@ -602,29 +636,43 @@ const unlimitedMemory = 2147483647
 // ins02and03: max server memory not set, or leaving too little or using too little.
 func (b *setupBuild) ins02and03() {
 	f := b.f
-	suggested := SuggestedMaxMemoryMB(f.PhysicalMB)
+	suggested, counted := f.SuggestedMaxMemory()
+	other, _ := f.OtherProgramsMB()
 	fix := "max-server-memory"
 	if suggested < 2048 {
 		fix = "" // Apply-DoNow skips a value this small; so does the app
+	}
+	otherSaid := ""
+	if counted {
+		otherSaid = fmt.Sprintf(" Other programs (Windows included): %d MB now.", other)
 	}
 	if f.MaxServerMemoryMB >= unlimitedMemory {
 		rank := 2
 		if f.IsExpress() {
 			rank = 4
 		}
+		do := fmt.Sprintf("Leave room for the operating system: EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', %d; RECONFIGURE;  Use a lower value if other applications run on this server.", suggested)
+		if counted {
+			do = fmt.Sprintf("Leave room for Windows and the other programs on this server (they use %d MB now): EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', %d; RECONFIGURE;", other, suggested)
+		}
 		b.ins("INS02", rank, "Online", EffortQuickWin,
-			"Max server memory is not set (still on the default of unlimited).", ins02Why,
-			fmt.Sprintf("Leave room for the operating system: EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', %d; RECONFIGURE;  Use a lower value if other applications run on this server.", suggested),
-			fmt.Sprintf("Physical memory: %d MB. Max server memory: unlimited.", f.PhysicalMB), fix)
+			"Max server memory is not set (still on the default of unlimited).", ins02Why, do,
+			fmt.Sprintf("Physical memory: %d MB. Max server memory: unlimited.", f.PhysicalMB)+otherSaid, fix)
 		return
 	}
-	evidence := fmt.Sprintf("Physical memory: %d MB. Max server memory: %d MB.", f.PhysicalMB, f.MaxServerMemoryMB)
-	if f.PhysicalMB-f.MaxServerMemoryMB < 2048 || float64(f.MaxServerMemoryMB) > float64(f.PhysicalMB)*0.95 {
+	evidence := fmt.Sprintf("Physical memory: %d MB. Max server memory: %d MB.", f.PhysicalMB, f.MaxServerMemoryMB) + otherSaid
+	lowDo := fmt.Sprintf("Lower max server memory to about %d MB: EXEC sp_configure 'max server memory (MB)', %d; RECONFIGURE;", suggested, suggested)
+	switch {
+	case f.PhysicalMB-f.MaxServerMemoryMB < 2048 || float64(f.MaxServerMemoryMB) > float64(f.PhysicalMB)*0.95:
 		b.ins("INS03", 3, "Online", EffortQuickWin, "Max server memory leaves too little memory for the operating system.", ins03LowWhy,
-			fmt.Sprintf("Lower max server memory to about %d MB: EXEC sp_configure 'max server memory (MB)', %d; RECONFIGURE;", suggested, suggested),
-			evidence, fix)
+			lowDo, evidence, fix)
+	// With SQL Server at its cap and the other programs as they are now, Windows would keep under
+	// MemoryCapHeadroomMB free (the Memory screen's signal; Express is capped by its edition).
+	case counted && !f.IsExpress() && f.PhysicalMB-f.MaxServerMemoryMB-other < MemoryCapHeadroomMB && suggested < f.MaxServerMemoryMB:
+		b.ins("INS03", 3, "Online", EffortQuickWin, "Max server memory leaves too little memory for Windows and the other programs on this server.", ins03OthersWhy,
+			lowDo, evidence, fix)
 	}
-	if !f.IsExpress() && f.PhysicalMB >= 16384 && f.MaxServerMemoryMB < f.PhysicalMB/2 {
+	if !f.IsExpress() && f.PhysicalMB >= 16384 && f.MaxServerMemoryMB < f.PhysicalMB/2 && suggested > f.MaxServerMemoryMB {
 		b.ins("INS03", 4, "Online", EffortQuickWin, "SQL Server may use less than half of the server memory.", ins03HalfWhy,
 			fmt.Sprintf("Check what else runs on this server. If it is dedicated to SQL Server, raise max server memory towards %d MB.", suggested),
 			evidence, "")

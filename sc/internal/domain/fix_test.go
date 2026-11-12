@@ -43,6 +43,14 @@ func TestServerFixes(t *testing.T) {
 			"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 28672; RECONFIGURE;",
 			"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 32000; RECONFIGURE;",
 			[]string{wantServer, warnPlanCache, warnMemoryRoom, wantServerPerm}},
+		// The production case of 2026-11-12: 127.5 GB, a cap of RAM minus 10%, 22.4 GB used by other programs.
+		{"max-server-memory", func(f *SetupFacts) {
+			f.PhysicalMB, f.MaxServerMemoryMB, f.SQLInUseMB, f.AvailableMB = 130560, 117504, 102195, 5427
+		}, "INS03", "max server memory (MB)",
+			"117504 MB", "103424 MB",
+			"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 103424; RECONFIGURE;",
+			"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)', 117504; RECONFIGURE;",
+			[]string{wantServer, warnPlanCache, warnMemoryRoomCounted, wantServerPerm}},
 		{"maxdop", func(f *SetupFacts) { f.MaxDop, f.CPUCount, f.CoresPerNode = 0, 24, 12 }, "INS04", "max degree of parallelism",
 			"0", "8",
 			"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'max degree of parallelism', 8; RECONFIGURE;",

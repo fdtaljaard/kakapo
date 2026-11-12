@@ -32,6 +32,14 @@ func TestSetupFactsLive(t *testing.T) {
 	if f.Major() >= 14 && (f.Sockets == 0 || f.CoresPerSocket == 0) {
 		t.Errorf("no processor layout on %s", f.ProductVersion)
 	}
+	// The suggested cap counts the other programs: SQL Server's own use is read beside Windows' free memory.
+	other, ok := f.OtherProgramsMB()
+	if f.MemoryError == "" && (!ok || f.SQLInUseMB <= 0) {
+		t.Errorf("SQL Server's own memory not read: in use %d, error %q", f.SQLInUseMB, f.MemoryError)
+	}
+	cap, counted := f.SuggestedMaxMemory()
+	t.Logf("RAM %d MB, SQL Server %d MB, free %d MB, other programs %d MB: suggested cap %d MB (counted %v)",
+		f.PhysicalMB, f.SQLInUseMB, f.AvailableMB, other, cap, counted)
 	t.Logf("%s %s: cpu %d, schedulers %d online %d offline, runnable %d, affinity %s, vm %v, %d sockets x %d cores",
 		f.Edition, f.ProductVersion, f.CPUCount, f.OnlineSchedulers, f.OfflineSchedulers, f.RunnableNow, f.AffinityType,
 		f.VirtualMachine, f.Sockets, f.CoresPerSocket)

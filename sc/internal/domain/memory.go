@@ -566,8 +566,7 @@ func memorySignals(f MemoryFacts, v MemoryView) []MemorySignal {
 // capHeadroom is the amber sentence when the cap leaves Windows too little room once SQL Server reaches it,
 // with everything else on the machine using what it uses now; "" when the cap leaves enough. A cap of RAM
 // minus 10% (the Setup card's suggestion) is not enough when other programs run on the machine: this read
-// sees them, the Setup card does not. The suggested cap is RAM minus everything else minus
-// MemoryCapHeadroomMB, in whole GB.
+// sees them. The suggested cap is SuggestedCapMB, the one the Setup card's fix applies.
 func capHeadroom(f MemoryFacts) string {
 	other := f.TotalMB - f.InUseMB - f.AvailableMB
 	if other < 0 {
@@ -577,7 +576,7 @@ func capHeadroom(f MemoryFacts) string {
 	if left >= MemoryCapHeadroomMB {
 		return ""
 	}
-	suggest := (f.TotalMB - other - MemoryCapHeadroomMB) / 1024 * 1024
+	suggest := SuggestedCapMB(f.TotalMB, other) // the Setup card's max-server-memory fix gives the same number
 	var room string
 	if left < 0 {
 		room = fmt.Sprintf("would need %s more than the RAM", gbText(float64(-left)))
@@ -587,7 +586,7 @@ func capHeadroom(f MemoryFacts) string {
 	s := fmt.Sprintf("the memory cap (%s) leaves too little room: everything else on the machine uses %s, so SQL Server at its cap %s",
 		gbText(float64(f.MaxMB)), gbText(float64(other)), room)
 	if suggest > 0 && suggest < f.MaxMB {
-		s += fmt.Sprintf("; a cap of about %d GB (%d MB) keeps %s free", suggest/1024, suggest, gbText(MemoryCapHeadroomMB))
+		s += fmt.Sprintf("; a cap of about %d GB (%d MB, the Setup card's Apply) leaves room for both", suggest/1024, suggest)
 	}
 	return s
 }

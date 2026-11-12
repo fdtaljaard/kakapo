@@ -223,6 +223,46 @@ func TestINS02AndINS03(t *testing.T) {
 	none(t, fs, "INS03")
 }
 
+// INS03 counts the other programs once SQL Server's own use is read (the production case of 2026-11-12).
+func TestINS03OtherPrograms(t *testing.T) {
+	if got := SuggestedCapMB(130560, 22938); got != 103424 {
+		t.Errorf("SuggestedCapMB with 22.4 GB of other programs = %d, want 103424", got)
+	}
+	// A dedicated server keeps the RAM-only suggestion: its other programs fit in the 10% left.
+	if got := SuggestedCapMB(131072, 3000); got != SuggestedMaxMemoryMB(131072) {
+		t.Errorf("dedicated server: %d", got)
+	}
+
+	f := goodFacts()
+	f.PhysicalMB, f.MaxServerMemoryMB, f.SQLInUseMB, f.AvailableMB = 130560, 117504, 102195, 5427
+	_, fs, _ := runSetup(f)
+	x := one(t, fs, "INS03")
+	if x.Finding != "Max server memory leaves too little memory for Windows and the other programs on this server." ||
+		x.FixID != "max-server-memory" || x.Severity != SeverityMedium ||
+		x.Evidence != "Physical memory: 130560 MB. Max server memory: 117504 MB. Other programs (Windows included): 22938 MB now." ||
+		!strings.Contains(x.DoThis, "about 103424 MB") {
+		t.Errorf("INS03 others: %+v", x)
+	}
+	// Without SQL Server's own use (an older read, or the memory read failed): RAM only, as before.
+	f.SQLInUseMB = 0
+	_, fs, _ = runSetup(f)
+	none(t, fs, "INS03")
+	f.SQLInUseMB, f.MemoryError = 102195, "denied"
+	_, fs, _ = runSetup(f)
+	none(t, fs, "INS03")
+	// Express is capped by its edition.
+	f.MemoryError, f.EngineEdition = "", 4
+	_, fs, _ = runSetup(f)
+	none(t, fs, "INS03")
+	// Unlimited: INS02 suggests the cap that counts them.
+	f = goodFacts()
+	f.PhysicalMB, f.MaxServerMemoryMB, f.SQLInUseMB, f.AvailableMB = 130560, 2147483647, 102195, 5427
+	_, fs, _ = runSetup(f)
+	if x := one(t, fs, "INS02"); !strings.Contains(x.DoThis, "they use 22938 MB now") || !strings.Contains(x.DoThis, "103424") {
+		t.Errorf("INS02 others: %s", x.DoThis)
+	}
+}
+
 func TestINS04AndINS05(t *testing.T) {
 	f := goodFacts()
 	f.MaxDop, f.CPUCount = 0, 16
