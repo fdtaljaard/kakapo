@@ -329,6 +329,8 @@ func actionItems(r ActionLogRow) []string {
 	case "maintenance-job", "checkdb-job", "remove-shrink-step", "history-cleanup", "maintenance-plan", FixBackupSchedule,
 		FixRemoveBackupSchedule, FixInstallMaintenanceProc, FixRemoveMaintenanceProc, FixInstallOlaIndex, "archive-table", "remove-archive":
 		return []string{"job/"}
+	case FixInstallChangeLog, FixRemoveChangeLog:
+		return []string{ItemChangeLog}
 	case "create-index", "drop-index", FixDisableIndex, FixReorganizeIndex, FixReorganizeIndexes, "kill-session", "force-plan",
 		"unforce-plan", "evict-plan", FixUpdateStatistics, "update-statistics-table", "checkdb-now", "suspect-pages-clear",
 		FixAddPrimaryKey, "scoped-config-reset", "operator-alerts", "install-xe-session", "remove-xe-session":
@@ -472,6 +474,7 @@ var AuditRules = map[string]AuditRule{
 	"version":             {"version", FlagAmber, "New behaviour; compare before and after.", []string{ScreenPerformance}},
 	"restart":             {"restart", FlagGrey, "The cache starts empty and refills, and usage stats reset.", []string{ScreenMemory}},
 	"kakapo-cache":        {"kakapo-cache", FlagGrey, "Fills the cache with that table. Normal, unless pressure follows.", []string{ScreenMemory}},
+	"log-removed":         {"log-removed", FlagRed, "The server no longer shows what kakapo did; kakapo's own copy is complete.", []string{}},
 }
 
 // FlagContext is what the rules read beside the change: each database's last log backup (UTC, by lower-case
@@ -503,7 +506,7 @@ func num(s string) (int64, bool) {
 // red when its name looks like a test or dev copy (5v's rule).
 func RuleForSetting(c SettingChange, ctx FlagContext) *RuleHit {
 	h := ruleForSetting(c, ctx)
-	if h != nil && c.Database() == "" {
+	if h != nil && c.Database() == "" && len(h.Screens) > 0 {
 		h.Screens = []string{ScreenMemory}
 	}
 	return h
@@ -558,6 +561,11 @@ func ruleForSetting(c SettingChange, ctx FlagContext) *RuleHit {
 		return hit("parallelism")
 	case ItemTraceFlags:
 		return hit("trace-flags")
+	case ItemChangeLog:
+		if ChangeLogInstalled(c.From) && c.To == ChangeLogAbsent {
+			return hit("log-removed")
+		}
+		return nil
 	}
 	switch kind {
 	case "db":
@@ -628,6 +636,8 @@ const (
 	SourceBaseline = "baseline"
 	SourceTrace    = "trace"
 	SourceByHand   = "by hand"
+	// SourceServerLog is kakapo's change log on the server: another install's actions, and the rows it lost.
+	SourceServerLog = "server log"
 )
 
 // AuditRow is one row of the What changed? list: when (exact, or between two reads), the flag, the change in
@@ -673,6 +683,10 @@ type AuditInputs struct {
 	Actions []AuditAction   // kakapo's own log
 	Seen    []Change        // the change log's rows seen on the server and recorded by hand
 	Context FlagContext
+	// Others are the actions kakapo's change log on the server holds that this install's log does not
+	// (another kakapo install, B6); Losses the rows the table lost between two reads.
+	Others []AuditAction
+	Losses []ChangeLogLoss
 }
 
 func when(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") + " UTC" }
@@ -718,8 +732,45 @@ func BuildAuditRows(in AuditInputs) []AuditRow {
 		}
 		if h := RuleForSetting(c, in.Context); h != nil {
 			row.Flag, row.Rule, row.Tell, row.Screens = h.Flag, h.Rule, h.Tell, h.Screens
+			if h.Rule == "log-removed" && at.Kind == ByKakapo {
+				// Taken off with kakapo's own remove fix: said, not flagged.
+				row.Flag, row.Tell = FlagGrey, "Removed with kakapo's remove fix; kakapo's own copy is complete."
+			}
 		}
 		out = append(out, row)
+	}
+	for _, a := range in.Others {
+		r := a.Start
+		at := r.StartedAt
+		db := r.Database
+		if actionScope(r) == ScopeServer {
+			db = ""
+		}
+		who := "By kakapo on " + orQ(r.KakapoHost)
+		if r.WindowsUser != "" {
+			who += " (" + r.WindowsUser + ")"
+		}
+		row := AuditRow{Key: "o" + r.ActionID, At: &at, Headline: r.Description, Who: who + ", from kakapo's log on the server", ByKakapo: true,
+			Source: SourceServerLog, Database: db, Statement: r.Statement, Rollback: r.Rollback, Before: r.ValueBefore, Outcome: a.Outcome(),
+			Result: r.Result, Screens: []string{}}
+		if a.End != nil {
+			row.After, row.Result = a.End.ValueAfter, a.End.Result
+		}
+		if h := RuleForAction(r); h != nil {
+			row.Flag, row.Rule, row.Tell, row.Screens = h.Flag, h.Rule, h.Tell, h.Screens
+			if db == "" {
+				row.Screens = []string{ScreenMemory}
+			}
+		}
+		out = append(out, row)
+	}
+	for i, l := range in.Losses {
+		since, found := l.Since.UTC(), l.Found.UTC()
+		h := hit("log-removed")
+		out = append(out, AuditRow{Key: fmt.Sprintf("l%d", i), From: &since, To: &found, Flag: h.Flag, Rule: h.Rule, Tell: h.Tell, Screens: h.Screens,
+			Headline: fmt.Sprintf("kakapo's log on this server lost %s between %s and %s; kakapo put back the ones it holds",
+				plural(int64(l.N), "row", "rows"), when(since), when(found)),
+			Who: "Outside kakapo: the table was emptied (TRUNCATE) or dropped and created again", Source: SourceServerLog})
 	}
 	for _, a := range in.Actions {
 		if usedAction[a.Start.ActionID] {

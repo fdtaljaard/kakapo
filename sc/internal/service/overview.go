@@ -83,6 +83,7 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		return domain.Overview{}, err
 	}
 	upkeep := readUpkeepFacts(ctx, db, *d)
+	s.chg02Facts(ctx, db, serverID, &upkeep)
 	upkeepDef, _ := domain.FindCardDef(domain.CardUpkeep)
 	card, findings, checks = domain.BuildUpkeepCard(upkeep, upkeepDef)
 	all[domain.CardUpkeep] = findings

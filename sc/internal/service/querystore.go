@@ -179,6 +179,9 @@ func (s *Service) PreviewQueryStoreFix(ctx context.Context, serverID int64, dbNa
 		return domain.FixPreview{}, err
 	}
 	defer fc.db.Close()
+	if fc.preview.Statement != "" {
+		warnNoChangeLog(ctx, fc.db, domain.FixQueryStore, &fc.preview)
+	}
 	return fc.preview, nil
 }
 

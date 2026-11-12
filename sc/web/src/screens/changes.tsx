@@ -470,6 +470,7 @@ const sourceWords: Record<ChangeRow["source"], string> = {
   baseline: "kakapo's settings baseline (two reads of the server compared)",
   trace: "SQL Server's default trace",
   "by hand": "Recorded by hand in kakapo",
+  "server log": "kakapo's change log on the server (master.dbo.kakapo_ChangeLog)",
 }
 
 function Row({ serverId, r }: { serverId: number; r: ChangeRow }) {

@@ -20,7 +20,7 @@ import (
 //	db/{name}/present             and db/{name}/{prop}, one per DatabaseProps
 //	file/{db}/{logical}/present   and .../growth, .../max_size; db/tempdb/data_files
 //	job/{name}/present            and .../enabled, .../date_modified, .../version, .../schedules, .../backup
-//	kakapo/change_log             "absent" or "present" (step two installs it)
+//	kakapo/change_log             "absent", "present", "present, its trigger missing" or "present, its trigger disabled"
 //
 // A nil value is "not read" (a closed AUTO_CLOSE database, an older version, a missing right), never a value.
 

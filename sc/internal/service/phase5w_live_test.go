@@ -62,8 +62,27 @@ func TestPhase5wReadOnlyLive(t *testing.T) {
 			t.Errorf("baseline lacks %s", k)
 		}
 	}
-	if v := f.Items[domain.ItemChangeLog]; v == nil || *v != "absent" {
-		t.Errorf("step one installs nothing: kakapo/change_log = %v", v)
+	if v := f.Items[domain.ItemChangeLog]; v == nil || (*v != domain.ChangeLogAbsent && !domain.ChangeLogInstalled(*v)) {
+		t.Errorf("kakapo/change_log = %v", v)
+	}
+	// Step two, read-only: install-change-log's preview only (docs/phase5w-contract.md, B5).
+	if v := f.Items[domain.ItemChangeLog]; v != nil && *v == domain.ChangeLogAbsent {
+		var dbName string
+		if err := db.QueryRowContext(ctx, `SELECT TOP (1) name FROM sys.databases WHERE database_id > 4 AND state = 0 ORDER BY name`).Scan(&dbName); err != nil {
+			t.Fatalf("no online user database to preview from: %v", err)
+		}
+		p, err := s.PreviewFix(ctx, serverID, dbName, domain.FixInstallChangeLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(p.Statement, "CREATE TABLE dbo.kakapo_ChangeLog") || !strings.Contains(p.Statement, "CREATE TRIGGER") ||
+			len(p.Changes) != 4 || len(p.Warnings) != 4 {
+			t.Fatalf("install preview: %+v", p)
+		}
+		t.Logf("install preview: %d changes, warnings %q", len(p.Changes), p.Warnings)
+		if again, err := collect.ReadChangeLog(ctx, db); err != nil || again.Table {
+			t.Fatalf("the preview created something: %+v %v", again, err)
+		}
 	}
 
 	p1, err := s.Changes(ctx, serverID, ChangesQuery{})

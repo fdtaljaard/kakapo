@@ -95,6 +95,10 @@ type UpkeepFacts struct {
 	SettingChanges []SettingChangeFact
 	// LoginName is SUSER_SNAME(): the login kakapo reads with, for the ALTER TRACE grant.
 	LoginName string
+	// CHG02 (docs/phase5w-contract.md, B7), filled in by the service: the state of kakapo's change log on the
+	// server ("" when it was not read) and whether kakapo's own log holds an action for the server.
+	ChangeLog   string
+	KakapoActed bool
 
 	// MNT06: sys.dm_server_memory_dumps (VIEW SERVER STATE).
 	Dumps      int        // in the last 30 days
@@ -255,6 +259,7 @@ func BuildUpkeepCard(f UpkeepFacts, def CardDef) (Card, []Finding, []CheckStatus
 	b.mnt05()
 	b.mnt06()
 	b.chg01()
+	b.chg02()
 	if !f.IsExpress() {
 		b.mnt07()
 		b.mnt08()
@@ -959,6 +964,12 @@ func AvailableUpkeepFixes(f UpkeepFacts, findings []Finding) []Fix {
 			continue
 		}
 		seen[x.FixID] = true
+		if x.FixID == FixInstallChangeLog {
+			fix := suFix(FixInstallChangeLog)
+			fix.Current, fix.Target = ChangeLogAbsent, ChangeLogPresent
+			out = append(out, fix)
+			continue
+		}
 		if x.FixID == FixHistoryCleanup {
 			out = append(out, historyCleanupOffer(f))
 			continue

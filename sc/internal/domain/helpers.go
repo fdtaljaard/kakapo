@@ -98,6 +98,8 @@ type HelperFacts struct {
 	Session        XESession
 	// Maintenance is kakapo's maintenance procedure as read (phase 5p); nil when it was not read.
 	Maintenance *MaintProcFacts
+	// ChangeLog is kakapo's change log on the server as read (phase 5w, B5); nil when it was not read.
+	ChangeLog *ChangeLogFacts
 }
 
 // HasKakapoShape says whether a session has the events and the target kakapo creates, writing
@@ -685,6 +687,9 @@ func BuildInstalledHelpers(f HelperFacts, database string) InstalledHelpers {
 	out := InstalledHelpers{ServerName: f.ServerName, Database: database, Helpers: []InstalledHelper{h}}
 	if m, ok := maintHelperLine(f.Maintenance, f.EngineEdition); ok {
 		out.Helpers = append(out.Helpers, m)
+	}
+	if c, ok := changeLogHelperLine(f.ChangeLog); ok {
+		out.Helpers = append(out.Helpers, c)
 	}
 	installed := []InstalledHelper{}
 	for _, x := range out.Helpers {

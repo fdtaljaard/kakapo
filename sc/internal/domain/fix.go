@@ -128,6 +128,9 @@ var FixDefs = []FixDef{
 	{FixRemoveMaintenanceProc, "Remove kakapo's maintenance procedure", ScopeServer, "MNT03", "Maintenance procedure"},
 	// Phase 5u (docs/phase5u-contract.md): Ola Hallengren's IndexOptimize, installed from the copy inside kakapo.
 	{FixInstallOlaIndex, "Install Ola Hallengren's IndexOptimize", ScopeServer, "MNT03", "IndexOptimize"},
+	// Phase 5w (docs/phase5w-contract.md, B5): kakapo's change log on the server.
+	{FixInstallChangeLog, "Keep kakapo's change log on this server", ScopeServer, "CHG02", ChangeLogSetting},
+	{FixRemoveChangeLog, "Remove kakapo's change log from this server", ScopeServer, "CHG02", ChangeLogSetting},
 	// Phase 5s (docs/phase5s-contract.md, section 3): DES01's fix, a primary key for a table that has none.
 	{FixAddPrimaryKey, "Add a primary key", ScopeDatabase, "DES01", "Primary key"},
 }

@@ -166,7 +166,8 @@ func (s *Service) PreviewFixWithOptions(ctx context.Context, serverID int64, dbN
 		if err != nil {
 			return domain.FixPreview{}, err
 		}
-		fc.db.Close()
+		defer fc.db.Close()
+		warnNoChangeLog(ctx, fc.db, fixID, &fc.preview)
 		return fc.preview, nil
 	}
 	g, err := s.prepareGenericFix(ctx, serverID, dbName, fixID, options)
@@ -174,6 +175,8 @@ func (s *Service) PreviewFixWithOptions(ctx context.Context, serverID int64, dbN
 		return domain.FixPreview{}, err
 	}
 	defer g.db.Close()
+	// docs/phase5w-contract.md, B7: while kakapo's change log is not on the server, every preview says so.
+	warnNoChangeLog(ctx, g.db, fixID, &g.preview)
 	return g.preview, nil
 }
 

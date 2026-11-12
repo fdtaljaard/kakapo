@@ -106,6 +106,8 @@ DECLARE @changeLog nvarchar(40);
 BEGIN TRY
     SET @changeLog = CASE WHEN OBJECT_ID(N'master.dbo.kakapo_ChangeLog', N'U') IS NULL THEN N'absent'
                           WHEN OBJECT_ID(N'master.dbo.kakapo_ChangeLog_AppendOnly', N'TR') IS NULL THEN N'present, its trigger missing'
+                          WHEN EXISTS (SELECT 1 FROM master.sys.triggers WHERE name = N'kakapo_ChangeLog_AppendOnly' AND is_disabled = 1)
+                               THEN N'present, its trigger disabled'
                           ELSE N'present' END;
 END TRY
 BEGIN CATCH

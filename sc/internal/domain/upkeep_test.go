@@ -48,11 +48,11 @@ func TestUpkeepGreen(t *testing.T) {
 	}
 	wantFacts(t, c, "SQL Agent=running, automatic/normal", "Failed jobs, 7 days=0/normal", "Maintenance job=found/normal",
 		"Told about errors=operator and 10 alerts/normal")
-	if len(cs) != 10 {
+	if len(cs) != 11 {
 		t.Fatalf("checks %+v", cs)
 	}
 	for i, x := range cs {
-		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07", "MNT08", "MNT09", "CHG01"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
+		if x.CheckID != []string{"MNT01", "MNT02", "MNT03", "MNT04", "MNT05", "MNT06", "MNT07", "MNT08", "MNT09", "CHG01", "CHG02"}[i] || x.Status != CheckPassed || x.Note != "" || x.Title == "" {
 			t.Errorf("check %+v", x)
 		}
 	}
@@ -478,7 +478,7 @@ func TestUpkeepGrey(t *testing.T) {
 	f = goodUpkeep()
 	f.Error = "could not read the upkeep facts: timeout"
 	c, fs, cs = runUpkeep(f)
-	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 10 || statusOf(cs, "MNT07").Note != f.Error {
+	if c.Status != StatusGrey || c.Note != f.Error || len(fs) != 0 || len(cs) != 11 || statusOf(cs, "MNT07").Note != f.Error {
 		t.Errorf("error %+v %+v", c, cs)
 	}
 	f = goodUpkeep()
@@ -597,11 +597,11 @@ func TestBuildCardsWithUpkeep(t *testing.T) {
 
 func TestUpkeepCatalogue(t *testing.T) {
 	checks := ChecksFor(CardUpkeep)
-	if len(checks) != 10 {
+	if len(checks) != 11 {
 		t.Fatalf("upkeep checks: %d", len(checks))
 	}
 	owners := map[string]string{"MNT01": OwnerClientIT, "MNT02": OwnerUs, "MNT03": OwnerUs, "MNT04": OwnerUs, "MNT05": OwnerUs,
-		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT, "MNT08": OwnerUs, "MNT09": OwnerUs, "CHG01": OwnerUs}
+		"MNT06": OwnerClientIT, "MNT07": OwnerClientIT, "MNT08": OwnerUs, "MNT09": OwnerUs, "CHG01": OwnerUs, "CHG02": OwnerUs}
 	for _, c := range checks {
 		if c.Title == "" || c.Question == "" || c.ThenCheck == "" || c.Owner != owners[c.ID] {
 			t.Errorf("check %+v", c)

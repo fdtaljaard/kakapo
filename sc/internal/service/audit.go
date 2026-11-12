@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -41,6 +42,13 @@ func (s *Service) takeBaseline(ctx context.Context, db *sql.DB, serverID int64, 
 	if _, _, err := s.store.RecordBaseline(ctx, serverID, f, readAt, reason, actionID); err != nil {
 		log.Printf("server %d: the settings baseline (%s) could not be kept: %v", serverID, reason, err)
 		return nil
+	}
+	// B6: every read where kakapo's change log is on the server puts back the rows it lacks; where it is not,
+	// what kakapo knew of it is forgotten (the baseline's difference says it went).
+	if v := f.Items[domain.ItemChangeLog]; v != nil && (domain.ChangeLogInstalled(*v) || s.changeLogSync(ctx, serverID).Expected > 0) {
+		if _, _, _, err := s.catchUpChangeLog(ctx, db, serverID); err != nil {
+			log.Printf("server %d: kakapo's change log on the server could not be caught up: %v", serverID, err)
+		}
 	}
 	return &f
 }
@@ -148,6 +156,20 @@ func (s *Service) startAction(ctx context.Context, db *sql.DB, in actionInfo) (c
 	if err := s.store.InsertActionLog(ctx, row); err != nil {
 		return ctx, nil, newError(KindConflict, "kakapo could not write its own log of this change, so nothing was run: %v", err)
 	}
+	// B6: where kakapo's change log is on the server, the started row goes there too, on the action's own
+	// connection; when it cannot, the action is refused, and the refused attempt is on record locally.
+	if _, err := s.writeServerRow(ctx, db, row); err != nil {
+		msg := domain.ChangeLogRefusal(err)
+		end := time.Now().UTC().Truncate(time.Microsecond)
+		ms := end.Sub(row.StartedAt).Milliseconds()
+		ended := row
+		ended.Phase, ended.LoggedAt, ended.EndedAt, ended.DurationMs = domain.ActionEnded, end, &end, &ms
+		ended.Outcome, ended.Result = domain.OutcomeFailed, msg
+		if e := s.store.InsertActionLog(context.WithoutCancel(ctx), ended); e != nil {
+			log.Printf("server %d: kakapo's log could not take the end of refused action %s (%s): %v", row.ServerID, row.ActionID, row.FixID, e)
+		}
+		return ctx, nil, newError(KindConflict, "%s", msg)
+	}
 	col := &changeIDs{}
 	return context.WithValue(ctx, changeIDsKey{}, col), &action{row: row, ids: col}, nil
 }
@@ -186,11 +208,24 @@ func (s *Service) endAction(ctx context.Context, db *sql.DB, a *action, res doma
 	if e := s.store.InsertActionLog(keep, row); e != nil {
 		log.Printf("server %d: kakapo's log could not take the end of action %s (%s): %v", row.ServerID, row.ActionID, row.FixID, e)
 	}
-	if s.takeBaseline(keep, db, row.ServerID, domain.BaselineAfterAction, row.ActionID) == nil {
+	// B6: the ended row on the server too, where kakapo's change log is; a failure is logged, and the next read
+	// puts it there. Then the snapshot after, on the action's connection, or a fresh one when it is gone.
+	var werr error = errors.New("no connection")
+	if db != nil {
+		_, werr = s.writeServerRow(keep, db, row)
+	}
+	if werr != nil || s.takeBaseline(keep, db, row.ServerID, domain.BaselineAfterAction, row.ActionID) == nil {
 		if fresh, _, cerr := s.connect(keep, row.ServerID); cerr == nil {
+			if werr != nil {
+				_, werr = s.writeServerRow(keep, fresh, row)
+			}
 			s.takeBaseline(keep, fresh, row.ServerID, domain.BaselineAfterAction, row.ActionID)
 			fresh.Close()
 		}
+	}
+	if werr != nil {
+		log.Printf("server %d: kakapo's change log on the server could not take the end of action %s (%s); the next read puts it there: %v",
+			row.ServerID, row.ActionID, row.FixID, werr)
 	}
 }
 

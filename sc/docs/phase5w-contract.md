@@ -378,7 +378,7 @@ read run in it; each failure is a sentence in the answer, never a failed page.
 ## Built
 
 **Step one, 2026-11-12.** A, B1-B4 and C as above; nothing is written to any server's master (the
-`kakapo/change_log` item reads "absent"). Step two (B5-B7, CHG02, C3's "log removed" row) is not built.
+`kakapo/change_log` item reads "absent"). Step two (B5-B7, CHG02, C3's "log removed" row) is below.
 
 Where it is: `collect/baseline.go` (`ReadBaseline`, `ReadTraceHarvest`, `LastLogBackups`, `SQLLogin`), the event 22
 branch in `collect/upkeep.go`; `domain/baseline.go` (items, `DiffBaselines`, headlines) and `domain/audit.go` (A6's
@@ -446,4 +446,84 @@ Proven live (2026-11-12):
 Not proven: the upgrade of a data file with real fix rows (the seed is unit-tested on a migrated file; the app's
 own data file here had none); a closed AUTO_CLOSE database's NULLs, a login without msdb or VIEW SERVER STATE,
 versions before 2016 (the column fallbacks); a long run's ended row against a live server (unit-tested only); a
-Query Store going read-only; anything of step two.
+Query Store going read-only.
+
+**Step two, 2026-11-12.** B5-B7, CHG02 and C3's "log removed" row, as above.
+
+Where it is: `domain/changelog.go` (the contract's DDL, `BuildInstallChangeLogFix`, `BuildRemoveChangeLogFix`, the
+read-backs, B7's warning, the catch-up's arithmetic `ChangeLogCatchUp`, `ServerOnlyActions`, CHG02 and the Installed
+helpers row); `collect/changelog.go` (`ReadChangeLog`, `ReadChangeLogKeys`, `ReadChangeLogRows`, `WriteChangeLogRow`);
+`service/changelog.go` (the two fixes, `catchUpChangeLog`, `writeServerRow`, `warnNoChangeLog`, `chg02Facts`), with the
+hooks in `service/audit.go` (`takeBaseline`, `startAction`, `endAction`); C3's rule and the rows in `domain/audit.go`.
+
+Decided while building:
+- **A server `started` row that cannot be written refuses the action** (409), with "kakapo could not write its log on
+  the server: {error}. Fix the permission, or remove kakapo's log from this server". The refused attempt stays on
+  record locally: its `started` row and an `ended` row, outcome failed, with that sentence. Where the table is not
+  installed nothing changes. A failed server `ended` row never blocks: it is logged, tried once more on a fresh
+  connection, and put there by the next read.
+- **Phases keep their names on the server.** The catch-up copies each row with its own phase (`started`, `ended`,
+  `copied`), not all as `copied`: the unique key (ActionID, Phase) would refuse an action's second `copied` row.
+  `LoggedAtUtc` is the table's default, when the row reached the server, so a row the catch-up put there shows a
+  `LoggedAtUtc` later than its `StartedAtUtc`.
+- **The write** is one batch: nothing when `OBJECT_ID` finds no table, `WHERE NOT EXISTS` on the unique key (a
+  duplicate-key error from a race is taken as "already there"), `SqlLogin` from the row (`ORIGINAL_LOGIN()` only when
+  kakapo recorded none), times sent as text (style 126), text cut to the column sizes. It is the one write beside
+  `ExecFix`, and touches nothing else.
+- **The catch-up runs inside every baseline** whose `kakapo/change_log` reads present (page reads, the screen, before
+  and after every action). Per server, this process's catch-ups and direct writes take turns. kakapo keeps, in the
+  settings table (`changelog.sync.{server id}`), how many of its own rows it knows the table holds and when it last
+  saw them all. A catch-up that finds fewer records a loss: n rows, between that time and now. The screen lists each
+  loss red ("kakapo's log on this server lost {n} rows between {a} and {b}; kakapo put back the ones it holds").
+  Only kakapo's own rows are counted: another install's lost rows are not.
+- **C3's "log removed"**: `kakapo/change_log` going from present to absent is red, with no screens. When A5
+  attributes it to kakapo's `remove-change-log`, it is grey: "Removed with kakapo's remove fix; kakapo's own copy is
+  complete."
+- **install-change-log** creates only what is missing: the table, the trigger (or `ENABLE TRIGGER` when it is
+  disabled), the property. Then it copies kakapo's log of the server and reads back. It is verified when all three
+  exist, the trigger is on, and the table holds every one of kakapo's rows. Its rollback is the remove statement.
+  Warnings: the server object, the size and "never deleted" line, that a failed `started` write refuses a change
+  from then on, and the permission. **remove-change-log** drops the trigger and the table, with the contract's
+  warning, naming kakapo's machine. Its `started` row reaches the table before the drop; its `ended` row is local only.
+- **The baseline's item** also reads "present, its trigger disabled" (`master.sys.triggers.is_disabled`).
+- **B7's warning** goes last on every preview: the generic fixes, and the Query Store fix's own preview. It is not
+  on the change log's own fixes, and not added when the table's state cannot be read.
+- **CHG02** (Low, rank 4, Us) fires when `action_log` holds a `started` or `copied` row for the server and one
+  `OBJECT_ID` read beside the Upkeep read finds no table. When either cannot be read it stays quiet. Its fix is
+  offered on the Upkeep card.
+- **The instance page's Installed helpers** has a row for the log: Create when absent; Repair when the trigger or
+  the property is missing or the trigger is disabled; Remove when whole.
+- **Two installs**: the screen reads the whole table and lists the actions the local log lacks as "By kakapo on
+  {host} ({Windows user}), from kakapo's log on the server" (source "server log"). They are shown, not copied.
+
+Proven live (2026-11-12):
+- `.\SQLEXPRESS`, `TestPhase5wStepTwoLive`, run twice:
+  - A fix's preview carried B7's warning while the log was absent.
+  - `install-change-log` was verified: the table, the trigger (on) and the property were created, and the table
+    held kakapo's rows.
+  - With the log installed, the preview no longer warned.
+  - cost threshold was set 5 to 4 in sqlcmd and listed from the trace. kakapo's fix set it 4 to 50, and its
+    `started` and `ended` rows were in kakapo's log and in `master.dbo.kakapo_ChangeLog`: before 4, after 50,
+    verified, with the Windows user, login, host, version and duration.
+  - A `DELETE` and an `UPDATE` were refused by the trigger (error 50001).
+  - After a `TRUNCATE`, the next read put back every row and the screen flagged "lost 4 rows" red.
+  - `remove-change-log` was verified: the table is gone, kakapo's log holds all three actions with `ended` rows,
+    the removal is listed grey as kakapo's, and CHG02's facts read "acted, absent".
+  - The test put cost threshold back to 5 (show advanced options 0). `.\SQLEXPRESS` is left as found: no log
+    installed.
+- `localhost\SQL2022`, read-only:
+  - `TestPhase5wReadOnlyLive` with `install-change-log`'s preview: 4 changes and 4 warnings. Nothing was created
+    (checked afterwards with sqlcmd).
+  - In the running app: the Installed helpers row "not installed" with Create, its preview dialog (not applied),
+    and the cost threshold preview's last warning (B7).
+- The mock screen at 375 px with a loss row and another install's action: no horizontal scroll with every fold
+  open.
+
+Not proven live (unit-tested only):
+- A server `started` write refused by a missing permission.
+- A server `ended` row put back by the next read.
+- Repairing a missing or disabled trigger.
+- Two kakapo installs on one server.
+- A long run's `ended` row on the server.
+- CHG02 on the Upkeep card in the app (its facts were read live).
+- An install whose catch-up copies many rows (live, it copied one).

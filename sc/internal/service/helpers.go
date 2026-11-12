@@ -208,6 +208,10 @@ func (s *Service) Helpers(ctx context.Context, serverID int64) (domain.Installed
 	}
 	// Phase 5p: kakapo's maintenance procedure, on the same row.
 	hf.Maintenance = readMaintFor(rctx, db, "")
+	// Phase 5w: kakapo's change log on the server.
+	if cl, err := collect.ReadChangeLog(rctx, db); err == nil {
+		hf.ChangeLog = &cl
+	}
 	return domain.BuildInstalledHelpers(hf, helperDatabase(rctx, db, srv)), nil
 }
 

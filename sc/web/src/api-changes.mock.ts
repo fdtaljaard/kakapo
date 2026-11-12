@@ -37,6 +37,16 @@ const rows: ChangeRow[] = [
     statement: "EXEC sys.sp_configure N'cost threshold for parallelism', 50;\nRECONFIGURE;", line: "",
   },
   {
+    key: "l0", from: iso(26 * hour), to: iso(3 * hour), flag: "red", rule: "log-removed",
+    headline: "kakapo's log on this server lost 6 rows between two reads; kakapo put back the ones it holds",
+    tell: "The server no longer shows what kakapo did; kakapo's own copy is complete.",
+    who: "Outside kakapo: the table was emptied (TRUNCATE) or dropped and created again", byKakapo: false, source: "server log", screens: [], line: "",
+  },
+  {
+    key: "o7", at: iso(8 * 24 * hour), headline: "Max server memory (MB) on SQL1: from 8192 to 10240", byKakapo: true, source: "server log",
+    who: "By kakapo on DESK-2 (DOMAIN\\colleague), from kakapo's log on the server", screens: [], outcome: "verified", line: "",
+  },
+  {
     key: "c9", at: iso(10 * 24 * hour), headline: "Procedure dbo.GetPicks altered by DOMAIN\\dev on BUILD01 (SSMS)",
     who: "By DOMAIN\\dev on BUILD01 (SSMS), from SQL Server's trace", byKakapo: false, source: "trace", database: "WarehouseLive", screens: [], line: "",
   },
@@ -69,7 +79,8 @@ export const mockChanges: FeatureMock = async (method, path) => {
     pageSize: 100,
     more: false,
     listed: list.length,
-    counts: { all: rows.length, kakapo: 2, outside: 2, flagged: 2 },
+    counts: { all: rows.length, kakapo: rows.filter((r) => r.byKakapo).length, outside: rows.filter((r) => !r.byKakapo).length,
+      flagged: rows.filter((r) => r.flag === "red" || r.flag === "amber").length },
     copy: list.map((r) => r.line).join("\n"),
   }
   return page

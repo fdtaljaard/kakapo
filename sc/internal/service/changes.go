@@ -49,6 +49,7 @@ func (s *Service) Changes(ctx context.Context, serverID int64, q ChangesQuery) (
 	}
 
 	flags := domain.FlagContext{LastLogBackup: map[string]time.Time{}}
+	var serverLog []domain.ActionLogRow
 	offset, offsetKnown := 0, false
 	db, _, err := s.connect(ctx, serverID)
 	if err != nil {
@@ -76,6 +77,13 @@ func (s *Service) Changes(ctx context.Context, serverID int64, q ChangesQuery) (
 			case !f.TraceRunning:
 				page.Notes = append(page.Notes, "SQL Server's default trace is off, so who made a change is not known. CHG01 on the Upkeep card switches it back on.")
 			}
+		}
+		// kakapo's change log on the server (B6): the baseline above caught it up; its rows show the actions
+		// another kakapo install wrote there.
+		if rows, err := collect.ReadChangeLogRows(rctx, db, serverID); err != nil {
+			page.Notes = append(page.Notes, "kakapo's change log on the server could not be read: "+err.Error())
+		} else {
+			serverLog = rows
 		}
 		if lb, err := collect.LastLogBackups(rctx, db); err != nil {
 			page.Notes = append(page.Notes, "The log backups could not be read from msdb, so a switch to the full recovery model stays red: "+err.Error())
@@ -135,7 +143,8 @@ func (s *Service) Changes(ctx context.Context, serverID int64, q ChangesQuery) (
 	if err != nil {
 		return page, err
 	}
-	rows := domain.BuildAuditRows(domain.AuditInputs{Changes: changes, Actions: domain.GroupActions(logRows), Seen: seen, Context: flags})
+	rows := domain.BuildAuditRows(domain.AuditInputs{Changes: changes, Actions: domain.GroupActions(logRows), Seen: seen, Context: flags,
+		Others: domain.ServerOnlyActions(serverLog, logRows), Losses: s.changeLogSync(ctx, serverID).Losses})
 	inWindow := domain.FilterAuditRows(rows, "", false, from, to)
 	if len(reads) > 0 {
 		w := reads[0].ReadAt

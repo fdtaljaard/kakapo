@@ -44,6 +44,7 @@ func readUpkeepFacts(ctx context.Context, db *sql.DB, d domain.DatabaseStatus) d
 // available right now.
 func (s *Service) upkeepDetail(ctx context.Context, db *sql.DB, serverID int64, d domain.DatabaseStatus, def domain.CardDef) (domain.CardDetail, error) {
 	facts := readUpkeepFacts(ctx, db, d)
+	s.chg02Facts(ctx, db, serverID, &facts)
 	card, findings, checks := domain.BuildUpkeepCard(facts, def)
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.CardDetail{}, err

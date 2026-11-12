@@ -249,3 +249,12 @@ func (s *Store) QueryStoreReadOnlyChanges(ctx context.Context, serverID int64) (
 	}
 	return out, rows.Err()
 }
+
+// HasActions says whether kakapo's own log holds an action on a server (CHG02): a started or a copied row.
+func (s *Store) HasActions(ctx context.Context, serverID int64) (bool, error) {
+	var n int64
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM action_log WHERE server_id = ? AND phase IN ('started', 'copied')`, serverID).Scan(&n); err != nil {
+		return false, fmt.Errorf("read kakapo's log: %w", err)
+	}
+	return n > 0, nil
+}

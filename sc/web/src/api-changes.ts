@@ -19,7 +19,7 @@ export interface ChangeRow {
   tell?: string
   who: string
   byKakapo: boolean
-  source: "kakapo" | "baseline" | "trace" | "by hand"
+  source: "kakapo" | "baseline" | "trace" | "by hand" | "server log"
   database?: string // "" for a server setting
   screens: ChangeScreen[]
   statement?: string

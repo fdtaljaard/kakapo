@@ -356,6 +356,9 @@ var Checks = []Check{
 	// Phase 5f (docs/phase5f-contract.md): the default trace that feeds the change log.
 	{"CHG01", CardUpkeep, "Changes made outside kakapo are seen", "Can kakapo see the changes made outside it, for a week back?", OwnerUs,
 		"Re-run: CHG01 gone, and the line under Recent changes names the trace's days."},
+	// Phase 5w (docs/phase5w-contract.md, B7): kakapo's own change log on the server it changed.
+	{"CHG02", CardUpkeep, "kakapo's change log is on the server", "Can anyone on the server see what kakapo changed there?", OwnerUs,
+		"Re-run: CHG02 gone, and master.dbo.kakapo_ChangeLog holds as many rows as kakapo's own log of the server."},
 
 	{"PRS01", CardPerformance, "Pressure right now", "Is the server short of threads, CPU or memory right now?", OwnerUs,
 		"Re-run: PRS01 gone"},
