@@ -178,3 +178,19 @@ phone width with no horizontal scroll; the Memory links on the instance page and
 run for minutes), Lock Pages in Memory (no instance has it), NUMA with more than one node, a login without
 `VIEW SERVER STATE` (the permission sentences are unit-tested only), and any red signal (no instance here is
 under pressure).
+
+## After the first production read (2026-11-12)
+
+Run on the Granite production server of the case (127.5 GB of RAM, cap 114.7 GB, two NUMA nodes, about 81 GB of
+cache): the cache by database read completed and reconciled within 5%, and the clerks reconciled within 5%. Two
+changes followed:
+
+- **A new amber signal: the cap leaves too little room.** With SQL Server at its cap and everything else on the
+  machine using what it uses now, Windows should keep `MemoryCapHeadroomMB` (4 GB) free. On that server everything
+  else used 22.3 GB, so SQL Server at its cap would have needed about 9.5 GB more than the RAM, and the verdict
+  said nothing. The sentence gives the cap that fits: RAM minus everything else minus 4 GB, in whole GB. The cap
+  there was, within rounding, the Setup card's own suggestion (RAM minus 10%), which does not see other programs;
+  that gap belongs to the Setup card and is not changed here.
+- **A test database is a note, not a memory signal.** Its pages are reused when other databases need them, so it
+  no longer appears in the verdict; its row keeps a muted note ("Not a memory problem … whether it belongs on this
+  instance is a question for other reasons").

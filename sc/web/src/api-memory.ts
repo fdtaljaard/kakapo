@@ -71,6 +71,7 @@ export interface MemoryDBRow {
   gb: number
   share: number
   flag?: string
+  flagNote?: boolean // a note, not a memory signal: shown muted
   user: boolean // a user database: it opens Database detail
 }
 

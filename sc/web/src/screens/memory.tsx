@@ -427,7 +427,11 @@ function Databases({
                 share={r.share}
                 then={then?.databases ? (before.get(r.name) ?? 0) : undefined}
               >
-                {r.flag && <span className="text-sm text-amber-700 dark:text-amber-400">{r.flag}</span>}
+                {r.flag && (
+                  <span className={r.flagNote ? "text-sm text-muted-foreground" : "text-sm text-amber-700 dark:text-amber-400"}>
+                    {r.flag}
+                  </span>
+                )}
               </Row>
             ))}
           </ul>

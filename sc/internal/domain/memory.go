@@ -23,8 +23,14 @@ const (
 	// MemoryTempdbAmberMB and MemoryTempdbShare: tempdb holding more than both of these of the data cache (amber).
 	MemoryTempdbAmberMB = 2048
 	MemoryTempdbShare   = 0.10
-	// MemoryTestDatabaseMB: a database that looks like a test copy holding more cache than this (amber).
+	// MemoryTestDatabaseMB: a database that looks like a test copy holding more cache than this gets a note on
+	// its row. Not a memory signal: its pages are reused when other databases need them (a production case,
+	// 2026-11-12), so it stays out of the verdict.
 	MemoryTestDatabaseMB = 1024
+	// MemoryCapHeadroomMB: with SQL Server at its cap and everything else as it is now, Windows should keep at
+	// least this much free (amber when it would not). "Everything else" already holds Windows itself, so this
+	// is room to move, not the operating system's share.
+	MemoryCapHeadroomMB = 4096
 	// MemoryReconcileShare: a breakdown must add up to the layer above it within this share (decision 5).
 	MemoryReconcileShare = 0.05
 	// MemoryFillingShare: SQL Server committed below this share of its target is still filling the cache.
@@ -236,7 +242,9 @@ type MemoryDBRow struct {
 	GB    float64 `json:"gb"`
 	Share float64 `json:"share"` // of the data cache read, percent
 	Flag  string  `json:"flag,omitempty"`
-	User  bool    `json:"user"` // a user database: it opens Database detail
+	// FlagNote marks a flag that is a note, not a memory signal: it stays out of the verdict and is not amber.
+	FlagNote bool `json:"flagNote,omitempty"`
+	User     bool `json:"user"` // a user database: it opens Database detail
 }
 
 // gbOf is megabytes as gigabytes, to the megabyte (0.001 GB), so a small database or clerk is not shown as 0.
@@ -478,7 +486,8 @@ func buildDBs(b BufferFacts) MemoryDBs {
 		case x.ID == 2 && mb > MemoryTempdbAmberMB && mb > dataMB*MemoryTempdbShare:
 			r.Flag = fmt.Sprintf("tempdb holds %s of the data cache: check the version store, temporary tables and spills.", gbText(mb))
 		case r.User && mb > MemoryTestDatabaseMB && LooksLikeTestDatabase(x.Name):
-			r.Flag = "Looks like a test database; does it belong on this instance?"
+			r.Flag = "Looks like a test database. Not a memory problem: its cache is reused when other databases need it. Whether it belongs on this instance is a question for other reasons."
+			r.FlagNote = true
 		}
 		d.Rows = append(d.Rows, r)
 	}
@@ -520,6 +529,10 @@ func memorySignals(f MemoryFacts, v MemoryView) []MemorySignal {
 		a("SQL Server has no memory cap (max server memory is still the default)")
 	case f.MaxMB < MemoryNoCap && f.TotalMB > 0 && f.MaxMB > f.TotalMB:
 		a("the memory cap (%s) is above the RAM in the machine (%s)", gbText(float64(f.MaxMB)), gbText(float64(f.TotalMB)))
+	case f.MaxMB < MemoryNoCap && f.TotalMB > 0 && !f.IsExpress():
+		if s := capHeadroom(f); s != "" {
+			a("%s", s)
+		}
 	}
 	if f.MaxValueMB != f.MaxMB {
 		a("max server memory was set to %s but not applied (RECONFIGURE was not run)", capWords(f.MaxValueMB))
@@ -539,7 +552,7 @@ func memorySignals(f MemoryFacts, v MemoryView) []MemorySignal {
 	if v.Databases != nil {
 		for _, d := range v.Databases.Rows {
 			switch {
-			case d.Flag == "":
+			case d.Flag == "" || d.FlagNote:
 			case d.ID == 2:
 				a("tempdb holds %s of the data cache", gbText(d.GB*1024))
 			default:
@@ -548,6 +561,35 @@ func memorySignals(f MemoryFacts, v MemoryView) []MemorySignal {
 		}
 	}
 	return append(red, amber...)
+}
+
+// capHeadroom is the amber sentence when the cap leaves Windows too little room once SQL Server reaches it,
+// with everything else on the machine using what it uses now; "" when the cap leaves enough. A cap of RAM
+// minus 10% (the Setup card's suggestion) is not enough when other programs run on the machine: this read
+// sees them, the Setup card does not. The suggested cap is RAM minus everything else minus
+// MemoryCapHeadroomMB, in whole GB.
+func capHeadroom(f MemoryFacts) string {
+	other := f.TotalMB - f.InUseMB - f.AvailableMB
+	if other < 0 {
+		other = 0
+	}
+	left := f.TotalMB - f.MaxMB - other
+	if left >= MemoryCapHeadroomMB {
+		return ""
+	}
+	suggest := (f.TotalMB - other - MemoryCapHeadroomMB) / 1024 * 1024
+	var room string
+	if left < 0 {
+		room = fmt.Sprintf("would need %s more than the RAM", gbText(float64(-left)))
+	} else {
+		room = fmt.Sprintf("would leave Windows only %s", gbText(float64(left)))
+	}
+	s := fmt.Sprintf("the memory cap (%s) leaves too little room: everything else on the machine uses %s, so SQL Server at its cap %s",
+		gbText(float64(f.MaxMB)), gbText(float64(other)), room)
+	if suggest > 0 && suggest < f.MaxMB {
+		s += fmt.Sprintf("; a cap of about %d GB (%d MB) keeps %s free", suggest/1024, suggest, gbText(MemoryCapHeadroomMB))
+	}
+	return s
 }
 
 func capWords(mb int64) string {

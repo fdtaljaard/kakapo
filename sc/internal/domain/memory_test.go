@@ -123,6 +123,9 @@ func TestBuildMemoryAmber(t *testing.T) {
 	}{
 		{"no cap", func(f *MemoryFacts) { f.MaxMB, f.MaxValueMB = MemoryNoCap, MemoryNoCap }, "SQL Server has no memory cap"},
 		{"cap above RAM", func(f *MemoryFacts) { f.MaxMB, f.MaxValueMB = 200000, 200000 }, "the memory cap (195.3 GB) is above the RAM in the machine (128.0 GB)"},
+		// The cap leaves under 4 GB once SQL Server reaches it: 128 GB - 121.0 GB cap - 5.0 GB everything else.
+		{"cap headroom", func(f *MemoryFacts) { f.MaxMB, f.MaxValueMB = 123952, 123952 },
+			"the memory cap (121.0 GB) leaves too little room: everything else on the machine uses 5.0 GB, so SQL Server at its cap would leave Windows only 2.0 GB; a cap of about 119 GB (121856 MB) keeps 4.0 GB free"},
 		{"max pending", func(f *MemoryFacts) { f.MaxValueMB = 100000 }, "max server memory was set to 97.7 GB but not applied"},
 		{"min pending", func(f *MemoryFacts) { f.MinValueMB = 4096 }, "min server memory was set to 4.0 GB but not applied"},
 		{"lock memory", func(f *MemoryFacts) {
@@ -157,6 +160,29 @@ func TestBuildMemoryAmber(t *testing.T) {
 	f.SingleUseAdhocMB, f.PlanCacheError = 5000, "denied"
 	if v := BuildMemory(f, nil); v.Tone != "green" {
 		t.Errorf("plan cache error: %q", v.Verdict)
+	}
+}
+
+// The production case of 2026-11-12: 127.5 GB of RAM, a cap of RAM minus 10% (the Setup card's own
+// suggestion), and 22.4 GB used by other programs. Nothing is short of memory now, but the cap no longer fits.
+func TestBuildMemoryCapHeadroom(t *testing.T) {
+	f := healthyMemory()
+	f.TotalMB, f.InUseMB, f.AvailableMB = 130560, 102195, 5427
+	f.MaxMB, f.MaxValueMB = SuggestedMaxMemoryMB(130560), SuggestedMaxMemoryMB(130560)
+	f.CommittedMB, f.TargetMB = 102400, 104960
+	v := BuildMemory(f, nil)
+	want := "Full but healthy, with things worth a look: the memory cap (114.8 GB) leaves too little room: everything else on " +
+		"the machine uses 22.4 GB, so SQL Server at its cap would need 9.7 GB more than the RAM; a cap of about 101 GB (103424 MB) keeps 4.0 GB free."
+	if v.Tone != "amber" || v.Verdict != want {
+		t.Errorf("verdict\n got %q\nwant %q", v.Verdict, want)
+	}
+	// The healthy server's cap leaves 11 GB: nothing said. Express is capped by its edition: nothing said.
+	if v := BuildMemory(healthyMemory(), nil); v.Tone != "green" {
+		t.Errorf("healthy: %q", v.Verdict)
+	}
+	f.EngineEdition = 4
+	if v := BuildMemory(f, nil); strings.Contains(v.Verdict, "leaves too little room") {
+		t.Errorf("express: %q", v.Verdict)
 	}
 }
 
@@ -262,15 +288,17 @@ func TestBuildMemoryDatabases(t *testing.T) {
 	if !d.Rows[0].User || d.Rows[1].User || d.Rows[4].User || d.Rows[5].User {
 		t.Errorf("only user databases open detail: %+v", d.Rows)
 	}
-	if !strings.HasPrefix(d.Rows[1].Flag, "tempdb holds 9.0 GB") || d.Rows[2].Flag != "Looks like a test database; does it belong on this instance?" || d.Rows[3].Flag != "" {
+	if !strings.HasPrefix(d.Rows[1].Flag, "tempdb holds 9.0 GB") || d.Rows[1].FlagNote ||
+		!strings.HasPrefix(d.Rows[2].Flag, "Looks like a test database. Not a memory problem") || !d.Rows[2].FlagNote || d.Rows[3].Flag != "" {
 		t.Errorf("flags %q / %q / %q", d.Rows[1].Flag, d.Rows[2].Flag, d.Rows[3].Flag)
 	}
 	// 73.5 GB of databases against a 79 GB clerk: outside 5%, so the gap is said.
 	if d.Reconcile != "Databases add up to 73.5 GB; the data cache clerk says 79.0 GB; 5.5 GB unaccounted." {
 		t.Errorf("reconcile %q", d.Reconcile)
 	}
+	// A test database is a note on its row, not a memory signal: it stays out of the verdict.
 	if v.Tone != "amber" || !strings.Contains(v.Verdict, "tempdb holds 9.0 GB of the data cache") ||
-		!strings.Contains(v.Verdict, "GraniteLive_Test looks like a test database and holds 4.0 GB of the cache") {
+		strings.Contains(v.Verdict, "GraniteLive_Test") {
 		t.Errorf("verdict %q", v.Verdict)
 	}
 	if !strings.Contains(v.Handover, "Databases in cache") || !strings.Contains(v.Handover, "5.5 GB unaccounted") {
