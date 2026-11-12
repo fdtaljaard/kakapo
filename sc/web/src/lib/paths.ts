@@ -25,6 +25,12 @@ export const blockingPath = (serverId: number, database: string) => `${databaseP
 export const tuningPath = (serverId: number, database: string, changeId?: number) =>
   `${databasePagePath(serverId, database)}/tuning${changeId ? `?change=${changeId}` : ""}`
 
+// Phase 5v: the Memory screen of an instance, and one database's share of the cache.
+export const memoryPath = (serverId: number) => `${instancePath(serverId)}/memory`
+
+export const memoryDatabasePath = (serverId: number, database: string) =>
+  `${memoryPath(serverId)}/databases/${encodeURIComponent(database)}`
+
 // Location state a Home tile sets, so the picker may go straight into the remembered database.
 // A direct URL to the picker carries no state and always shows the picker.
 export interface FromHome {

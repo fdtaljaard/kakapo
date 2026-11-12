@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
-import { ArrowRight, ChevronRight, Loader2, Pencil, RotateCw, XCircle } from "lucide-react"
+import { ArrowRight, ChevronRight, Loader2, MemoryStick, Pencil, RotateCw, XCircle } from "lucide-react"
 
 import { api, type DatabaseStatus, type Server } from "@/api"
 import { ExpressNotice, isExpress } from "@/components/express-notice"
@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useServers } from "@/hooks/use-servers"
 import { formatWhen, plural } from "@/lib/format"
-import { cameFromHome, databasePagePath, editInstancePath } from "@/lib/paths"
+import { cameFromHome, databasePagePath, editInstancePath, memoryPath } from "@/lib/paths"
 
 // "/instances/:id": the instance page. Header with the registration and the buttons Edit and Open
 // {database}; below it one line "Database: {name}" when the registration names a database, else the
@@ -96,6 +96,13 @@ function InstanceHeader({ server }: { server: Server }) {
           <Link to={editInstancePath(server.id)}>
             <Pencil />
             Edit
+          </Link>
+        </Button>
+        {/* Phase 5v: where the instance's memory goes (docs/phase5v-contract.md). */}
+        <Button variant="outline" asChild>
+          <Link to={memoryPath(server.id)}>
+            <MemoryStick />
+            Memory
           </Link>
         </Button>
         {server.database && (

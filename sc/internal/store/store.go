@@ -171,6 +171,15 @@ var migrations = []string{
 	   choice VARCHAR NOT NULL,
 	   verdict VARCHAR NOT NULL, reason VARCHAR, review_on DATE, change_id INTEGER
 	 );`,
+	// 13: every Memory screen snapshot, instance or one database, as JSON; never deleted (docs/phase5v-contract.md, decision 4)
+	`CREATE SEQUENCE IF NOT EXISTS seq_memory_snapshot START 1;
+	 CREATE TABLE IF NOT EXISTS memory_snapshot (
+	   id INTEGER PRIMARY KEY DEFAULT nextval('seq_memory_snapshot'),
+	   server_id INTEGER NOT NULL, taken_at TIMESTAMP NOT NULL,
+	   kind VARCHAR NOT NULL, -- 'instance' | 'database'
+	   db_name VARCHAR,
+	   snapshot_json VARCHAR NOT NULL
+	 );`,
 }
 
 // InstallID returns the id of this data file, made once on first use. Stored passwords are

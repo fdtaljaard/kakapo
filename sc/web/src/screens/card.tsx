@@ -34,7 +34,7 @@ import { formatUptime, formatWhen } from "@/lib/format"
 import { findingsFor, handoverAll, type HandoverContext } from "@/lib/handover"
 import { useCopy } from "@/lib/use-copy"
 import { twoWaysChoices } from "@/lib/two-ways"
-import { blockingPath, databasePagePath, indexesPath, instancePath, queryPath, tuningPath } from "@/lib/paths"
+import { blockingPath, databasePagePath, indexesPath, instancePath, memoryPath, queryPath, tuningPath } from "@/lib/paths"
 import { StorageDrivesBlock } from "@/components/room-line"
 import { ForeignKeysFold } from "@/components/foreign-keys-fold"
 import { NoKeyTablesFold } from "@/components/no-key-tables-fold"
@@ -122,12 +122,14 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
   }
   // Where a finding's next read lives (docs/phase4c-contract.md): a costly query opens its page, a
   // blocking or open-transaction finding opens the chain.
-  const investigateFor = (f: Finding): { to: string } | undefined => {
+  const investigateFor = (f: Finding): { label?: string; to: string } | undefined => {
     if (f.checkId === "QRY01") {
       const hash = /Query hash: (0x[0-9A-Fa-f]+)/.exec(f.evidence ?? "")?.[1]
       return hash ? { to: queryPath(serverId, database, hash) } : undefined
     }
     if (f.checkId === "ACT01" || f.checkId === "ACT02") return { to: blockingPath(serverId, database) }
+    // Phase 5v: the memory findings open the Memory screen (docs/phase5v-contract.md, decision 1).
+    if (f.checkId === "INS02" || f.checkId === "INS03" || f.checkId === "INS12") return { label: "Memory", to: memoryPath(serverId) }
     return undefined
   }
 
@@ -492,7 +494,7 @@ function DetailBody({
   detail: CardDetail
   between?: ReactNode
   onApply?: (f: Finding, options?: Record<string, string>, fixId?: string) => void
-  investigate?: (f: Finding) => { to: string } | undefined
+  investigate?: (f: Finding) => { label?: string; to: string } | undefined
   startedAt?: string
 }) {
   const { card, checks } = detail
@@ -580,7 +582,7 @@ function ClockSections({
   findings: Finding[]
   startedAt?: string
   onApply?: (f: Finding) => void
-  investigate?: (f: Finding) => { to: string } | undefined
+  investigate?: (f: Finding) => { label?: string; to: string } | undefined
 }) {
   if (findings.length === 0) {
     return (

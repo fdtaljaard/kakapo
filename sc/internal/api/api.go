@@ -345,6 +345,7 @@ func Handler(svc *service.Service, ui fs.FS) http.Handler {
 	runRoutes(mux, svc)       // docs/phase4f-contract.md
 	loadRoutes(mux, svc)      // docs/phase5i-contract.md
 	decisionsRoutes(mux, svc) // docs/phase5m-contract.md
+	memoryRoutes(mux, svc)    // docs/phase5v-contract.md
 
 	// Any other /api/ path is an unknown route, not a page of the UI.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
