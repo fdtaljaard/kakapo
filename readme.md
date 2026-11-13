@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="sc/docs/brand/logo.jpg" alt="Kakapo logo: a round green kakapo parrot" width="200">
+</p>
+
 # Kakapo
 
 **"You don't need to fly to keep a database running."**
