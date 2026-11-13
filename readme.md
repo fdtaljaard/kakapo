@@ -1,10 +1,6 @@
 <p align="center">
-  <img src="sc/docs/brand/logo.jpg" alt="Kakapo logo: a round green kakapo parrot" width="200">
+  <img src="sc/docs/brand/WelcomePage.png" alt="kakapo: a round green kakapo standing on a database. You don't need to fly to keep a database running." width="440">
 </p>
-
-# Kakapo
-
-**"You don't need to fly to keep a database running."**
 
 Many database administration tools already exist for monitoring, profiling and maintenance. However, they often require installations, configuration and advanced technical knowledge to get started.
 
