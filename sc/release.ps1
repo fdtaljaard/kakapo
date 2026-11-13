@@ -16,7 +16,7 @@ $Version = $Version.TrimStart('v')
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "version '$Version' is not like 1.2.3" }
 $tag = "v$Version"
 
-function Git([string]$arguments) {
+function Invoke-Git([string]$arguments) {
     $out = cmd /c "git $arguments 2>&1"
     if ($LASTEXITCODE -ne 0) { throw "git $arguments failed: $out" }
     return $out
@@ -28,11 +28,11 @@ try {
     if (-not $DryRun) {
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'the GitHub CLI (gh) is not installed' }
         cmd /c "gh auth status >nul 2>&1"; if ($LASTEXITCODE -ne 0) { throw 'gh is not logged in: run gh auth login' }
-        $branch = Git 'rev-parse --abbrev-ref HEAD'
+        $branch = Invoke-Git 'rev-parse --abbrev-ref HEAD'
         if ($branch -ne 'main') { throw "on branch $branch, not main" }
-        if (Git 'status --porcelain --untracked-files=no') { throw 'uncommitted changes: commit or stash them first' }
-        Git 'fetch --quiet origin main --tags' | Out-Null
-        if ((Git 'rev-parse HEAD') -ne (Git 'rev-parse origin/main')) { throw 'main is not the same as origin/main: push or pull first' }
+        if (Invoke-Git 'status --porcelain --untracked-files=no') { throw 'uncommitted changes: commit or stash them first' }
+        Invoke-Git 'fetch --quiet origin main --tags' | Out-Null
+        if ((Invoke-Git 'rev-parse HEAD') -ne (Invoke-Git 'rev-parse origin/main')) { throw 'main is not the same as origin/main: push or pull first' }
         cmd /c "git rev-parse -q --verify refs/tags/$tag >nul 2>&1"
         if ($LASTEXITCODE -eq 0) { throw "tag $tag exists already" }
     }
