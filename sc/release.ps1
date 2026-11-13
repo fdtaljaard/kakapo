@@ -53,7 +53,7 @@ try {
 
     $sums = foreach ($f in $exe, $zip) { '{0}  {1}' -f (Get-FileHash $f -Algorithm SHA256).Hash.ToLower(), (Split-Path $f -Leaf) }
     $notes = Join-Path $dist 'notes.md'
-    @(
+    $text = @(
         "kakapo $tag for Windows x64. Download ``kakapo.exe`` and run it, or the zip, which also has the readme and the third-party notices."
         ''
         'The first start can take a minute while antivirus scans the new exe. Windows may warn that the exe is not signed: More info, then Run anyway.'
@@ -62,7 +62,9 @@ try {
         '```'
         $sums
         '```'
-    ) | Set-Content -Path $notes -Encoding utf8
+    )
+    # Without a byte order mark: Windows PowerShell's Set-Content -Encoding utf8 writes one, and it shows on GitHub.
+    [IO.File]::WriteAllLines($notes, [string[]]$text, (New-Object Text.UTF8Encoding $false))
 
     Write-Host "packaged $tag in $dist"
     $sums | ForEach-Object { Write-Host "  $_" }
