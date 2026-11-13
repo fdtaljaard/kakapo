@@ -1,5 +1,7 @@
 # Builds kakapo.exe: frontend first, then the Go binary with the frontend embedded.
 # Needs: Go, Node, and a MinGW gcc (MSYS2 ucrt64) for the DuckDB driver.
+# -Version stamps a release (release.ps1 passes it); without it the stamp is the build time and commit.
+param([string]$Version = '')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 if (Test-Path 'C:\msys64\ucrt64\bin') { $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH" }
@@ -23,6 +25,7 @@ try {
     # The version stamp (build time, plus the git commit when there is one) shows on Home and in the log.
     $stamp = Get-Date -Format 'yyyy-MM-dd.HHmm'
     $commit = (cmd /c "git rev-parse --short HEAD 2>nul"); if ($LASTEXITCODE -eq 0 -and $commit) { $stamp = "$stamp.$commit" }
+    if ($Version) { $stamp = $Version }
     go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o kakapo.exe ./cmd/sqlmonitor
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
     Write-Host "built $root\kakapo.exe"

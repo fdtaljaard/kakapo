@@ -1,7 +1,16 @@
 # Third-party notices
 
-kakapo embeds no third-party SQL. Where a rule, a decode table or a list of names was taken closely from a
-source, the Go file says so in a comment (`// Source: ...`) and the source is listed here with its licence.
+kakapo embeds one piece of third-party SQL: Ola Hallengren's `CommandLog`, `CommandExecute` and
+`IndexOptimize` scripts (below), installed only when the user applies the "Install Ola Hallengren's
+IndexOptimize" fix. Where a rule, a decode table or a list of names was taken closely from a source, the Go
+file says so in a comment (`// Source: ...`) and the source is listed here with its licence.
+
+## SQL Server Maintenance Solution (Ola Hallengren)
+
+Source: https://github.com/olahallengren/sql-server-maintenance-solution, licensed under the MIT License.
+Copyright (c) 2026 Ola Hallengren. `CommandLog.sql`, `CommandExecute.sql` and `IndexOptimize.sql`, version
+2026-09-12 15:02:38, are embedded unchanged with his licence (`internal/domain/ola/`, see `SOURCE.md` there).
+The MIT License text below applies to them as well.
 
 ## DarlingData (Erik Darling, Darling Data LLC)
 

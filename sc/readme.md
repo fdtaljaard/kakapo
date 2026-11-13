@@ -1,18 +1,19 @@
 # kakapo
 
-*You don't need to fly to keep a database running.* The product is **kakapo**; the code, the exe and the
-data file keep the working name `sqlmonitor` so nothing registered or stored is orphaned by the rename.
+*You don't need to fly to keep a database running.* The product is **kakapo**; the Go module and the
+`cmd/sqlmonitor` folder keep the working name `sqlmonitor`. An old `sqlmonitor.duckdb` beside the exe is renamed
+to `kakapo.duckdb` on first start.
 
-A portable SQL Server monitor: one `sqlmonitor.exe`, one `sqlmonitor.duckdb` beside it, nothing installed on the
+A portable SQL Server monitor: one `kakapo.exe`, one `kakapo.duckdb` beside it, nothing installed on the
 server. Scope and architecture are in [SCOPE.md](SCOPE.md).
 
 ## Run
 
-Double-click `sqlmonitor.exe`. It serves the UI on `http://127.0.0.1:7331` and opens it as an app window in
-Edge. Closing the window stops the app. Flags:
+Download `kakapo.exe` (or the zip) from the repository's Releases page, or build it (below). Double-click
+`kakapo.exe`. It serves the UI on `http://127.0.0.1:7331` and opens it as an app window in Edge. Closing the window stops the app. Flags:
 
 ```
-sqlmonitor.exe -port 7331 -data <folder> -no-browser
+kakapo.exe -port 7331 -data <folder> -no-browser
 ```
 
 On first run the database is empty, so the app asks for a SQL Server. **Test connection** connects and shows the
@@ -27,7 +28,7 @@ write the app makes to a monitored server; everything else is a SELECT. The targ
 
 **Slow first start.** Antivirus scans the exe the first time a new build runs, which can take over a minute
 before the window appears (measured: 72 s cold, under 3 s warm). Later starts are fast. If a machine scans
-every start, add the folder to the antivirus exclusions. `sqlmonitor.log` beside the exe shows when the app
+every start, add the folder to the antivirus exclusions. `kakapo.log` beside the exe shows when the app
 actually started; a second double-click while it is running just opens its window again.
 
 ## Build
@@ -39,10 +40,21 @@ dependency only, the exe is static).
 .\build.ps1
 ```
 
-Frontend only, with live reload against a running backend (`sqlmonitor.exe -no-browser`):
+Frontend only, with live reload against a running backend (`kakapo.exe -no-browser`):
 
 ```powershell
 cd web; npm run dev
+```
+
+## Release
+
+`release.ps1` builds the exe stamped with the version, zips it with this readme and the third-party notices,
+tags the commit `v<version>` and publishes a GitHub release with `kakapo.exe` and the zip attached. It needs
+the GitHub CLI (`gh`) logged in, and refuses unless `main` is committed, pushed and the tag is new.
+
+```powershell
+.\release.ps1 0.2.0 -DryRun   # build and package into dist\ only
+.\release.ps1 0.2.0           # then tag, push the tag and publish
 ```
 
 ## Layout
