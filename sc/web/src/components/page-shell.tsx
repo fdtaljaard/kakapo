@@ -1,25 +1,40 @@
+import { createContext, useContext } from "react"
 import { Link } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { useBuildVersion } from "@/lib/build-version"
+import { cn } from "@/lib/utils"
 
 // The page column every screen after setup uses: 16 px gutters on a phone, at most 72rem wide, under
 // the top bar that names the app and the build that is running.
+// Under an instance's layout (phase 5x) the top bar and the navigation panel are the layout's, so a page
+// draws only its column.
+export const InLayoutContext = createContext(false)
+
 export function PageShell({ children }: { children: React.ReactNode }) {
+  const inLayout = useContext(InLayoutContext)
+  const column = <div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:px-6">{children}</div>
+  if (inLayout) return column
   return (
     <main className="min-h-svh bg-background">
       <TopBar />
-      <div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:px-6">{children}</div>
+      {column}
     </main>
   )
 }
 
-// kakapo and its version on every page, so "am I on the new build" is never a guess.
-function TopBar() {
+// kakapo and its version on every page, so "am I on the new build" is never a guess. In the instance's
+// layout it runs the full width, so kakapo sits above the navigation panel.
+export function TopBar({ wide = false }: { wide?: boolean }) {
   const version = useBuildVersion()
   return (
     <div className="border-b bg-muted/40">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-2 text-sm sm:px-6">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 py-2 text-sm",
+          wide ? "px-4" : "mx-auto max-w-6xl px-4 sm:px-6",
+        )}
+      >
         <Link to="/" className="font-semibold tracking-tight hover:underline">
           kakapo
         </Link>

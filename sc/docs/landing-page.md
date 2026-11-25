@@ -29,6 +29,14 @@ Breadcrumb: `Instances › Client A production › WarehouseLive › Setup and c
 the picker again ("change database"). The database picked is remembered on the server registration, so the next
 time the instance opens straight into it. Four levels, no deeper. A finding's Do this is the end of the road.
 
+**The navigation tree** (phase 5x, 2026-11-25, `docs/phase5x-contract.md`). Every page under an instance now has
+a panel on the left with a tree of kakapo's topics: the instance, the database, and below it, in the first
+arrangement, the six cards as categories with the topics behind each card (the Upkeep card's Maintenance plan,
+the Performance card's Tuning report, and so on). A category's label opens its card's page; its chevron shows
+what is behind it. The pages and the four levels above are unchanged; the tree is a second way into them, built
+for the novice's question "what needs my attention, and why?". A second arrangement, topics placed where SQL
+Server keeps them (instance, SQL Server Agent, database, tables, indexes), follows with a switch between the two.
+
 ## The six cards
 
 | Card | The question it answers | What sits behind it (from `Checks.csv` and the references) | Facts on the card |

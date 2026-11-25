@@ -40,7 +40,9 @@ a problem now, and every problem ends in an action they can take or hand over.
 - Runs as a local Go executable that serves a React web UI, opened in a browser app window on the
   consultant's machine; data is kept locally in DuckDB. kakapo may run on the SQL Server machine itself or
   on another computer, and says which (steps that need hands on the server name that machine).
-- Works per server and per database: a database page with six cards (Backups, Storage, Setup, Upkeep,
+- Works per server and per database: a navigation tree on the left of every page under an instance,
+  arranged by responsibility (the six cards and their topics); a second arrangement, as SQL Server is
+  built, and a switch between the two are planned (`sc/docs/phase5x-contract.md`), a database page with six cards (Backups, Storage, Setup, Upkeep,
   Performance, Design), findings with "What was found, Why it matters, Do this, Then check, Evidence", and
   investigation pages (a query, blocking, the live sample, the tuning report).
 - Changes go only through a named fix: preview, the human confirms, apply, read back, log.

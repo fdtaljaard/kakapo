@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 
-import { api, type Overview } from "@/api"
+import { api, type Card, type Overview } from "@/api"
 
 // The last overview read per server and database, so going from the database page to a card page
 // and back shows something at once while the fresh one loads.
@@ -11,6 +11,14 @@ const cacheKey = (serverId: number, database: string) => `${serverId}/${database
 // so no page shows the old instance block while the new one loads.
 export function forgetOverviews(serverId: number) {
   for (const key of cache.keys()) if (key.startsWith(`${serverId}/`)) cache.delete(key)
+}
+
+// Phase 5x: a newer copy of one card, from a card page's detail, so a later page that shows only the cached
+// overview (Memory, What changed?) shows the card's colour after an Apply, not the one before it.
+export function rememberCard(serverId: number, database: string, card: Card) {
+  const key = cacheKey(serverId, database)
+  const ov = cache.get(key)
+  if (ov) cache.set(key, { ...ov, cards: ov.cards.map((c) => (c.id === card.id ? card : c)) })
 }
 
 interface OverviewState {

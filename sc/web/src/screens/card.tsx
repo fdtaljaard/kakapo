@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ChartColumn, Check, Copy, ListTree, Loader2, RotateCw, XCircle } from "lucide-react"
 
@@ -26,7 +26,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useCardDetail } from "@/hooks/use-card-detail"
-import { useOverview } from "@/hooks/use-overview"
+import { useScrollToHash } from "@/hooks/use-scroll-to-hash"
+import { useSharedOverview, type SharedOverview } from "@/hooks/use-shared-overview"
 import { useServers } from "@/hooks/use-servers"
 import { useBuildVersion } from "@/lib/build-version"
 import { FindingContext } from "@/lib/finding-context"
@@ -46,20 +47,43 @@ export function CardScreen() {
   const params = useParams()
   const id = Number(params.id)
   const database = params.db ?? ""
+  const shared = useSharedOverview(id, database)
   if (!Number.isInteger(id) || id <= 0) return <NotFound what="There is no such instance." />
   if (!database) return <NotFound what="There is no such database." />
+  if (!shared) return <NotFound what="This card is outside its instance." />
   return (
-    <CardPage key={`${id}/${database}/${params.card}`} serverId={id} database={database} cardId={params.card ?? ""} />
+    <CardPage
+      key={`${id}/${database}/${params.card}`}
+      serverId={id}
+      database={database}
+      cardId={params.card ?? ""}
+      ov={shared}
+    />
   )
 }
 
-function CardPage({ serverId, database, cardId }: { serverId: number; database: string; cardId: string }) {
+function CardPage({
+  serverId,
+  database,
+  cardId,
+  ov,
+}: {
+  serverId: number
+  database: string
+  cardId: string
+  ov: SharedOverview
+}) {
   const { load } = useServers()
   const setup = cardId === "setup"
-  // Setup needs the overview for its Query Store row (read on a direct visit). The other cards only
-  // borrow the cached one for the frame while their detail loads, so their checks are not read twice.
-  const ov = useOverview(serverId, database, setup ? { reuse: true } : { cacheOnly: true })
+  // Phase 5x: the overview is the instance layout's one read of this database, which Setup's Query Store
+  // row uses and the other cards borrow for the frame while their detail loads. The card a detail carries
+  // goes back to the layout, so the tree's dot follows it (docs/phase5x-contract.md).
   const det = useCardDetail(serverId, database, cardId)
+  const { updateCard } = ov
+  useEffect(() => {
+    if (det.detail) updateCard(det.detail.card)
+  }, [det.detail, updateCard])
+  useScrollToHash(!!det.detail)
   // A Room for CHECKDB run shows at once, until a detail read carries that result (or a newer one) itself.
   const [ran, setRan] = useState<CheckdbRoom | null>(null)
   // The same for a deadlock report read on the Performance card.
@@ -77,7 +101,7 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
   const server = load.kind === "ready" ? load.servers.find((s) => s.id === serverId) : undefined
   if (load.kind === "ready" && !server) return <NotFound what="This instance is not registered (any more)." />
   if (det.notFound) return <NotFound what="There is no such card." />
-  const card = det.detail?.card ?? ov.overview?.cards.find((c) => c.id === cardId)
+  const card = det.detail?.card ?? ov.cards?.find((c) => c.id === cardId)
 
   // Where a Copy block says the finding was read (docs/phase4a-contract.md): @@SERVERNAME from the overview
   // when there is one, else the registered host; a panel's finding (STO10, DLK01) has its own as-of.
@@ -173,9 +197,17 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
       {stillRunning && <StillRunningNotice notice={stillRunning} onDismiss={() => setStillRunning(null)} />}
 
       {/* Phase 5k: better or worse than usual, and what made the difference (docs/phase5k-contract.md). */}
-      {cardId === "performance" && detail?.trend && <PerformanceTrendBlock trend={detail.trend} serverId={serverId} database={database} />}
+      {cardId === "performance" && detail?.trend && (
+        <Part id="trend">
+          <PerformanceTrendBlock trend={detail.trend} serverId={serverId} database={database} />
+        </Part>
+      )}
       {/* Phase 5l: the Storage card answers its question first, one bar per drive (docs/phase5l-contract.md). */}
-      {cardId === "storage" && detail?.drives && <StorageDrivesBlock drives={detail.drives} database={database} />}
+      {cardId === "storage" && detail?.drives && (
+        <Part id="drives">
+          <StorageDrivesBlock drives={detail.drives} database={database} />
+        </Part>
+      )}
 
       <FindingContext.Provider value={handover}>
         {detail ? (
@@ -188,82 +220,110 @@ function CardPage({ serverId, database, cardId }: { serverId: number; database: 
               setup ? (
                 // The Query Store row only when DBC10 did not fire: otherwise its finding and Apply cover it.
                 !detail.findings.some((f) => f.checkId === "DBC10") && (
-                  <QueryStoreRow
-                    overview={appliedOn === ov.overview ? null : ov.overview}
-                    onFix={() => setFixing({ fixId: "query-store", title: "Apply recommended Query Store settings" })}
-                  />
+                  <Part id="query-store">
+                    <QueryStoreRow
+                      overview={appliedOn === ov.overview ? null : ov.overview}
+                      onFix={() => setFixing({ fixId: "query-store", title: "Apply recommended Query Store settings" })}
+                    />
+                  </Part>
                 )
               ) : cardId === "backups" ? (
                 <>
-                  <BackupScheduleRow
-                    database={database}
-                    create={detail.fixes?.find((f) => f.id === "backup-schedule")}
-                    remove={detail.fixes?.find((f) => f.id === "remove-backup-schedule")}
-                    onFix={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
-                  />
+                  <Part id="backup-schedule">
+                    <BackupScheduleRow
+                      database={database}
+                      create={detail.fixes?.find((f) => f.id === "backup-schedule")}
+                      remove={detail.fixes?.find((f) => f.id === "remove-backup-schedule")}
+                      onFix={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
+                    />
+                  </Part>
                   {/* The last CHECKDB run from kakapo, and Run CHECKDB now (docs/phase4d-contract.md). */}
-                  <CheckdbRunPanel
-                    run={detail.checkdbRun}
-                    onRun={() => setFixing({ fixId: "checkdb-now", title: "Run DBCC CHECKDB now" })}
-                  />
+                  <Part id="checkdb-run">
+                    <CheckdbRunPanel
+                      run={detail.checkdbRun}
+                      onRun={() => setFixing({ fixId: "checkdb-now", title: "Run DBCC CHECKDB now" })}
+                    />
+                  </Part>
                 </>
               ) : cardId === "storage" ? (
                 <>
-                  <TempdbRow
-                    fix={detail.fixes?.find((f) => f.id === "tempdb-files")}
-                    onFix={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
-                  />
+                  <Part id="tempdb">
+                    <TempdbRow
+                      fix={detail.fixes?.find((f) => f.id === "tempdb-files")}
+                      onFix={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
+                    />
+                  </Part>
                   {/* Phase 5a: the tables kakapo archives, and "Archive a table…" (docs/phase5a-contract.md). */}
-                  <TablesRow
-                    serverId={serverId}
-                    database={database}
-                    fixes={detail.fixes}
-                    findings={detail.findings}
-                    onArchive={(table) =>
-                      setFixing({ fixId: archiveTableFixId, title: "Archive or delete old rows", options: { table } })
-                    }
-                    onRemove={(fix) =>
-                      setFixing({ fixId: fix.id, title: fix.title, options: { table: fix.options?.table ?? "" } })
-                    }
-                  />
+                  <Part id="tables">
+                    <TablesRow
+                      serverId={serverId}
+                      database={database}
+                      fixes={detail.fixes}
+                      findings={detail.findings}
+                      onArchive={(table) =>
+                        setFixing({ fixId: archiveTableFixId, title: "Archive or delete old rows", options: { table } })
+                      }
+                      onRemove={(fix) =>
+                        setFixing({ fixId: fix.id, title: fix.title, options: { table: fix.options?.table ?? "" } })
+                      }
+                    />
+                  </Part>
                   <FindingContext.Provider value={roomContext}>
-                    <CheckdbRoomPanel serverId={serverId} database={database} room={detail.checkdbRoom} onResult={setRan} />
+                    <Part id="checkdb-room">
+                      <CheckdbRoomPanel serverId={serverId} database={database} room={detail.checkdbRoom} onResult={setRan} />
+                    </Part>
                   </FindingContext.Provider>
                 </>
               ) : cardId === "design" ? (
                 // Phase 5n: the keys that would cost work if rows were deleted (docs/phase5n-contract.md); phase 5s:
                 // the smaller tables without a primary key.
                 <>
-                  {detail.foreignKeys && <ForeignKeysFold fold={detail.foreignKeys} />}
-                  {detail.noKeyTables && <NoKeyTablesFold fold={detail.noKeyTables} />}
+                  {detail.foreignKeys && (
+                    <Part id="foreign-keys">
+                      <ForeignKeysFold fold={detail.foreignKeys} />
+                    </Part>
+                  )}
+                  {detail.noKeyTables && (
+                    <Part id="no-key-tables">
+                      <NoKeyTablesFold fold={detail.noKeyTables} />
+                    </Part>
+                  )}
                 </>
               ) : cardId === "upkeep" ? (
                 // Phase 5b: the maintenance plan row (docs/phase5b-contract.md).
-                <MaintenancePlanRow
-                  plan={detail.maintenancePlan}
-                  fixes={detail.fixes}
-                  context={handover}
-                  onCreate={(piece) =>
-                    setFixing({
-                      fixId: piece.fixId ?? "",
-                      title: piece.fixId === installOlaFixId ? "Install Ola Hallengren's IndexOptimize" : `Create: ${piece.title}`,
-                      options: piece.options,
-                    })
-                  }
-                  onSetUp={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
-                />
+                <Part id="maintenance-plan">
+                  <MaintenancePlanRow
+                    plan={detail.maintenancePlan}
+                    fixes={detail.fixes}
+                    context={handover}
+                    onCreate={(piece) =>
+                      setFixing({
+                        fixId: piece.fixId ?? "",
+                        title: piece.fixId === installOlaFixId ? "Install Ola Hallengren's IndexOptimize" : `Create: ${piece.title}`,
+                        options: piece.options,
+                      })
+                    }
+                    onSetUp={(fix) => setFixing({ fixId: fix.id, title: fix.title })}
+                  />
+                </Part>
               ) : (
                 cardId === "performance" && (
                   <FindingContext.Provider value={deadlockContext}>
-                    <SamplePanel serverId={serverId} database={database} />
-                    <DeadlocksPanel
-                      serverId={serverId}
-                      database={database}
-                      report={detail.deadlocks}
-                      onResult={setReadDeadlocks}
-                    />
+                    <Part id="sample">
+                      <SamplePanel serverId={serverId} database={database} />
+                    </Part>
+                    <Part id="deadlocks">
+                      <DeadlocksPanel
+                        serverId={serverId}
+                        database={database}
+                        report={detail.deadlocks}
+                        onResult={setReadDeadlocks}
+                      />
+                    </Part>
                     {/* Phase 5d: a week of blocking from system_health (docs/phase5d-contract.md). */}
-                    <BlockingHistoryPanel serverId={serverId} database={database} report={detail.blockingHistory} />
+                    <Part id="blocking-history">
+                      <BlockingHistoryPanel serverId={serverId} database={database} report={detail.blockingHistory} />
+                    </Part>
                   </FindingContext.Provider>
                 )
               )
@@ -759,4 +819,14 @@ function fixOptionsFor(f: Finding, fixes?: Fix[], fixId = f.fixId): Record<strin
   )
   const match = byColumns ?? onObject[0] ?? mine[0]
   return match?.options
+}
+
+// Phase 5x: a part of the card's page that a tree topic opens ("/cards/upkeep#maintenance-plan"). It takes
+// no room when the part draws nothing.
+function Part({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <div id={id} className="scroll-mt-6 empty:hidden">
+      {children}
+    </div>
+  )
 }

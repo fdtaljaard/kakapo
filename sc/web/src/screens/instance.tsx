@@ -205,7 +205,7 @@ function DatabasePicker({ server }: { server: Server }) {
   }
 
   return (
-    <section className="grid gap-2">
+    <section id="databases" className="grid scroll-mt-6 gap-2">
       <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
         <span>
           {load.databases.length === 0

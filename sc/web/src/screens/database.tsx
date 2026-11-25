@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { loadDayChoices, type LoadDays } from "@/api-load"
 import { useLoad } from "@/hooks/use-load"
-import { useOverview } from "@/hooks/use-overview"
+import { useScrollToHash } from "@/hooks/use-scroll-to-hash"
+import { useSharedOverview, type SharedOverview } from "@/hooks/use-shared-overview"
 import { useServers } from "@/hooks/use-servers"
 import { instancePath } from "@/lib/paths"
 
@@ -25,14 +26,17 @@ export function DatabaseScreen() {
   const params = useParams()
   const id = Number(params.id)
   const database = params.db ?? ""
+  const shared = useSharedOverview(id, database)
   if (!Number.isInteger(id) || id <= 0) return <NotFound what="There is no such instance." />
   if (!database) return <NotFound what="There is no such database." />
-  return <DatabasePage key={`${id}/${database}`} serverId={id} database={database} />
+  // Phase 5x: the overview is the instance layout's one read of this database (docs/phase5x-contract.md).
+  if (!shared) return <NotFound what="This database page is outside its instance." />
+  return <DatabasePage key={`${id}/${database}`} serverId={id} database={database} shared={shared} />
 }
 
-function DatabasePage({ serverId, database }: { serverId: number; database: string }) {
+function DatabasePage({ serverId, database, shared }: { serverId: number; database: string; shared: SharedOverview }) {
   const { load } = useServers()
-  const { overview, loading, error, refresh } = useOverview(serverId, database)
+  const { overview, cards, loading, error, refresh } = shared
   const [search, setSearch] = useSearchParams()
   const dayParam = Number(search.get("days") ?? 7)
   const days: LoadDays = loadDayChoices.find((d) => d === dayParam) ?? 7
@@ -42,6 +46,8 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
     next.set("days", String(d))
     setSearch(next, { replace: true })
   }
+
+  useScrollToHash(!!overview)
 
   const server = load.kind === "ready" ? load.servers.find((s) => s.id === serverId) : undefined
   if (load.kind === "ready" && !server) return <NotFound what="This instance is not registered (any more)." />
@@ -64,7 +70,7 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
           onRefresh={refresh}
         />
         {/* The page's own answer: what to do, and which card to open first. */}
-        {overview && <PageAnswer cards={overview.cards} serverId={serverId} database={database} />}
+        {overview && cards && <PageAnswer cards={cards} serverId={serverId} database={database} />}
       </div>
 
       <LoadStrip
@@ -103,11 +109,12 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
         <>
           {/* The cards that need something first (red, then amber); the usual order within each colour. */}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {cardsByStatus(overview.cards).map((card) => (
+            {cardsByStatus(cards ?? overview.cards).map((card) => (
               <InstanceCard key={card.id} card={card} serverId={serverId} database={database} checking={loading} />
             ))}
           </div>
           {/* Phase 5m: the decisions for this database, under the six health cards: health first. */}
+          <div id="decisions" className="scroll-mt-6 empty:hidden">
           <DecisionsCard
             decisions={overview.decisions ?? []}
             serverId={serverId}
@@ -116,7 +123,10 @@ function DatabasePage({ serverId, database }: { serverId: number; database: stri
             checkedAt={overview.checkedAt}
             onChanged={refresh}
           />
-          <RecentChanges changes={overview.recentChanges} window={overview.changeWindow} />
+          </div>
+          <div id="recent-changes" className="scroll-mt-6 empty:hidden">
+            <RecentChanges changes={overview.recentChanges} window={overview.changeWindow} />
+          </div>
         </>
       ) : (
         loading && (

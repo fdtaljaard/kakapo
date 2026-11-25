@@ -119,7 +119,8 @@ The look is calm and friendly. It is a neutral, grey shadcn interface (Geist, sm
 surfaces that follow the operating system's theme) where colour is spent almost entirely on status. Calm means
 nothing shouts until it needs to: a healthy database is mostly grey text with a few green dots. Friendly means
 sentences, not codes, lead; numbers and identifiers follow in a quieter voice. Density is that of a well-set
-report, not a console: one column of cards and findings at most 72rem wide, with room between them.
+report, not a console: one column of cards and findings at most 72rem wide, with room between them, beside a
+quiet navigation tree that shows every topic and which ones need something.
 
 kakapo must never look like a DBA console (grids and DMV columns first, sentences never), a monitoring
 dashboard (gauges, big charts, walls of red and green tiles), or a marketing site (hero gradients, display
@@ -193,8 +194,12 @@ carry their own Copy button.
 
 ## Layout
 
-One centred column, at most 72rem wide, with 16px gutters on a phone and 24px from the small breakpoint up,
-under a thin top bar that names kakapo and the build. Pages stack their parts with a 24px gap: header, notices,
+One column, at most 72rem wide, with 16px gutters on a phone and 24px from the small breakpoint up, under a
+thin top bar that names kakapo and the build. On every page under an instance a navigation panel (the
+Navigation Tree, below) sits to the left of the column from the medium breakpoint up, 16rem wide, the full
+height under the top bar, separated by a hairline and scrolling on its own; below the medium breakpoint it
+folds into a "Navigate" control above the page. Home and setup have no panel and keep the centred column.
+Pages stack their parts with a 24px gap: header, notices,
 load strip, decisions, then the cards. Cards sit in a responsive grid of one, two (medium screens) or three
 (extra large) columns; findings and dialogs are a single column. Inside a card, parts are spaced 16px apart
 (12px for the small card). Text wraps and breaks long identifiers rather than overflowing.
@@ -254,6 +259,15 @@ to act on today, and "Start with {card}" linking to the first card that needs so
 sentence of that card's verdict. When nothing is wrong it says "No problems found." The six cards follow
 it, the ones that need something first (red, then amber, then green, then grey).
 
+### Navigation Tree (signature)
+The panel on the left of every page under an instance (`sc/docs/phase5x-contract.md`): the instance, the
+database, and under it the topics in one of the arrangements (the first: the six cards as categories, their
+topics below). Rows are 28px, Body type, Ink for labels and Quiet Ink for counts; indentation is 12px a level. A folder row has two targets: a 16px chevron button that expands it and a label that
+opens its page. A category carries the card's Status Line dot (no words) and its "to do" count in Label
+type; a topic with no status of its own carries no dot. The current page has a Quiet Surface fill and medium
+weight; hover is the same fill, never a colour. No icons beside labels, no badges, no shadows: the dots are
+the only colour.
+
 ### Finding Card (signature)
 The report itself. A severity badge, the check ID in Label type, the title, and the meta line (owner, when,
 effort) with Copy for IT on the right; then the finding as a Body sentence (larger when it is not Info);
@@ -288,3 +302,5 @@ the One Meaning colours; a spinner replaces the dot while the card is read.
 - **Don't** add shadows to cards, buttons or notices.
 - **Don't** use solid red or amber fills for whole blocks; status lives in text, dots, borders and light tints.
 - **Don't** introduce a second sans or a decorative typeface.
+- **Don't** let the navigation tree become an object explorer: a node exists because there is something to
+  read or do there, never to list every table, index or job.

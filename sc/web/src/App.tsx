@@ -8,6 +8,7 @@ import { EditInstanceScreen } from "@/screens/edit"
 import { HomeScreen } from "@/screens/home"
 import { IndexesScreen } from "@/screens/indexes"
 import { InstanceScreen } from "@/screens/instance"
+import { InstanceLayout } from "@/screens/instance-layout"
 import { MemoryScreen } from "@/screens/memory"
 import { ChangesScreen } from "@/screens/changes"
 import { MemoryDatabaseScreen } from "@/screens/memory-database"
@@ -31,17 +32,20 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomeScreen />} />
         <Route path="/servers/new" element={<NewServer />} />
-        <Route path="/instances/:id" element={<InstanceScreen />} />
-        <Route path="/instances/:id/edit" element={<EditInstanceScreen />} />
-        <Route path="/instances/:id/memory" element={<MemoryScreen />} />
-        <Route path="/instances/:id/changes" element={<ChangesScreen />} />
-        <Route path="/instances/:id/memory/databases/:db" element={<MemoryDatabaseScreen />} />
-        <Route path="/instances/:id/databases/:db" element={<DatabaseScreen />} />
-        <Route path="/instances/:id/databases/:db/cards/:card" element={<CardScreen />} />
-        <Route path="/instances/:id/databases/:db/queries/:hash" element={<QueryScreen />} />
-        <Route path="/instances/:id/databases/:db/indexes" element={<IndexesScreen />} />
-        <Route path="/instances/:id/databases/:db/blocking" element={<BlockingScreen />} />
-        <Route path="/instances/:id/databases/:db/tuning" element={<TuningScreen />} />
+        {/* Phase 5x: every page under an instance shares the layout with the navigation tree. */}
+        <Route path="/instances/:id" element={<InstanceLayout />}>
+          <Route index element={<InstanceScreen />} />
+          <Route path="/instances/:id/edit" element={<EditInstanceScreen />} />
+          <Route path="/instances/:id/memory" element={<MemoryScreen />} />
+          <Route path="/instances/:id/changes" element={<ChangesScreen />} />
+          <Route path="/instances/:id/memory/databases/:db" element={<MemoryDatabaseScreen />} />
+          <Route path="/instances/:id/databases/:db" element={<DatabaseScreen />} />
+          <Route path="/instances/:id/databases/:db/cards/:card" element={<CardScreen />} />
+          <Route path="/instances/:id/databases/:db/queries/:hash" element={<QueryScreen />} />
+          <Route path="/instances/:id/databases/:db/indexes" element={<IndexesScreen />} />
+          <Route path="/instances/:id/databases/:db/blocking" element={<BlockingScreen />} />
+          <Route path="/instances/:id/databases/:db/tuning" element={<TuningScreen />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
