@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 
-import { api, type Card, type Overview } from "@/api"
+import { api, type Card, type Overview, type PlanSummary } from "@/api"
 
 // The last overview read per server and database, so going from the database page to a card page
 // and back shows something at once while the fresh one loads.
@@ -19,6 +19,13 @@ export function rememberCard(serverId: number, database: string, card: Card) {
   const key = cacheKey(serverId, database)
   const ov = cache.get(key)
   if (ov) cache.set(key, { ...ov, cards: ov.cards.map((c) => (c.id === card.id ? card : c)) })
+}
+
+// Phase 5x: the same for the maintenance plan's colour, from the Upkeep card's detail.
+export function rememberPlan(serverId: number, database: string, plan: PlanSummary) {
+  const key = cacheKey(serverId, database)
+  const ov = cache.get(key)
+  if (ov) cache.set(key, { ...ov, maintenancePlan: plan })
 }
 
 interface OverviewState {

@@ -187,6 +187,16 @@ type MaintenancePlan struct {
 	Express bool   `json:"express,omitempty"`
 	Order   string `json:"order"`          // why these times, with the source
 	Note    string `json:"note,omitempty"` // what could not be read, or why nothing can be created
+	// Summary is the plan in one colour and a few words, for the navigation tree (docs/phase5x-contract.md).
+	Summary PlanStatus `json:"summary"`
+}
+
+// PlanStatus is the maintenance plan in one colour and a few words (docs/phase5x-contract.md): amber with
+// what is wrong ("2 pieces missing, 1 failing"), green "In place" when every piece stands, grey when what the
+// plan stands on could not be read. The overview carries it, so the tree shows the plan on every page.
+type PlanStatus struct {
+	Status string `json:"status"` // green, amber or grey: the card colours' meanings
+	Text   string `json:"text"`
 }
 
 // PlanPiece is one line of the plan.
@@ -598,7 +608,49 @@ func BuildMaintenancePlan(f MaintenancePlanFacts, a PlanAlerts) MaintenancePlan 
 	case plan.Missing > 0:
 		plan.FixID = FixMaintenancePlan
 	}
+	plan.Summary = planSummary(plan)
 	return plan
+}
+
+// planSummary counts what the row shows as wrong: the missing pieces as the row counts them (plan.Missing,
+// so the tree and the row agree), then failing, overdue, and disabled pieces the missing count leaves out
+// (another job's, which the composite fix does not replace). A job that has not run yet is not wrong.
+func planSummary(plan MaintenancePlan) PlanStatus {
+	failing, overdue, disabled, read := 0, 0, 0, 0
+	for _, p := range plan.Pieces {
+		switch p.Status {
+		case PlanUnknown, PlanOptional, PlanNotNeeded:
+			continue
+		case PlanFailing:
+			failing++
+		case PlanOverdue:
+			overdue++
+		case PlanDisabled:
+			if !((p.FixID != "" || plan.Express) && p.ID != PieceIndexes) {
+				disabled++
+			}
+		}
+		read++
+	}
+	if read == 0 {
+		return PlanStatus{Status: StatusGrey, Text: "Could not be read"}
+	}
+	var parts []string
+	if plan.Missing > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s missing", plan.Missing, pluralWord(int64(plan.Missing), "piece", "pieces")))
+	}
+	for _, c := range []struct {
+		n    int
+		word string
+	}{{failing, "failing"}, {overdue, "overdue"}, {disabled, "disabled"}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.word))
+		}
+	}
+	if len(parts) == 0 {
+		return PlanStatus{Status: StatusGreen, Text: "In place"}
+	}
+	return PlanStatus{Status: StatusAmber, Text: strings.Join(parts, ", ")}
 }
 
 // planPieceFix is the fix that creates a piece and the options that make it fit the plan's times:

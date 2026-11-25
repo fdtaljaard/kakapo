@@ -166,7 +166,10 @@ type Overview struct {
 	// Decisions are the decisions for this database (docs/phase5m-contract.md), built from what the
 	// overview reads, the stored reports and the row versioning read; the first is row versioning.
 	Decisions []Decision `json:"decisions"`
-	CheckedAt time.Time  `json:"checkedAt"`
+	// MaintenancePlan is the plan's colour and few words for the navigation tree (docs/phase5x-contract.md);
+	// nil when the Upkeep read failed or the database is not online.
+	MaintenancePlan *PlanStatus `json:"maintenancePlan,omitempty"`
+	CheckedAt       time.Time   `json:"checkedAt"`
 }
 
 // UptimeDays is the time since start in days, to one decimal.

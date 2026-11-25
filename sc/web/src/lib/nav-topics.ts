@@ -77,6 +77,7 @@ export interface NavNode {
   label: string
   to: string
   card?: NavCardId
+  plan?: true // carries the maintenance plan's colour and few words
   children?: NavNode[]
 }
 
@@ -87,7 +88,9 @@ const leaf = (t: Topic, serverId: number, database: string): NavNode => ({
 })
 
 // Arrangement 1, by responsibility: the instance, the database, the six cards as categories with their
-// topics below, then Decisions and Recent changes; What changed? on the instance. Without a database the
+// topics below, the Maintenance plan as a row of its own right after Upkeep (a database needs one, and
+// under Upkeep it was overlooked: docs/phase5x-contract.md, review of 2026-11-25), then Decisions and
+// Recent changes; What changed? on the instance. Without a database the
 // instance shows its own topics and "Pick a database".
 export function byResponsibility(
   server: { id: number; name: string },
@@ -107,13 +110,17 @@ export function byResponsibility(
       ],
     }
   }
-  const categories: NavNode[] = navCards.map((c) => ({
-    id: `card:${c.id}`,
-    label: cardTitle(c.id),
-    to: cardPath(s, database, c.id),
-    card: c.id,
-    children: topics.filter((t) => t.card === c.id).map((t) => leaf(t, s, database)),
-  }))
+  const plan = topic("maintenance-plan")
+  const categories: NavNode[] = navCards.flatMap((c) => {
+    const category: NavNode = {
+      id: `card:${c.id}`,
+      label: cardTitle(c.id),
+      to: cardPath(s, database, c.id),
+      card: c.id,
+      children: topics.filter((t) => t.card === c.id && t !== plan).map((t) => leaf(t, s, database)),
+    }
+    return c.id === plan.card ? [category, { ...leaf(plan, s, database), plan: true as const }] : [category]
+  })
   return {
     id: "instance",
     label: server.name,

@@ -196,7 +196,7 @@ carry their own Copy button.
 
 One column, at most 72rem wide, with 16px gutters on a phone and 24px from the small breakpoint up, under a
 thin top bar that names kakapo and the build. On every page under an instance a navigation panel (the
-Navigation Tree, below) sits to the left of the column from the medium breakpoint up, 16rem wide, the full
+Navigation Tree, below) sits to the left of the column from the medium breakpoint up, 18rem wide, the full
 height under the top bar, separated by a hairline and scrolling on its own; below the medium breakpoint it
 folds into a "Navigate" control above the page. Home and setup have no panel and keep the centred column.
 Pages stack their parts with a 24px gap: header, notices,
@@ -262,10 +262,13 @@ it, the ones that need something first (red, then amber, then green, then grey).
 ### Navigation Tree (signature)
 The panel on the left of every page under an instance (`sc/docs/phase5x-contract.md`): the instance, the
 database, and under it the topics in one of the arrangements (the first: the six cards as categories, their
-topics below). Rows are 28px, Body type, Ink for labels and Quiet Ink for counts; indentation is 12px a level. A folder row has two targets: a 16px chevron button that expands it and a label that
-opens its page. A category carries the card's Status Line dot (no words) and its "to do" count in Label
-type; a topic with no status of its own carries no dot. The current page has a Quiet Surface fill and medium
-weight; hover is the same fill, never a colour. No icons beside labels, no badges, no shadows: the dots are
+topics below, and the Maintenance plan as a row of its own). Rows are at least 28px, Body type, Ink for labels
+and Quiet Ink for counts; indentation is 12px a level. A folder row has two targets: a 16px chevron button that
+expands it and a label that opens its page. A category carries the card's Status Line dot (no words) and its "to
+do" count in Label type, and, when it is red or amber, why: its verdict sentence under the label in Label type
+and Quiet Ink, at most two lines. The Maintenance plan row carries the plan's dot and its few words the same way.
+A topic with no status of its own carries no dot. The current page has a Quiet Surface fill and medium weight;
+hover is a lighter fill of the same tint, never a colour. No icons beside labels, no badges, no shadows: the dots are
 the only colour.
 
 ### Finding Card (signature)

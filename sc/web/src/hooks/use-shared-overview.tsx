@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react"
 
-import type { Card, Overview } from "@/api"
-import { rememberCard, useOverview } from "@/hooks/use-overview"
+import type { Card, Overview, PlanSummary } from "@/api"
+import { rememberCard, rememberPlan, useOverview } from "@/hooks/use-overview"
 
 // Phase 5x (docs/phase5x-contract.md, "One reading of the database"): the instance's layout owns the one
 // overview read of the database being worked on, and every page under it uses that read. A card page hands
@@ -14,10 +14,13 @@ export interface SharedOverview {
   overview: Overview | null
   // The six cards, each replaced by a newer copy from a card's detail where there is one.
   cards: Card[] | null
+  // The maintenance plan's colour and few words, replaced by a newer one from the Upkeep card's detail.
+  plan: PlanSummary | null
   loading: boolean
   error: string | null
   refresh: () => void
   updateCard: (card: Card) => void
+  updatePlan: (plan: PlanSummary) => void
 }
 
 const SharedOverviewContext = createContext<SharedOverview | null>(null)
@@ -37,15 +40,26 @@ export function SharedOverviewProvider({
 }) {
   const ov = useOverview(serverId, database, live ? {} : { cacheOnly: true })
   // Newer cards from details, kept only for the overview they were taken against: a fresh read replaces them.
-  const [newer, setNewer] = useState<{ base: Overview | null; cards: Record<string, Card> }>({ base: null, cards: {} })
+  const [newer, setNewer] = useState<{ base: Overview | null; cards: Record<string, Card>; plan?: PlanSummary }>({
+    base: null,
+    cards: {},
+  })
 
   const updateCard = useCallback(
     (card: Card) => {
       rememberCard(serverId, database, card)
       setNewer((n) => {
-        const cards = n.base === ov.overview ? n.cards : {}
-        return { base: ov.overview, cards: { ...cards, [card.id]: card } }
+        const same = n.base === ov.overview
+        return { base: ov.overview, cards: { ...(same ? n.cards : {}), [card.id]: card }, plan: same ? n.plan : undefined }
       })
+    },
+    [ov.overview, serverId, database],
+  )
+
+  const updatePlan = useCallback(
+    (plan: PlanSummary) => {
+      rememberPlan(serverId, database, plan)
+      setNewer((n) => ({ base: ov.overview, cards: n.base === ov.overview ? n.cards : {}, plan }))
     },
     [ov.overview, serverId, database],
   )
@@ -56,18 +70,22 @@ export function SharedOverviewProvider({
     return ov.overview.cards.map((c) => patch[c.id] ?? c)
   }, [ov.overview, newer])
 
+  const plan = (newer.base === ov.overview ? newer.plan : undefined) ?? ov.overview?.maintenancePlan ?? null
+
   const value = useMemo<SharedOverview>(
     () => ({
       serverId,
       database,
       overview: ov.overview,
       cards,
+      plan,
       loading: ov.loading,
       error: ov.error,
       refresh: ov.refresh,
       updateCard,
+      updatePlan,
     }),
-    [serverId, database, ov.overview, cards, ov.loading, ov.error, ov.refresh, updateCard],
+    [serverId, database, ov.overview, cards, plan, ov.loading, ov.error, ov.refresh, updateCard, updatePlan],
   )
 
   return <SharedOverviewContext.Provider value={value}>{children}</SharedOverviewContext.Provider>

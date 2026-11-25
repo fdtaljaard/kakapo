@@ -1,4 +1,4 @@
-import { ApiError, type CardDetail, type Fix, type FixInput, type FixPreview, type FixResult, type MaintenancePlan, type PlanPiece } from "./api"
+import { ApiError, type CardDetail, type Fix, type FixInput, type FixPreview, type FixResult, type MaintenancePlan, type PlanPiece, type PlanSummary } from "./api"
 import type { FeatureMock } from "./api.mock"
 
 // Phase 5b (docs/phase5b-contract.md): fixture answers for the Upkeep card's Maintenance plan row and its fixes:
@@ -153,7 +153,13 @@ function planOf(db: string): MaintenancePlan {
     return { ...p, fixId: d.fixId, options: d.options }
   })
   const missing = pieces.filter((p) => p.fixId && p.id !== "indexes" && p.status === "missing").length
-  return { pieces, missing, order, ...(missing > 0 ? { fixId: "maintenance-plan" } : {}) }
+  const summary: PlanSummary = missing > 0 ? { status: "amber", text: `${missing} ${missing === 1 ? "piece" : "pieces"} missing` } : { status: "green", text: "In place" }
+  return { pieces, missing, order, summary, ...(missing > 0 ? { fixId: "maintenance-plan" } : {}) }
+}
+
+// Phase 5x: the plan's colour for the overview, as the backend's planSummary gives it.
+export function mockPlanStatus(database: string): PlanSummary {
+  return planOf(database).summary
 }
 
 // The Upkeep card with the Maintenance plan row and its fixes.

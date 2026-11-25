@@ -1,6 +1,6 @@
 import { mockBlocking } from "./api-blocking.mock"
 import { mockBlockingHistory, withBlockingHistory } from "./api-blocking-history.mock"
-import { mockMaintenance, withMaintenancePlan } from "./api-maintenance.mock"
+import { mockMaintenance, mockPlanStatus, withMaintenancePlan } from "./api-maintenance.mock"
 import { mockIndexes } from "./api-indexes.mock"
 import { mockQueries } from "./api-queries.mock"
 import { mockProgress, startMockRun } from "./api-progress.mock"
@@ -2399,6 +2399,7 @@ function buildOverview(srv: Server, db: DatabaseStatus): Overview {
     redFlags: { flags: [], more: 0, rest: [] },
     // Phase 5m: the row versioning decision, worth considering from a week of kakapo's session.
     decisions: [mockRowVersioning()],
+    maintenancePlan: mockPlanStatus(db.name),
     checkedAt: now(),
   }
 }

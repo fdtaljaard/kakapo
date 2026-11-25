@@ -90,6 +90,13 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 	if _, err := s.store.InsertCardRead(ctx, serverID, d.Name, card, findings, checks); err != nil {
 		return domain.Overview{}, err
 	}
+	// Phase 5x: the maintenance plan's colour for the navigation tree, from the same read the Upkeep card's
+	// row makes (docs/phase5x-contract.md).
+	var planStatus *domain.PlanStatus
+	if upkeep.Error == "" && upkeep.State == "ONLINE" {
+		plan := readUpkeepPlan(ctx, db, upkeep)
+		planStatus = &plan.Summary
+	}
 	// The settings baseline beside the Upkeep read (docs/phase5w-contract.md, A2); it never fails the page.
 	s.takeBaseline(ctx, db, serverID, domain.BaselineRead, "")
 	// The changes made outside kakapo, from the same read of the default trace (docs/phase5f-contract.md).
@@ -145,14 +152,15 @@ func (s *Service) Overview(ctx context.Context, serverID int64, dbName string) (
 		return domain.Overview{}, err
 	}
 	return domain.Overview{
-		Instance:      info,
-		Database:      *d,
-		Cards:         domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance, &design),
-		RecentChanges: changes,
-		ChangeWindow:  window,
-		RedFlags:      domain.BuildRedFlags(all),
-		Decisions:     []domain.Decision{decision},
-		CheckedAt:     checkedAt,
+		Instance:        info,
+		Database:        *d,
+		Cards:           domain.BuildCards(&setup, &backups, &storage, trend, &upkeep, &performance, &design),
+		RecentChanges:   changes,
+		ChangeWindow:    window,
+		RedFlags:        domain.BuildRedFlags(all),
+		Decisions:       []domain.Decision{decision},
+		MaintenancePlan: planStatus,
+		CheckedAt:       checkedAt,
 	}, nil
 }
 

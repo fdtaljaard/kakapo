@@ -40,8 +40,12 @@ and what needs looking at.
   remembers. With none, the instance shows its own topics and "Pick a database".
 - **Two targets per row.** The chevron expands or collapses a node; the label opens its page. A category is a
   link to its page and a folder at the same time.
-- **Status dots** come from what the database page's read already holds: a card's colour and its "to do" count.
-  A node with no status of its own has no dot. Grey keeps its meaning, "not checked".
+- **Status dots** come from what the database page's read already holds: a card's colour and its "to do" count,
+  and the maintenance plan's colour. A node with no status of its own has no dot. Grey keeps its meaning, "not
+  checked".
+- **Why, under the label** (review of 2026-11-25). A row that needs something says why in a quiet line under its
+  label, at most two lines: a red or amber category its card's verdict sentence, the Maintenance plan row its
+  own few words ("2 pieces missing, 1 failing"). A green row has none, so a healthy tree stays short.
 - **The current page is marked** (`aria-current="page"`), and its category opens by itself.
 - **What is expanded is remembered** on this computer (browser local storage), per arrangement.
 - **Narrow screens.** Below the medium breakpoint the panel folds into a "Navigate" control above the page; the
@@ -55,7 +59,9 @@ Today the database page reads the overview live on every visit, and a card's pag
 With a tree on every page, one owner reads it: the instance's layout reads the overview once when a database is
 opened (from its address), and every page under it uses that one read. Refresh on the database page reads it
 again. A card's detail carries the same card object, so when a card page reads its detail the tree takes that
-card's new colour from it, without a second overview read. Opening Memory or What changed? with a remembered
+card's new colour from it, without a second overview read. The overview also carries the maintenance plan's
+colour and few words (`maintenancePlan`: the same read the Upkeep card's row makes, summarised as that row counts
+it), and the Upkeep card's detail carries the same summary, so the plan's row follows a Create there. Opening Memory or What changed? with a remembered
 database shows the last overview read in this window, if there is one, and never reads one only to colour the
 tree.
 
@@ -88,9 +94,10 @@ Instance name                                  instance page
         TempDB files                           card page, the TempDB row
         Tables kakapo archives                 card page, the Tables row
         Room for CHECKDB                       card page, the room check
-    ● Upkeep                                   card page
-        Maintenance plan                       card page, the Maintenance plan row
+    ● Upkeep                           3       card page
         Indexes worth reorganising             /indexes
+    ● Maintenance plan                         card page, the Maintenance plan row (its own dot)
+      2 pieces missing, 1 failing              why, in Quiet Ink
     ● Performance                              card page
         Better or worse than usual             card page, the trend
         Tuning report                          /tuning
@@ -106,7 +113,12 @@ Instance name                                  instance page
   What changed?                                /changes (instance)
 ```
 
-The number after a category is its "to do" count, in Quiet Ink; none when there is nothing to do.
+The number after a category is its "to do" count, in Quiet Ink; none when there is nothing to do. Under a red or
+amber category, its verdict sentence in Quiet Ink.
+
+**The Maintenance plan is a row of its own**, right after Upkeep and not inside it (review of 2026-11-25): a
+database needs a good one, and as a topic under a collapsed Upkeep it was two clicks away and easy to miss. It is
+the one topic with a status of its own in this arrangement, from the overview.
 
 There is no arrangement switch in this phase: a control with one choice is not a choice. It comes with
 arrangement 2.
@@ -149,5 +161,7 @@ is on.
 - A database open costs exactly one overview read (the network tab shows one `/overview` request); a card page
   opened directly from its address reads the overview once, through the layout, and its own detail.
 - After an Apply on a card's page, the category's dot follows the card's new status.
-- The maintenance plan is one click from every page under the instance.
+- The maintenance plan is one click from every page under the instance, with its own dot and, when it is not
+  green, what is wrong.
+- A red or amber category says why under its label.
 - Below the medium breakpoint the panel folds into "Navigate"; light and dark both work; no shadows.

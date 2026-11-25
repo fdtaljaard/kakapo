@@ -96,6 +96,10 @@ func TestPlanNothingScheduled(t *testing.T) {
 	if _, ok := MaintenancePlanOffer(nil); ok {
 		t.Error("no plan, no offer")
 	}
+	// Phase 5x: the tree's summary agrees with the row's count.
+	if plan.Summary != (PlanStatus{Status: StatusAmber, Text: "6 pieces missing"}) {
+		t.Errorf("summary %+v", plan.Summary)
+	}
 }
 
 func TestPlanHealthy(t *testing.T) {
@@ -139,6 +143,33 @@ func TestPlanHealthy(t *testing.T) {
 	}
 	if plan.Missing != 0 || plan.FixID != "" {
 		t.Errorf("healthy plan %+v", plan)
+	}
+	if plan.Summary != (PlanStatus{Status: StatusGreen, Text: "In place"}) {
+		t.Errorf("summary %+v", plan.Summary)
+	}
+}
+
+// Phase 5x: what the tree says about the plan when a job fails, another's job is disabled, or nothing
+// could be read.
+func TestPlanSummary(t *testing.T) {
+	plan := MaintenancePlan{Missing: 1, Pieces: []PlanPiece{
+		{ID: PieceFullBackup, Status: PlanFailing},
+		{ID: PieceLogBackup, Status: PlanNotNeeded},
+		{ID: PieceIntegrity, Status: PlanDisabled},                            // another's job: no fix, not in Missing
+		{ID: PieceStatistics, Status: PlanDisabled, FixID: FixMaintenanceJob}, // counted in Missing
+		{ID: PieceIndexes, Status: PlanOptional},
+		{ID: PieceCleanup, Status: PlanNeverRan},
+	}}
+	if got := planSummary(plan); got != (PlanStatus{Status: StatusAmber, Text: "1 piece missing, 1 failing, 1 disabled"}) {
+		t.Errorf("mixed %+v", got)
+	}
+	unread := MaintenancePlan{Pieces: []PlanPiece{{ID: PieceFullBackup, Status: PlanUnknown}, {ID: PieceIndexes, Status: PlanOptional}}}
+	if got := planSummary(unread); got != (PlanStatus{Status: StatusGrey, Text: "Could not be read"}) {
+		t.Errorf("unread %+v", got)
+	}
+	express := MaintenancePlan{Express: true, Pieces: []PlanPiece{{ID: PieceFullBackup, Status: PlanOverdue}, {ID: PieceIntegrity, Status: PlanInPlace}}}
+	if got := planSummary(express); got != (PlanStatus{Status: StatusAmber, Text: "1 overdue"}) {
+		t.Errorf("express %+v", got)
 	}
 }
 

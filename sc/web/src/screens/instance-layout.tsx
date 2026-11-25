@@ -90,6 +90,7 @@ function Tree({ server, database, onNavigate }: TreeProps & { onNavigate?: () =>
     <NavTree
       root={byResponsibility(server, database, title)}
       cards={cards}
+      plan={database ? (shared?.plan ?? null) : null}
       loading={!!shared?.loading}
       onNavigate={onNavigate}
     />
@@ -97,10 +98,10 @@ function Tree({ server, database, onNavigate }: TreeProps & { onNavigate?: () =>
 }
 
 // From the medium breakpoint up: the panel on the left, the full height under the top bar, scrolling on
-// its own.
+// its own. 18rem, so a category's name, its count and its dot fit beside a thin scrollbar.
 function Panel(props: TreeProps) {
   return (
-    <aside className="sticky top-0 hidden max-h-svh w-64 shrink-0 self-start overflow-y-auto border-r px-2 py-4 md:block">
+    <aside className="sticky top-0 hidden max-h-svh w-72 shrink-0 self-start overflow-x-hidden overflow-y-auto border-r px-2 py-4 [scrollbar-width:thin] md:block">
       <Tree {...props} />
     </aside>
   )

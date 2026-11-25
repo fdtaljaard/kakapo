@@ -2,13 +2,15 @@ import { useCallback, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { ChevronRight, Loader2 } from "lucide-react"
 
-import type { Card, CardStatus } from "@/api"
+import type { Card, CardStatus, PlanSummary } from "@/api"
 import type { NavNode } from "@/lib/nav-topics"
 import { cn } from "@/lib/utils"
 
 // Phase 5x (docs/phase5x-contract.md, "The panel"; DESIGN.md, Navigation Tree): the tree of kakapo's
 // topics. A folder row has two targets, the chevron that expands it and the label that opens its page. A
-// category carries its card's dot and "to do" count; a row without a card carries no dot.
+// category carries its card's dot and "to do" count, and under its label why, when it needs something:
+// the card's verdict sentence. The Maintenance plan row carries the plan's dot and its few words. A row
+// with no status of its own carries neither.
 
 const dotColour: Record<CardStatus, string> = {
   green: "bg-emerald-600 dark:bg-emerald-400",
@@ -72,12 +74,14 @@ function holdsCurrent(node: NavNode, path: string, hash: string): boolean {
 export function NavTree({
   root,
   cards,
+  plan,
   loading,
   arrangement = "responsibility",
   onNavigate,
 }: {
   root: NavNode
   cards: Card[] | null
+  plan: PlanSummary | null
   loading: boolean
   arrangement?: string
   onNavigate?: () => void
@@ -98,6 +102,7 @@ export function NavTree({
           open={open}
           toggle={toggle}
           cards={cards}
+          plan={plan}
           loading={loading}
           onNavigate={onNavigate}
         />
@@ -114,6 +119,7 @@ function Row({
   open,
   toggle,
   cards,
+  plan,
   loading,
   onNavigate,
 }: {
@@ -124,6 +130,7 @@ function Row({
   open: Record<string, boolean>
   toggle: (id: string, now: boolean) => void
   cards: Card[] | null
+  plan: PlanSummary | null
   loading: boolean
   onNavigate?: () => void
 }) {
@@ -134,14 +141,16 @@ function Row({
   const expanded = folder && (open[node.id] ?? byDefault)
   const current = isCurrent(node, path, hash)
   const card = node.card ? cards?.find((c) => c.id === node.card) : undefined
+  const status = card?.status ?? (node.plan ? plan?.status : undefined)
+  const why = rowWhy(node, card, plan)
   const childrenId = `nav-${node.id}`
 
   return (
     <li>
       <div
         className={cn(
-          "group flex h-7 items-center gap-1 rounded-md pr-2 transition-colors hover:bg-muted",
-          current && "bg-muted font-medium",
+          "flex gap-1 rounded-md pr-2 transition-colors hover:bg-muted/60",
+          current && "bg-muted font-medium hover:bg-muted",
         )}
         style={{ paddingLeft: `${depth * 12 + 2}px` }}
       >
@@ -152,7 +161,7 @@ function Row({
             aria-controls={childrenId}
             aria-label={`${expanded ? "Collapse" : "Expand"} ${node.label}`}
             onClick={() => toggle(node.id, !expanded)}
-            className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="mt-1 grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             <ChevronRight className={cn("size-3.5 transition-transform duration-150", expanded && "rotate-90")} />
           </button>
@@ -163,13 +172,20 @@ function Row({
           to={node.to}
           aria-current={current ? "page" : undefined}
           onClick={onNavigate}
-          title={node.label}
-          className="min-w-0 flex-1 truncate rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          title={why ? `${node.label}: ${why}` : node.label}
+          className="grid min-w-0 flex-1 rounded-sm py-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-          {node.label}
-          {card && <span className="sr-only">, {statusWords[card.status]}{card.toDo > 0 ? `, ${card.toDo} to do` : ""}</span>}
+          <span className="truncate leading-5">{node.label}</span>
+          {status && <span className="sr-only">, {statusWords[status]}</span>}
+          {card && card.toDo > 0 && <span className="sr-only">, {card.toDo} to do</span>}
+          {why && (
+            <span className="line-clamp-2 pb-0.5 text-xs leading-4 font-normal text-muted-foreground">
+              <span className="sr-only">: </span>
+              {why}
+            </span>
+          )}
         </Link>
-        {node.card && <CardMark card={card} loading={loading} />}
+        {(node.card || node.plan) && <RowMark status={status} count={card?.toDo ?? 0} loading={loading} />}
       </div>
       {expanded && (
         <ul id={childrenId} className="grid gap-px">
@@ -183,6 +199,7 @@ function Row({
               open={open}
               toggle={toggle}
               cards={cards}
+              plan={plan}
               loading={loading}
               onNavigate={onNavigate}
             />
@@ -193,18 +210,26 @@ function Row({
   )
 }
 
-// The "to do" count in Quiet Ink, then the card's dot; a spinner while the card is read; nothing at all
-// before there is a card to colour it (grey would claim "not checked").
-function CardMark({ card, loading }: { card?: Card; loading: boolean }) {
-  if (loading && !card) return <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-  if (!card) return null
+// Why a row needs something, in a few words under its label: a category's verdict sentence when its card
+// is red or amber; the plan's own words when it is not green. Nothing when there is nothing to do, so a
+// healthy tree stays short and grey.
+function rowWhy(node: NavNode, card: Card | undefined, plan: PlanSummary | null): string | null {
+  if (card) return card.status === "red" || card.status === "amber" ? (card.verdict ?? null) : null
+  if (node.plan && plan && plan.status !== "green") return plan.text
+  return null
+}
+
+// The "to do" count in Quiet Ink, then the row's dot; a spinner while it is read; nothing at all before
+// there is a status to colour it (grey would claim "not checked").
+function RowMark({ status, count, loading }: { status?: CardStatus; count: number; loading: boolean }) {
+  if (!status) return loading ? <Loader2 className="mt-2 size-3 shrink-0 animate-spin text-muted-foreground" aria-hidden /> : null
   return (
-    <span className="flex shrink-0 items-center gap-1.5" aria-hidden>
-      {card.toDo > 0 && <span className="text-xs tabular-nums text-muted-foreground">{card.toDo}</span>}
+    <span className="flex h-7 shrink-0 items-center gap-1.5" aria-hidden>
+      {count > 0 && <span className="text-xs tabular-nums text-muted-foreground">{count}</span>}
       {loading ? (
         <Loader2 className="size-3 animate-spin text-muted-foreground" />
       ) : (
-        <span className={cn("size-2 rounded-full", dotColour[card.status])} />
+        <span className={cn("size-2 rounded-full", dotColour[status])} />
       )}
     </span>
   )

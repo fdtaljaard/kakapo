@@ -221,7 +221,16 @@ export interface Overview {
   redFlags: RedFlags
   // Phase 5m: the decisions for this database (docs/phase5m-contract.md); the first is row versioning.
   decisions: Decision[]
+  // Phase 5x: the maintenance plan's colour and few words for the navigation tree (docs/phase5x-contract.md);
+  // absent when the Upkeep read failed or the database is not online.
+  maintenancePlan?: PlanSummary
   checkedAt: string
+}
+
+// Phase 5x: the maintenance plan in one colour and a few words ("2 pieces missing, 1 failing", "In place").
+export interface PlanSummary {
+  status: "green" | "amber" | "grey"
+  text: string
 }
 
 // Phase 5m: one row of the Decisions card (docs/phase5m-contract.md): the verdict, what kakapo found, what to
@@ -574,6 +583,7 @@ export interface PlanPiece {
 
 export interface MaintenancePlan {
   pieces: PlanPiece[]
+  summary: PlanSummary // phase 5x: the plan in one colour and a few words, for the navigation tree
   missing: number // pieces the composite fix can create (index work is optional and not counted)
   fixId?: string // "maintenance-plan" when it has something to create
   express?: boolean

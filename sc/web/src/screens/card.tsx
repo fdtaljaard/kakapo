@@ -79,10 +79,12 @@ function CardPage({
   // row uses and the other cards borrow for the frame while their detail loads. The card a detail carries
   // goes back to the layout, so the tree's dot follows it (docs/phase5x-contract.md).
   const det = useCardDetail(serverId, database, cardId)
-  const { updateCard } = ov
+  const { updateCard, updatePlan } = ov
   useEffect(() => {
-    if (det.detail) updateCard(det.detail.card)
-  }, [det.detail, updateCard])
+    if (!det.detail) return
+    updateCard(det.detail.card)
+    if (det.detail.maintenancePlan?.summary) updatePlan(det.detail.maintenancePlan.summary)
+  }, [det.detail, updateCard, updatePlan])
   useScrollToHash(!!det.detail)
   // A Room for CHECKDB run shows at once, until a detail read carries that result (or a newer one) itself.
   const [ran, setRan] = useState<CheckdbRoom | null>(null)
